@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>移動本棚ロボ アプリ｜進捗報告</title>
+<style>
+  :root {
+    --green: #16a34a;
+    --green-bg: #f0fdf4;
+    --blue: #2563eb;
+    --gray: #6b7280;
+    --line: #e5e7eb;
+    --amber: #d97706;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    line-height: 1.8;
+    color: #1f2937;
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+    background: #fafafa;
+  }
+  header {
+    border-bottom: 3px solid var(--green);
+    padding-bottom: 16px;
+    margin-bottom: 8px;
+  }
+  h1 { font-size: 1.8rem; margin: 0 0 4px; }
+  .subtitle { color: var(--gray); margin: 0; }
+  .updated { font-size: 0.85rem; color: var(--gray); margin-top: 8px; }
+  h2 {
+    font-size: 1.3rem;
+    margin-top: 40px;
+    border-left: 5px solid var(--green);
+    padding-left: 12px;
+  }
+  .note {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 0.95rem;
+  }
+  .note strong { color: var(--blue); }
+
+  /* タイムライン */
+  .timeline { position: relative; margin: 24px 0; padding-left: 28px; }
+  .timeline::before {
+    content: "";
+    position: absolute;
+    left: 8px; top: 6px; bottom: 6px;
+    width: 3px;
+    background: var(--line);
+  }
+  .event { position: relative; margin-bottom: 28px; }
+  .event::before {
+    content: "";
+    position: absolute;
+    left: -24px; top: 6px;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--green);
+    border: 3px solid #fff;
+    box-shadow: 0 0 0 2px var(--green);
+  }
+  .event .date {
+    display: inline-block;
+    background: var(--green);
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: bold;
+    padding: 2px 10px;
+    border-radius: 999px;
+    margin-bottom: 6px;
+  }
+  .event h3 { margin: 4px 0 6px; font-size: 1.1rem; }
+  .event ul { margin: 6px 0; padding-left: 20px; }
+  .event li { margin: 2px 0; }
+
+  /* カード */
+  .card {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 16px 0;
+  }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; background:#fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; font-size: 0.92rem; }
+  th { background: #f3f4f6; }
+  .done { color: var(--green); font-weight: bold; }
+  .todo { color: var(--amber); font-weight: bold; }
+  code {
+    background: #f3f4f6;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: Consolas, monospace;
+    font-size: 0.88em;
+  }
+  .terminal {
+    background: #1e293b;
+    color: #e2e8f0;
+    border-radius: 10px;
+    padding: 16px 20px;
+    font-family: Consolas, monospace;
+    font-size: 0.88rem;
+    overflow-x: auto;
+    white-space: pre;
+    line-height: 1.6;
+  }
+  .ok { color: #4ade80; }
+  .glossary dt { font-weight: bold; margin-top: 10px; color: var(--blue); }
+  .glossary dd { margin: 0 0 4px 0; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--gray); font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📚 移動本棚ロボ アプリ｜進捗報告</h1>
+  <p class="subtitle">研究室の本を、自走する「移動本棚ロボ」と Web アプリで一元管理するシステム（ものづくりゼミ 2026 / 9人・3ヶ月）</p>
+  <p class="updated">最終更新: 2026年6月18日</p>
+</header>
+
+<div class="note">
+  <strong>この資料について：</strong> プログラミング初心者の方でも分かるように、これまでの作業を「いつ・何を・なぜ」やったか、時系列でまとめています。専門用語には末尾の「用語集」で説明をつけています。
+</div>
+
+<h2>🎯 このアプリでやりたいこと</h2>
+<div class="card">
+  <p>利用者がスマホ／PCのアプリで本を探し、<strong>「自席まで本棚ごとロボに呼び出す」</strong>ことができるシステムです。</p>
+  <ul>
+    <li>本を <strong>探す・借りる・返す</strong></li>
+    <li>本棚ロボを <strong>自分の席に呼ぶ</strong></li>
+    <li>貸出の <strong>履歴を残す</strong></li>
+  </ul>
+  <p><strong>使う技術：</strong> Next.js（画面）＋ Supabase（データの保管庫）＋ Vercel（公開）。ロボ側は Raspberry Pi + ROS2 で別管理。</p>
+</div>
+
+<h2>🗓 これまでの流れ（時系列）</h2>
+
+<div class="timeline">
+
+  <div class="event">
+    <span class="date">2026年6月1日</span>
+    <h3>① プロジェクトの誕生</h3>
+    <p>開発の入れ物（リポジトリ）を作成。まだ中身は空の状態です。</p>
+    <ul>
+      <li>Git でバージョン管理を開始（作業の履歴を残せるようにした）</li>
+    </ul>
+  </div>
+
+  <div class="event">
+    <span class="date">2026年6月8日</span>
+    <h3>② プロジェクトの「骨組み」を用意</h3>
+    <p>アプリの土台一式を作りました。家でいうと「設計図と基礎・柱」までできた状態です。</p>
+    <ul>
+      <li>画面 7つ（S-1〜S-7）の<strong>仮ページ</strong>を用意（中身はまだ見出しだけ）</li>
+      <li>データベースの設計図 <code>supabase/schema.sql</code> を確定（本・貸出・利用者・ロボ呼出 などの表）</li>
+      <li>Supabaseへ接続するための部品 <code>lib/supabaseClient.ts</code> を用意</li>
+      <li>見た目を整える Tailwind CSS、チーム開発用のテンプレ類も準備</li>
+    </ul>
+  </div>
+
+  <div class="event">
+    <span class="date">2026年6月18日（今回）</span>
+    <h3>③ データベースとの「接続確認」が完了 ✅</h3>
+    <p>アプリとデータの保管庫（Supabase）を実際につなぎ、ちゃんと通信できることを確認しました。今日の主役の作業です。</p>
+    <ul>
+      <li>必要な部品をインストール（<code>npm install</code>）</li>
+      <li>Supabaseのプロジェクト「moving-bookshelf」を準備、状態が <strong>Healthy（正常）</strong> になるのを確認</li>
+      <li>接続に必要な「鍵（publishable key）」を取得し、<code>.env.local</code> に設定</li>
+      <li>接続テスト用スクリプト <code>scripts/check-supabase.mjs</code> を作成して実行</li>
+      <li><strong>6つの表すべてに接続成功</strong>。さらに初期データ（本5冊・席3つ など）も入っていることを確認</li>
+    </ul>
+  </div>
+
+</div>
+
+<h2>🔌 今回の接続テスト結果</h2>
+<p>下が、実際にコンピュータで実行したテストの出力です。<span class="ok">✓（チェック）</span>が付いていれば「その表に正常につながった」という意味です。</p>
+<div class="terminal">URL: https://zljswppciglhvwjyquow.supabase.co
+KEY: sb_publishable_… (46 chars)
+
+--- テーブル疎通確認 ---
+<span class="ok">✓</span> books         : 5 行   ← 本が5冊登録済み
+<span class="ok">✓</span> loans         : 0 行   ← 貸出履歴（まだ無し）
+<span class="ok">✓</span> users         : 0 行   ← 利用者（まだ無し）
+<span class="ok">✓</span> robot_calls   : 0 行   ← ロボ呼出（まだ無し）
+<span class="ok">✓</span> robot_status  : 1 行   ← ロボの状態（1件＝正常）
+<span class="ok">✓</span> stop_points   : 3 行   ← 停車する席が3つ登録済み
+
+結果: 6/6 テーブルに接続できました。</div>
+
+<h2>📋 画面ごとの進み具合</h2>
+<table>
+  <tr><th>画面</th><th>役割</th><th>状態</th></tr>
+  <tr><td>S-1 本一覧（ホーム）</td><td>本の一覧表示・呼出/登録への入口</td><td class="todo">骨組みのみ</td></tr>
+  <tr><td>S-2 本詳細</td><td>借りる/返す/履歴/呼出の起点</td><td class="todo">骨組みのみ</td></tr>
+  <tr><td>S-3 本登録</td><td>新しい本を登録</td><td class="todo">骨組みのみ</td></tr>
+  <tr><td>S-5 貸出履歴</td><td>誰がいつ借りたかの一覧</td><td class="todo">骨組みのみ</td></tr>
+  <tr><td>S-6 ログイン</td><td>ログイン／ゲスト利用</td><td class="todo">骨組みのみ</td></tr>
+  <tr><td>S-7 検索・タグ</td><td>本を検索（追加機能）</td><td class="todo">骨組みのみ</td></tr>
+  <tr><td>データベース</td><td>6つの表＋セキュリティ設定</td><td class="done">完成・接続OK</td></tr>
+</table>
+
+<h2>👉 次にやること（候補）</h2>
+<div class="card">
+  <ol>
+    <li><strong>S-1 本一覧の実装</strong> … 登録済みの本5冊を実際に画面に表示する（おすすめ：成果が目に見える）</li>
+    <li><strong>接続テストの仕組みをチームで共有</strong> … <code>scripts/check-supabase.mjs</code> をコミットして全員が使えるように</li>
+    <li><strong>他の画面の実装</strong> … S-2 本詳細 など</li>
+  </ol>
+</div>
+
+<h2>📖 用語集（初心者向け）</h2>
+<dl class="glossary">
+  <dt>リポジトリ</dt>
+  <dd>プログラムや作業の履歴をまとめて保管する「箱」。Gitで管理します。</dd>
+  <dt>Next.js（ネクストジェイエス）</dt>
+  <dd>Webサイト・アプリの「画面」を作るための道具（フレームワーク）。</dd>
+  <dt>Supabase（スーパーベース）</dt>
+  <dd>データを保管しておく「クラウド上のデータベース」。本の情報や貸出履歴をここに入れます。</dd>
+  <dt>テーブル（表）</dt>
+  <dd>Excelの表のような、データの入れ物。「本の表」「貸出の表」のように種類ごとに分かれています。</dd>
+  <dt>スキーマ</dt>
+  <dd>「どんな表を、どんな列で作るか」を書いた設計図のこと。</dd>
+  <dt>publishable key（鍵）</dt>
+  <dd>アプリがSupabaseに接続するための「合言葉」。公開しても安全な種類の鍵です（※ secret key は危険なので共有しません）。</dd>
+  <dt>.env.local</dt>
+  <dd>接続先URLや鍵など、秘密の設定値を書いておくファイル。GitHubには上げない設定になっています。</dd>
+  <dt>npm install</dt>
+  <dd>アプリの動作に必要な「部品」をまとめてダウンロードするコマンド。</dd>
+</dl>
+
+<footer>
+  移動本棚ロボ アプリ 進捗報告｜2026年6月18日時点 ｜ この資料は進捗があるたびに更新されます。
+</footer>
+
+</body>
+</html>
