@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>移動本棚ロボ アプリ｜Git早見表</title>
+<style>
+  :root {
+    --green: #16a34a;
+    --green-bg: #f0fdf4;
+    --blue: #2563eb;
+    --gray: #6b7280;
+    --line: #e5e7eb;
+    --amber: #d97706;
+    --red: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Meiryo", sans-serif;
+    line-height: 1.8;
+    color: #1f2937;
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 32px 20px 80px;
+    background: #fafafa;
+  }
+  header {
+    border-bottom: 3px solid var(--blue);
+    padding-bottom: 16px;
+    margin-bottom: 8px;
+  }
+  h1 { font-size: 1.8rem; margin: 0 0 4px; }
+  .subtitle { color: var(--gray); margin: 0; }
+  .updated { font-size: 0.85rem; color: var(--gray); margin-top: 8px; }
+  h2 {
+    font-size: 1.35rem;
+    margin-top: 44px;
+    border-left: 5px solid var(--blue);
+    padding-left: 12px;
+  }
+  h3 { font-size: 1.1rem; margin-top: 24px; }
+  .note {
+    background: #eff6ff;
+    border: 1px solid #bfdbfe;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 0.95rem;
+  }
+  .warn {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    border-radius: 10px;
+    padding: 12px 16px;
+    margin: 16px 0;
+    font-size: 0.95rem;
+  }
+  .warn strong { color: var(--red); }
+  .note strong { color: var(--blue); }
+
+  /* ステップ */
+  .step {
+    background: #fff;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 4px 20px 14px;
+    margin: 16px 0;
+    position: relative;
+  }
+  .step .num {
+    display: inline-block;
+    background: var(--blue);
+    color: #fff;
+    width: 28px; height: 28px;
+    line-height: 28px;
+    text-align: center;
+    border-radius: 50%;
+    font-weight: bold;
+    margin-right: 8px;
+  }
+  .step h3 { display: inline; }
+  .step .why { color: var(--gray); font-size: 0.92rem; margin: 6px 0 0; }
+
+  pre {
+    background: #1e293b;
+    color: #e2e8f0;
+    border-radius: 8px;
+    padding: 12px 16px;
+    font-family: Consolas, monospace;
+    font-size: 0.9rem;
+    overflow-x: auto;
+    margin: 10px 0;
+  }
+  code {
+    background: #f3f4f6;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-family: Consolas, monospace;
+    font-size: 0.88em;
+  }
+  pre code { background: none; padding: 0; color: inherit; }
+  .cmt { color: #94a3b8; }
+
+  .cycle {
+    background: var(--green-bg);
+    border: 1px solid #bbf7d0;
+    border-radius: 12px;
+    padding: 16px 20px;
+    margin: 16px 0;
+  }
+  .cycle pre { background: #14532d; }
+
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; background:#fff; }
+  th, td { border: 1px solid var(--line); padding: 8px 12px; text-align: left; font-size: 0.92rem; vertical-align: top; }
+  th { background: #f3f4f6; }
+  .glossary dt { font-weight: bold; margin-top: 10px; color: var(--blue); }
+  .glossary dd { margin: 0 0 4px 0; }
+  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--gray); font-size: 0.85rem; }
+  .tag {
+    display:inline-block; font-size:0.75rem; font-weight:bold;
+    padding:2px 8px; border-radius:999px; margin-left:6px; vertical-align:middle;
+  }
+  .tag-once { background:#fef3c7; color:#92400e; }
+  .tag-every { background:#dcfce7; color:#166534; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🌳 Git早見表（ブランチ → PR）</h1>
+  <p class="subtitle">移動本棚ロボ アプリ｜チーム開発の進め方チートシート</p>
+  <p class="updated">最終更新: 2026年6月18日 ｜ ルール出典: CONTRIBUTING.md</p>
+</header>
+
+<div class="note">
+  <strong>この資料の使い方：</strong> 上半分は「初めてプロジェクトに参加する人」向けのセットアップ。下半分は「毎回の作業サイクル（ブランチ→PR）」です。困ったらここを見返してください。
+</div>
+
+<div class="warn">
+  <strong>大原則：</strong> <code>main</code> ブランチには直接 push しない！ 必ず「ブランチを作る → PR を出す → 承認後にマージ」の流れで進めます。（main は保護されています）
+</div>
+
+<h2>📖 まず言葉の意味（初心者向け）</h2>
+<dl class="glossary">
+  <dt>リポジトリ (repository)</dt><dd>プロジェクト一式が入った「箱」。GitHub 上にチーム共有の本体があります。</dd>
+  <dt>クローン (clone)</dt><dd>GitHub の箱を、自分のパソコンに丸ごとコピーしてくること。最初の1回だけ。</dd>
+  <dt>ブランチ (branch / 枝)</dt><dd>main のコピーを作って、その上で安全に作業する「作業場」。失敗しても本流は無事。</dd>
+  <dt>コミット (commit)</dt><dd>変更内容に名前を付けて履歴に刻むこと。「セーブポイント」のイメージ。</dd>
+  <dt>プッシュ (push)</dt><dd>手元の変更を GitHub にアップロードすること。</dd>
+  <dt>プル (pull)</dt><dd>GitHub の最新を手元にダウンロードすること。</dd>
+  <dt>PR (プルリクエスト)</dt><dd>「この作業場のもの、本流に入れていい？」とお願いする仕組み。レビューしてから合流させる。</dd>
+  <dt>マージ (merge)</dt><dd>PR を承認して、本流（main）に取り込むこと。</dd>
+</dl>
+
+<h2>🚀 はじめて参加する人のセットアップ <span class="tag tag-once">最初の1回だけ</span></h2>
+<p>自分以外のメンバーがこのプロジェクトを始めるときの手順です。上から順にやればOK。</p>
+
+<div class="step">
+  <span class="num">1</span><h3>事前準備（道具をそろえる）</h3>
+  <p class="why">下の3つをパソコンに入れておく（入っていなければ各公式サイトから）。</p>
+  <ul>
+    <li><strong>Git</strong>（バージョン管理ツール）</li>
+    <li><strong>Node.js</strong>（アプリを動かす土台。LTS版でOK）</li>
+    <li><strong>VS Code</strong> など好きなエディタ</li>
+  </ul>
+</div>
+
+<div class="step">
+  <span class="num">2</span><h3>リポジトリをクローン（コピーしてくる）</h3>
+  <pre><code>git clone https://github.com/syuk650220-creator/moving-bookshelf-app.git
+cd moving-bookshelf-app</code></pre>
+  <p class="why">GitHub の本体を自分のパソコンに持ってきて、そのフォルダに移動します。</p>
+</div>
+
+<div class="step">
+  <span class="num">3</span><h3>必要な部品をインストール</h3>
+  <pre><code>npm install</code></pre>
+  <p class="why">アプリの動作に必要なライブラリ（部品）を一括ダウンロード。少し時間がかかります。</p>
+</div>
+
+<div class="step">
+  <span class="num">4</span><h3>接続設定ファイル <code>.env.local</code> を用意</h3>
+  <pre><code><span class="cmt"># テンプレをコピーして…</span>
+cp .env.local.example .env.local</code></pre>
+  <p class="why">コピーしたら中身を編集して、Supabase の接続情報を書き込みます↓</p>
+  <pre><code>NEXT_PUBLIC_SUPABASE_URL=https://zljswppciglhvwjyquow.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=（publishable key を貼る）</code></pre>
+  <div class="warn">
+    <strong>鍵の入手：</strong> <code>publishable key</code>（<code>sb_publishable_…</code>）は公開しても安全な鍵なので、PM（水谷さん）から共有してもらうか、Supabase ダッシュボードの <em>Project Settings → API Keys</em> から取得します。<br>
+    <strong>絶対NG：</strong> <code>secret key</code>（<code>sb_secret_…</code>）は使わない・共有しない・GitHub に上げない。<code>.env.local</code> は最初から GitHub に上げない設定（.gitignore）になっています。
+  </div>
+</div>
+
+<div class="step">
+  <span class="num">5</span><h3>接続できているか確認</h3>
+  <pre><code>node scripts/check-supabase.mjs</code></pre>
+  <p class="why">6つのテーブルすべてに <code>✓</code> が出れば成功。アプリも起動してみましょう↓</p>
+  <pre><code>npm run dev   <span class="cmt"># → ブラウザで http://localhost:3000 を開く（止めるのは Ctrl+C）</span></code></pre>
+</div>
+
+<h2>🔁 毎回の作業サイクル（ブランチ → PR） <span class="tag tag-every">作業のたびに</span></h2>
+
+<div class="step">
+  <span class="num">1</span><h3>最新の本流に追いつく</h3>
+  <pre><code>git switch main
+git pull</code></pre>
+  <p class="why">main に移動して、GitHub 上の最新を取り込む。作業前は毎回これ。</p>
+</div>
+
+<div class="step">
+  <span class="num">2</span><h3>作業用のブランチを作る</h3>
+  <pre><code>git switch -c feature/book-list</code></pre>
+  <p class="why"><code>feature/book-list</code> という枝を作って移動。<code>-c</code> は「作る(create)」。<br>
+  名前のルール: 機能なら <code>feature/◯◯</code>、不具合修正なら <code>fix/◯◯</code>。</p>
+</div>
+
+<div class="step">
+  <span class="num">3</span><h3>編集して、動作を確認</h3>
+  <pre><code>npm run dev   <span class="cmt"># http://localhost:3000 で確認</span></code></pre>
+  <p class="why">コードを直したら、ブラウザで思った通り動くか見ます。</p>
+</div>
+
+<div class="step">
+  <span class="num">4</span><h3>変更を記録（コミット）</h3>
+  <pre><code>git add .
+git commit -m "本一覧の枠を追加"</code></pre>
+  <p class="why"><code>add</code> で記録対象を選び、<code>commit</code> でメッセージ付きで履歴に刻む。メッセージは日本語1行でOK。</p>
+</div>
+
+<div class="step">
+  <span class="num">5</span><h3>GitHub へ送る（プッシュ）</h3>
+  <pre><code>git push -u origin feature/book-list</code></pre>
+  <p class="why">枝を GitHub にアップロード。<code>-u</code> はその枝の初回だけ（2回目以降は <code>git push</code> だけ）。</p>
+</div>
+
+<div class="step">
+  <span class="num">6</span><h3>GitHub で PR を作る（ここはブラウザ操作）</h3>
+  <ol>
+    <li><a href="https://github.com/syuk650220-creator/moving-bookshelf-app">リポジトリ</a> を開く</li>
+    <li>黄色い帯の <strong>「Compare &amp; pull request」</strong> を押す</li>
+    <li>タイトルと説明を書いて <strong>「Create pull request」</strong></li>
+    <li><strong>水谷さん（PM）にレビュー依頼</strong> → 承認されたら <strong>「Squash and merge」</strong></li>
+    <li>main に入ると <strong>Vercel が自動でデプロイ</strong>（公開）</li>
+  </ol>
+</div>
+
+<div class="cycle">
+  <h3 style="margin-top:6px;">⚡ サイクルまとめ（これだけ覚える）</h3>
+  <pre><code>git switch main &amp;&amp; git pull        <span class="cmt"># 最新に追いつく</span>
+git switch -c feature/◯◯           <span class="cmt"># 枝を作る</span>
+<span class="cmt"># （編集）→ npm run dev で確認</span>
+git add . &amp;&amp; git commit -m "..."    <span class="cmt"># 記録</span>
+git push -u origin feature/◯◯      <span class="cmt"># 送る</span>
+<span class="cmt"># → GitHub で PR → レビュー → Squash and merge</span></code></pre>
+</div>
+
+<h2>📏 チームのルール（CONTRIBUTING.md より）</h2>
+<table>
+  <tr><th>ルール</th><th>内容</th></tr>
+  <tr><td>main直push禁止</td><td>必ずブランチを切って PR を出す</td></tr>
+  <tr><td>ブランチ名</td><td><code>feature/画面名</code> / <code>fix/不具合名</code></td></tr>
+  <tr><td>コミット</td><td>日本語OK・1行で要点（例「本一覧の枠を追加」）</td></tr>
+  <tr><td>PRの大きさ</td><td>小さく。1 PR = 1 Issue が目安</td></tr>
+  <tr><td>承認者</td><td>水谷（PM）がレビュー → 承認後マージ</td></tr>
+  <tr><td>マージ方法</td><td>Squash and merge が基本</td></tr>
+</table>
+
+<h2>🆘 困ったときは</h2>
+<ul>
+  <li>30分悩んだら抱え込まず<strong>共有する</strong></li>
+  <li>エラーは<strong>全文をコピー</strong>して貼る</li>
+  <li><strong>コンフリクト</strong>（変更の衝突）は自己判断で消さず、相手と相談</li>
+</ul>
+
+<footer>
+  移動本棚ロボ アプリ Git早見表｜2026年6月18日時点 ｜ 出典: CONTRIBUTING.md
+</footer>
+
+</body>
+</html>
