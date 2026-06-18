@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>モーター／ドライバ選定・配線｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero hw">
+    <h1>モーター／ドライバ選定・配線</h1>
+    <p>走行用DCモータとモータドライバを選び、Raspberry Pi 5 のテスト信号で各モータを向き・速度ともに回せる状態まで配線する。</p>
+    <div class="badges">
+      <span class="badge">担当：ハ設</span>
+      <span class="badge">Sprint 1〜2</span>
+      <span class="badge">優先 ★★☆</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill role">担当：ハ設</span>
+    <span class="pill sprint">Sprint 1〜2</span>
+    <span class="pill prio">優先 ★★☆</span>
+    <span class="pill lang">DCモータ</span>
+    <span class="pill lang">モータドライバ</span>
+    <span class="pill lang">電源</span>
+    <span class="pill lang">Raspberry Pi 5</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p>ゴールは、<strong>ロボの足回り（走行用モータ）を選んで配線し、Raspberry Pi 5 から出した信号で各モータを「向き（前進／後退）」「速度（速い／遅い）」ともに回せる状態にする</strong>こと。ロボが自分で動くための一番土台の部分で、ここが動かないと自律走行(Nav2)も呼び出しも始まらない。</p>
+  <p>やることは大きく2つ。<strong>(1)選定</strong>: 車重・車輪径から必要なトルク／回転数をざっくり見積もり、それに合うDCモータ・モータドライバ・電源を選ぶ。<strong>(2)配線</strong>: モータ→ドライバ→電源→Pi5(制御信号) をつなぎ、テスト信号で回るか確かめる。物理作業＋電気作業の両方が混ざるIssue。</p>
+  <div class="callout study"><span class="label">このIssueの心臓部＝「テスト信号を自分で出せること」</span><p>Doneも動作確認も『Pi5から出したテスト信号でモータが回る』に依存している。本Issueでは、Raspberry Pi 5 から数行のPythonスクリプトでGPIOピンをHIGH/LOWして向きを決め、PWM(後述)でデューティ比を変えて速度を変える、という最小のやり方を主軸にする。どのライブラリのどのページを読むかは『調べる・学ぶこと』で道案内する（答えのコードは載せない）。</p></div>
+  <div class="callout warn"><span class="label">Pi5はGPIO/PWMの仕組みが従来機と別物（最重要の罠）</span><p>本プロジェクトは Raspberry Pi 5 に確定。Pi5 はI/Oを新しい RP1 チップが担当するため、Pi4以前で定番だった <code>RPi.GPIO</code> がそのままでは動かないことがあり、ハードウェアPWMの出し方も変わっている。ネットの古いPi4向け記事を真似しても動かず延々ハマるのが典型（アプリ側の『このNext.jsは最新版で君の知る書き方と違う』警告とまったく同じ構図）。必ず Pi5 前提の最新情報・Pi5対応ライブラリ(gpiozero+lgpio 等)を見ること。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li>車重・車輪径・目標速度から、必要トルク／回転数をざっくり見積もった（数値の根拠を1枚メモに残す）</li><li>見積りに合うDCモータ・モータドライバ・電源を選び、選定理由（電流定格・対応電圧・PWM対応）をメモした</li><li>ドライバの制御入力(IN)が <strong>3.3Vロジックで駆動できる</strong>ことを確認した（Pi5は3.3V。5V前提のドライバならレベル変換が要る）</li><li><strong>Pi・モータドライバ・モータ電源のGNDを共通接続した（共通GND）</strong>——これを忘れると信号が通らない最頻出ミス</li><li>Pi5から出したテスト信号で、各モータが <strong>前進／後退</strong> できた（向き制御）</li><li>各モータの速度を <strong>PWMで変えられた</strong>（低速／高速の最低2段。できればテスターでIN/PWMピンの電圧変化も確認）</li><li>通電前にテスターで配線チェック（VM電源が来ているか・IN/方向ピンに電圧が出るか・GND導通）をした</li><li>逆起電力対策・ヒューズなど安全配線の方針を決め、反映した（『調べる・学ぶこと』参照）</li></ul>
+  <div class="callout tip"><span class="label">単体で満たせる</span><p>ここでの『テスト信号』はロボ制御ソフト(Nav2等)が無くても、Pi5から手書きの数行スクリプトで出せばよい。後続のロボ制御ソフトIssueが未完成でも、このIssue単体で Done を満たして検証できる。</p></div>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">前提（仮値）をPM・ハ設で先に合意する</span><div class="st-detail">見積りの入力になる『車重(おおよそ)・車輪径・目標速度・段差/坂の有無』を先に決める。本ロボは屋内・平床の図書館移動ロボなので、<strong>段差を越えないなら登坂角は0でよい</strong>（坂や段差を越えるなら必要トルクが跳ね上がるので別途見積り）。目標速度は『歩行速度の半分=0.5m/s程度』あたりを出発点に仮置きして、走らせながら見直す前提でOK。</div></li><li><span class="st-title">必要トルク／回転数をざっくり見積もる</span><div class="st-detail">車重と車輪径から、車輪を回すのに要る力→トルクを計算する。考え方の型は『駆動力を出す→車輪半径を掛けてトルクにする→安全率（余裕）を掛ける』。回転数は『目標速度 ÷ 車輪円周』から必要なrpmを出す。式と手順は research の『必要トルク・回転数の見積り』を参照。数字は仮でよいが、根拠をメモに残す。</div></li><li><span class="st-title">モータの種類を決める</span><div class="st-detail">DCギヤードモータ（減速機付き）か、エンコーダ付きか等を決める。自律走行(Nav2)では速度の実測（オドメトリ）にエンコーダが効くので、後続を見据えてエンコーダ付きを検討する価値がある。research の『モータの種類』参照。</div></li><li><span class="st-title">モータドライバを選ぶ（電流が肝）</span><div class="st-detail">ドライバが流せる電流が、モータの<strong>ストール電流（＝モータが回れず止まった時に流れる最大電流。ここが選定の上限基準）</strong>に耐えられるかを最優先で確認する。あわせて『対応電圧』『PWM入力に対応するか』『制御入力(IN)が3.3Vロジックで動くか（Pi5は3.3V／5V前提ならレベル変換が要る）』を確認する。research の『モータドライバの選定』参照。</div></li><li><span class="st-title">電源を設計する（電圧・容量・分配・初回テスト電源）</span><div class="st-detail">モータ用電源（VM）と Pi5用電源（5V系）は分けて考える。容量はモータのストール電流×台数を見込む。<strong>初回の単体テストは、可能なら電流制限付きの安定化（ベンチ）電源から始める</strong>——いきなり大容量バッテリ直結＋大電流は、配線ミス時のダメージが大きい。research の『電源設計』参照。</div></li><li><span class="st-title">配線図を描く（共通GNDを明記）</span><div class="st-detail">モータ→ドライバ→電源→Pi5(制御信号) の接続を、配線図ツールで描く。<strong>この図に『電源GNDとPi5のGNDを必ず共通にする（共通GND）』を必ず描き込む——これを忘れると信号が通らない最頻出ミス</strong>。逆起電力対策(フライバックダイオード等)・ヒューズの位置もここで決める。</div></li><li><span class="st-title">仮配線して『最小のテスト信号』で単体テスト</span><div class="st-detail">ブレッドボード等で仮配線し、<strong>Raspberry Pi 5 から数行のPythonスクリプトを書いて、(a)方向ピンをHIGH/LOWして向きを決める (b)PWMピンのデューティ比を変えて速度を変える</strong> という最小テストをする。どのライブラリ(gpiozero/lgpio/pigpio 等)でPi5のGPIO/PWMを出すかは research の『Pi5でGPIO/PWMを出す手段』で確認（答えコードは書かない）。通電前に必ずステップ8のチェックを先にやる。</div></li><li><span class="st-title">通電前チェック→本配線へ</span><div class="st-detail">通電前にテスターでショート確認・GND導通・電圧の向きを点検。問題なければ本体への本配線に進む（端子の締結・はんだ・コネクタ化）。本配線後も共通GND・ヒューズ・逆起電力対策が反映されているか再確認する。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <ul class="research"><li><div class="r-topic">Raspberry Pi 5 でGPIO/PWMの制御信号を実際に出す手段（本Issueの動作確認の根幹）</div><div class="r-why">テスト信号＝Pi5からGPIOをHIGH/LOWして向きを決め、PWMでデューティ比を変えて速度を変える、が本Issueの心臓部。これが出せないとDoneも動作確認も始まらない。どのライブラリを使うかをまず決める必要がある。</div><div class="r-where">Pi5対応の入口として gpiozero（公式: https://gpiozero.readthedocs.io/ ）と、その下回りの lgpio / pigpio を比較する。Pi5でハードウェアPWMを使うなら対応状況を必ず確認。Pi5公式: https://www.raspberrypi.com/documentation/ の『Raspberry Pi hardware → GPIO』節。</div></li><li><div class="r-topic">Raspberry Pi 5 のGPIO/PWMが従来機(Pi4以前)と違う点（RP1の罠）</div><div class="r-why">Pi5は I/O を RP1 チップが担当し、定番だった <code>RPi.GPIO</code> がそのまま使えないことがある。古いPi4記事・RPi.GPIO前提のサンプルを真似して『動かない』で延々ハマるのを避けるため、最初に違いを把握する。</div><div class="r-where">Pi5公式 https://www.raspberrypi.com/documentation/ の『Raspberry Pi hardware → GPIO』『General → 各モデルの違い』。検索する時も必ず『Raspberry Pi 5』を付け、Pi4/Pi3向け記事を鵜呑みにしない。</div></li><li><div class="r-topic">Piの3.3Vロジックとモータドライバ制御入力(IN)の電圧整合（レベル変換の要否）</div><div class="r-why">Pi5のGPIOは3.3V出力。ドライバのIN側が5Vロジック前提だと信号がしきい値に届かず回らない／不安定になる。選定段階で気づかないと配線後に詰まる。レベル変換(レベルシフタ)が要るかを独立に判断する必要がある。</div><div class="r-where">候補ドライバの<strong>データシートの『Logic input voltage / VIH(High入力電圧)』</strong>を読む。Pi5のGPIO電圧は https://www.raspberrypi.com/documentation/ のGPIO節（3.3V）で確認。3.3VでVIHを満たさないならレベル変換を検討。</div></li><li><div class="r-topic">必要トルク・回転数の見積り（屋内平床前提）</div><div class="r-why">モータ選定の入力。過小だと登れない/動かない、過大だと電源とコストが無駄。前提（車重・車輪径・目標速度・段差有無）を決めてから計算する。屋内平床で段差を越えないなら登坂角は0として加速・転がり抵抗中心で見積もる。</div><div class="r-where">計算の型: ①必要な駆動力（車重×加速・転がり抵抗）→②駆動力×車輪半径＝必要トルク→③安全率を掛ける、の順。回転数は目標速度÷車輪円周→rpm。検索語『DCモータ トルク 計算 車輪径 駆動力』に加え、用語を『torque / rpm / wheel radius』で英語ページも当たると式が見つかりやすい。</div></li><li><div class="r-topic">モータの種類（DCギヤード／エンコーダ付き）</div><div class="r-why">減速機付き(ギヤード)でトルクを稼ぐのが定番。さらにエンコーダ付きなら速度の実測ができ、後続の自律走行(Nav2)のオドメトリ（自分がどれだけ進んだかの推定）に効く。先を見据えて選ぶ。</div><div class="r-where">Nav2でオドメトリが要る背景: https://docs.nav2.org/ 。エンコーダの役割は『rotary encoder odometry wheel』で調べる。</div></li><li><div class="r-topic">モータドライバの選定（電流定格・PWM）</div><div class="r-why">ドライバが流せる電流がモータのストール電流に耐えないと焼ける/保護がかかって止まる。PWMで速度制御できるか、対応電圧（VM）が電源に合うかも必須条件。</div><div class="r-where">Hブリッジ(正逆転回路)とPWM入力の考え方を学ぶ。<strong>具体的な型番はストール電流から自分で候補を絞るのが本筋</strong>。学習用に1〜2例のデータシートを読み、『連続/ピーク電流・対応電圧・PWMピンの使い方・IN側ロジック電圧』の読み方を身につける程度に留める。</div></li><li><div class="r-topic">電源設計（電圧・容量・分配・初回テスト電源）</div><div class="r-why">電圧が合わないと動かない/壊れる、容量不足だと電圧降下でリセットや脱調。モータ用とPi用を分けて考える。初回テストの電源選びは安全に直結する。</div><div class="r-where">Pi5の給電: https://www.raspberrypi.com/documentation/ の『Raspberry Pi hardware → Power supply』（純正は5V/5A(27W)推奨。5A未満だとUSB周辺機器の電流が制限される、という条件を各自で確認）。初回テストは電流制限付き安定化電源→問題なければバッテリ、の順が安全。</div></li><li><div class="r-topic">配線の安全（逆起電力・フライバックダイオード・ヒューズ）</div><div class="r-why">モータは止まる瞬間に逆向きの電圧(逆起電力)を出し、ドライバを壊しうる。フライバックダイオードやドライバ内蔵保護で逃がす。過電流に備えヒューズを入れる。事故と部品破損を防ぐ核心。</div><div class="r-where">『back EMF flyback diode motor driver』『DC motor fuse sizing』で原理を確認。多くのドライバICは保護を内蔵するのでデータシートの『protection / freewheeling diode』節も読む。</div></li><li><div class="r-topic">テスター(マルチメータ)での基本的な計測</div><div class="r-why">回らない時の原因切り分けに必須。VM電源が来ているか、IN/方向ピンに電圧が出ているか、GNDが導通しているかを測れると、自分で詰まりを解ける。</div><div class="r-where">『マルチメータ 使い方 直流電圧 導通』『multimeter DC voltage continuity test basics』で、電圧測定(並列に当てる)と導通チェックの基本を確認。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <table><tr><th>症状</th><th>原因・対処</th></tr><tr><td>モータが回らない／弱い</td><td><strong>最頻出は共通GND忘れ</strong>。Pi5・ドライバ・モータ電源のGNDを必ず1点で共通にする。次に多いのが信号が3.3VでドライバのIN側しきい値に届かない（レベル変換が要るケース）。VM電源が来ているかもテスターで確認。</td></tr><tr><td>古いPi4記事どおりに書いたのに動かない</td><td>Pi5はRP1採用でGPIO/PWMの仕組みが従来機と別物。<code>RPi.GPIO</code>がそのまま動かないことがある。Pi5対応ライブラリ(gpiozero+lgpio等)とPi5公式ドキュメントを見る。検索語に必ず『Raspberry Pi 5』を付ける。</td></tr><tr><td>向きは変わるが速度が変わらない</td><td>PWMピンに本当にPWMが出ているかをテスターやロジックで確認。ハードウェアPWM対応ピン/ライブラリの組合せがPi5で正しいか確認（research『Pi5でGPIO/PWM』）。</td></tr><tr><td>ドライバが熱い／保護で止まる</td><td>ストール電流（モータが止まった時の最大電流）がドライバ定格を超えている可能性。連続/ピーク電流定格を見直す。放熱・配線太さも確認。</td></tr><tr><td>通電した瞬間に煙・部品破損</td><td>配線ミス（極性逆・ショート・GND未共通）。通電前のテスターチェックを必ず先に。逆起電力対策(フライバック/内蔵保護)とヒューズが入っているか確認。</td></tr><tr><td>バッテリ直結でテストして壊した</td><td>初回テストは電流制限付きの安定化電源から。いきなり大容量バッテリ直結＋大電流は事故時のダメージが大きい。小容量電源＋ヒューズから始める。</td></tr></table>
+  <div class="callout danger"><span class="label">安全上の注意（必ず守る）</span><p>①通電前に必ずテスターでショート・極性・GND導通を確認。②初回テストは電流制限付き安定化電源（無ければ小容量電源＋ヒューズ）から。③配線をいじる時は必ず電源を切る。④モータは急に動く——回転部・配線に指や髪を巻き込まれないよう固定してから通電する。⑤ヒューズと逆起電力対策を省略しない。</p></div>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p>完成判定は『Pi5のテスト信号で各モータが向き・速度ともに制御できる』こと。下の手順で、通電前チェック→単体テストの順に進める。</p>
+  <ol><li>【通電前・テスター】VM電源ラインに正しい電圧が来るか、IN/方向ピンに（信号を出した時）電圧が出るか、Pi・ドライバ・電源のGNDが導通しているかを測る。ショート・極性逆がないことを確認。</li><li>【初回電源】可能なら電流制限付きの安定化電源から給電する（無ければ小容量電源＋ヒューズ）。電流計があれば消費電流を見ながら徐々に上げる。</li><li>【向き】Pi5から方向ピンをHIGH/LOWに切り替えるテスト信号を出し、各モータが前進／後退すること（左右・全モータ分）を目視確認。</li><li>【速度】PWMのデューティ比を低/高の2段に変え、回転が遅い/速いと変わること（触って軽く温かい程度で異常発熱がない）を確認。可能ならテスターでPWM/INピンの電圧変化も見る。</li><li>【安全】テスト中に異音・異常発熱・煙が無いこと。ヒューズが飛ばず、逆起電力対策が効いていること。</li><li>【記録】使った電源電圧・電流、選定したモータ/ドライバ型番、配線図を1枚にまとめて後続Issue（ロボ制御ソフト）へ引き継ぐ。</li></ol>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AIには<strong>答え（型番・完成コード）をいきなり書かせない</strong>。見積りの考え方・調べ先・つまずきの切り分けを引き出すコーチとして使う。下のプロンプトをコピペして使ってよい。</p>
+  <pre><code>私は電子工作の初心者で、屋内・平床を走る図書館移動ロボの足回り（走行用DCモータ＋ドライバ＋電源）を
+自分で選定・配線して学びたいです。制御は Raspberry Pi 5 です（Pi4以前ではありません）。
+
+お願い：
+- 型番や完成コードをいきなり出さないでください。考え方・手順・調べる場所だけ教えてください。
+- まず私に質問して、前提（車重・車輪径・目標速度・段差や坂の有無）を一緒に整理してください。
+  屋内平床で段差を越えないなら登坂角は0でよい、という判断軸も確認したいです。
+- 次の順で導いてください: (1)必要トルク/回転数の見積りの型(駆動力→トルク→安全率) 
+  (2)モータの種類(ギヤード/エンコーダ付き) (3)ドライバ選定(ストール電流・対応電圧・PWM・IN側が3.3Vで動くか) 
+  (4)電源設計(VMとPi用を分ける・容量・初回は電流制限付き電源) (5)配線(共通GND・逆起電力対策・ヒューズ) 
+  (6)Pi5でGPIO/PWMのテスト信号を出す手段(Pi5はRP1でPi4と違う点込み)。
+- 各ステップで『どの公式ドキュメント/データシートのどの節を読むか』を示し、私自身に読ませてください。
+- Pi5は従来機とGPIO/PWMが違う前提で、古いPi4記事をそのまま勧めないでください。
+
+今つまずいているのは：（ここに状況を書く。例：共通GNDしたのにモータが回らない）</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>トルク</td><td>回そうとする力の強さ（N·m）。重い車体・大きい車輪ほど多く要る。</td></tr><tr><td>ストール電流</td><td>モータが回れず止まった(拘束された)時に流れる最大電流。ドライバ/電源選定の上限基準になる。</td></tr><tr><td>回転数(rpm)</td><td>1分あたりの回転数。目標速度÷車輪円周から必要rpmが出る。</td></tr><tr><td>ギヤード（減速機付き）モータ</td><td>歯車で回転を遅くする代わりにトルクを増やしたモータ。走行用の定番。</td></tr><tr><td>エンコーダ</td><td>回転量を測るセンサ。速度の実測＝自律走行のオドメトリに使える。</td></tr><tr><td>モータドライバ／Hブリッジ</td><td>Piの弱い信号で大電流のモータを動かす中継回路。Hブリッジで正逆転(向き)を切り替える。</td></tr><tr><td>PWM／デューティ比</td><td>ONとOFFを高速で切り替えて平均の力を変える方式。ON時間の割合(デューティ比)を上げると速くなる。</td></tr><tr><td>VM / ロジック電圧</td><td>VM=モータを回す電源電圧。ロジック電圧=ドライバの制御入力(IN)が反応する電圧。Pi5は3.3V。</td></tr><tr><td>共通GND</td><td>Pi・ドライバ・電源のGND(0V基準)を1点でつなぐこと。これが無いと信号が通らない。</td></tr><tr><td>逆起電力 / フライバックダイオード</td><td>モータが止まる時に出る逆向きの電圧と、それを逃がして部品を守る保護ダイオード。</td></tr><tr><td>RP1</td><td>Pi5のI/Oを担当する新チップ。これによりGPIO/PWMの扱いがPi4以前と変わった。</td></tr><tr><td>レベル変換(レベルシフタ)</td><td>3.3Vと5Vなど電圧の違う信号同士をつなぐための変換回路。</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>このIssueは純ハード。出力（モータが回る足回り）は後続の<strong>ロボ制御ソフトIssue</strong>に引き継ぐ。設計上、ロボ制御ソフトは Supabase の <code>robot_calls</code> を購読し <code>robot_status</code> を更新する<strong>疎結合</strong>（アプリとは直接通信せずDB経由）なので、足回り完成後はこの制御ソフトが速度指令を出す側になる。</li><li>関連Issue: ロボ側「自律走行(Nav2)」「ロボ制御ソフト（robot_calls購読→走行→robot_status更新）」、ハード設計の電源・筐体・配線まわりのIssue。配線図はそれらと共有する。</li><li>Pi5の給電・GPIO・PWMの正は公式: https://www.raspberrypi.com/documentation/ （Raspberry Pi hardware → Power supply / GPIO）。Pi5前提で読む。</li><li>Nav2（オドメトリ＝なぜエンコーダが効くか）: https://docs.nav2.org/ 。配線図ツール: Fritzing https://fritzing.org/ / 基板なら KiCad https://docs.kicad.org/ 。</li><li>Pi5のソフトはPCで書いて push → Pi で git pull して実行（ロボ側コードは robot/ 配下で別管理）。環境構築の基本は同フォルダ 環境構築ガイド.html。</li></ul>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

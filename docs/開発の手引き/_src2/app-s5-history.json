@@ -1,0 +1,129 @@
+{
+  "id": "app-s5-history",
+  "group": "アプリ（追加機能）",
+  "order": 2,
+  "taskName": "貸出履歴ページ（全体）",
+  "screen": "S-5",
+  "role": "アプリB",
+  "sprint": "Sprint 3",
+  "priority": "★★☆",
+  "status": "",
+  "category": "アプリ",
+  "stack": ["TypeScript", "React", "Next.js", "Supabase JS"],
+  "oneLineGoal": "誰が・どの本を・いつ借りて／返したかを新しい順に一覧表示する /history ページを作る。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        { "type": "p", "text": "**ゴール**: 全体の貸出履歴（`loans` テーブル）を**新しい順**に一覧表示するページ `/history` を作る。誰が・どの本を・いつ借りて／返したかがひと目で分かる状態にする。要件 **F-07**。" },
+        { "type": "p", "text": "**なぜ必要か**: 本一覧（S-1）は「今どの本があるか」を見る画面。履歴ページは「過去に誰がいつ借りたか」という時間軸の記録を見る画面。返却忘れの確認や、よく借りられる本の把握に使う。`loans` には削除ポリシーが無い（誰も消せない）ので、ここは消えない記録の閲覧窓口になる。" },
+        { "type": "p", "text": "**編集する主なファイル**: `app/history/page.tsx`（今は説明文だけの仮ページ）。ここを実装して履歴一覧にする。あわせて、本一覧か本詳細から `/history` へ行けるよう **リンクを1本足す**。リンクを足す候補ファイルは `app/page.tsx`（本一覧 S-1 = ルート `/`）か `app/books/[id]/page.tsx`（本詳細 S-2）。**どちらか1つ**に `<Link href=\"/history\">` を足せばDone。" },
+        { "type": "callout", "variant": "warn", "label": "実ファイルパス注意", "text": "本一覧は `app/page.tsx`（ルート `/`）です。`app/books/page.tsx` は**存在しません**（`app/books/` の下は `[id]/` だけ）。存在しないファイルを探して詰まらないように。" }
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        { "type": "checklist", "items": [
+          "/history を開くと貸出履歴の一覧が表示される",
+          "並び順が新しい順（borrowed_at の降順）になっている",
+          "各行に「本のタイトル」「借りた人」「借りた日時」「返した日時 または 未返却」が出ている",
+          "ゲストで借りた行は guest_name が表示される",
+          "（Auth実装後）ログイン利用者で借りた行は users の表示名が出る ※下記の注意参照",
+          "本一覧（app/page.tsx）か本詳細（app/books/[id]/page.tsx）のどちらかから /history へ遷移できる",
+          "履歴が0件のときは「履歴がありません」など空表示が出る"
+        ]},
+        { "type": "callout", "variant": "warn", "label": "user表示名は条件付きDone", "text": "ログイン利用者（borrower_type='user'）の表示名は、現状のDB設定だと取得がブロックされます（後述の「つまずきポイント」参照）。当面はゲスト（guest_name）中心で動作確認し、user表示は Auth とポリシー整備の後でOKです。Doneの該当項目は「(Auth実装後)」の条件付きと考えてください。" }
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        { "type": "steps", "items": [
+          { "title": "まず現状を見る", "detail": "アプリを起動して http://localhost:3000/history を開く。今は説明文だけの仮ページが出るはず。ここを書き換えていく。" },
+          { "title": "テストデータ（履歴）を1〜2件入れる", "detail": "Supabase の SQL Editor で loans にゲスト借りの行を入れる（下の『困ったら・参照』のシードSQL参照）。データが無いと一覧が空で確認できない。" },
+          { "title": "このページの取得方法を決める", "detail": "読み取り専用ページなので、まずは『クライアントコンポーネント（先頭に \"use client\"、useEffect/useState で取得）』が一番素直。判断に迷ったら下の研究項目を読む。" },
+          { "title": "loans を取得する", "detail": "supabase（lib/supabaseClient.ts の supabase）を import して loans を select。まずは並び替え無し・タイトル無しでも、行が取れて画面に出ることを先に確認する。" },
+          { "title": "新しい順に並べ替える", "detail": "borrowed_at の降順で並べる。Supabase JS の .order() の正確な書き方は研究項目の order ページで確認。" },
+          { "title": "本のタイトルを一緒に出す", "detail": "loans から books（title など）をネスト select で一緒に取る（研究項目参照）。books は閲覧ポリシーがあるので取得できる。" },
+          { "title": "借りた人を表示する", "detail": "borrower_type が 'guest' なら guest_name を表示。'user' の表示名は現状ブロックされるので（後述）、まずは guest 行で見た目を完成させる。" },
+          { "title": "日時を見やすく整形する", "detail": "borrowed_at / returned_at は ISO 文字列なので、そのまま出さず読みやすい形にする（研究項目の Date 整形参照）。returned_at が無い行は『未返却』と表示。" },
+          { "title": "一覧UIを組む", "detail": "table か、行ごとのカード（map で並べる）で表示。Tailwind でざっくり整える。" },
+          { "title": "空表示・読み込み中表示を足す", "detail": "クライアント取得なら、読み込み中は loading 状態、0件は data.length === 0 の分岐で出す（理由は研究項目参照）。" },
+          { "title": "履歴への導線を足す", "detail": "app/page.tsx か app/books/[id]/page.tsx のどちらかに <Link href=\"/history\">履歴を見る</Link> を1本足す。" }
+        ]}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        { "type": "callout", "variant": "study", "label": "このNext.jsは16系", "text": "学習データの書き方と違う可能性があります。コードを書く前に、必ず node_modules/next/dist/docs/ の該当ガイドを開いて現行の書き方を確認してください。AIには答えを書かせず、調べ方を聞くこと。" },
+        { "type": "research", "items": [
+          { "topic": "ページをサーバーで作るかクライアントで作るか", "why": "取得方法でコードの形（\"use client\" の要否、データ取得の書き方、読み込み中表示の出し方）が変わる。最初に決めないと手が止まる。", "where": "node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md と 03-api-reference/01-directives/use-client.md。このプロジェクトの supabase（lib/supabaseClient.ts）はブラウザ向けクライアントなので、読み取り専用ページならまず『クライアントコンポーネント（\"use client\" + useEffect/useState）』が一番素直で確認しやすい既定の道。サーバーで取りたくなったら同 docs を読んでから。" },
+          { "topic": "loans を select して borrowed_at 降順に並べる", "why": "Done の核。並び順が違うと『新しい順』を満たせない。.order() の引数の置き場所を間違えやすい。", "where": "https://supabase.com/docs/reference/javascript/select と https://supabase.com/docs/reference/javascript/order （order の専用ページ）。order(\"列名\", { ascending: false }) の形。" },
+          { "topic": "関連テーブルを一緒に取る方法（ネスト select）", "why": "loans には book_id しか入っていない。本のタイトルを出すには books を一緒に取る必要がある。", "where": "https://supabase.com/docs/reference/javascript/select の『Query foreign tables / nested』。重要: ネスト select は参照先テーブルにも SELECT ポリシー（RLS）が必要。books は sel_books があるので取れる。一方 loans→users（借りた人の表示名）も同じネスト書き方で取れるはずだが、users には現状 SELECT ポリシーが無いので user 行は取れず空になる（guest 行は guest_name を使う）。booksとusersで扱いが違う点に注意。" },
+          { "topic": "日時（timestamptz）を見やすく整形する", "why": "DB の値は 2026-06-18T03:21:00.000Z のような機械向け文字列。そのまま出すと読みにくい。", "where": "JavaScript の Date と toLocaleString。MDN『Date.prototype.toLocaleString』を検索。未返却（returned_at が null）の判定とあわせて考える。" },
+          { "topic": "未返却／返却済みの表現と borrower_type 分岐", "why": "returned_at の有無で表示を変える。borrower_type が user か guest かでも借りた人の出し方が変わる。条件分岐の練習。", "where": "React の条件付きレンダリング（公式 react.dev『Conditional Rendering』）。borrower_type==='guest' → guest_name、'user' → users.display_name（ただし現状ブロック、下記つまずき参照）。" },
+          { "topic": "読み込み中表示と空表示の出し方", "why": "取得方法によって正しい出し方が違う。loading.tsx を置いたのに読込中が出ない、という落とし穴がある。", "where": "node_modules/next/dist/docs/01-app/01-getting-started/06-fetching-data.md と 03-api-reference/03-file-conventions/loading.md・error.md。クライアントで取得する場合の『読み込み中／0件』は基本コンポーネント内の状態分岐（loading 状態、data.length===0）で出す。loading.tsx はサーバー側取得時の仕組みで、クライアント取得では初回描画にしか効かない。" }
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        { "type": "callout", "variant": "danger", "label": "user の表示名が空になる（最重要）", "text": "borrower_type='user' の行で users.display_name を出そうとしても、現状 schema.sql には users テーブルの SELECT ポリシー（sel_users）が無く、アプリは publishable(anon) キー＋RLS で接続するため取得がブロックされ空になります。原因不明のハマりになりがち。対処: (1) 当面はゲスト（guest_name）中心で確認する、(2) user 表示が必要なら PM／Supabase 管理者に users の SELECT ポリシー追加を相談する、(3) books のネストは sel_books があるので問題ない＝users とは別扱い、と切り分ける。『users 表示名が出ない時はまず RLS の SELECT ポリシー有無を確認』。" },
+        { "type": "callout", "variant": "warn", "label": "本のタイトルが出ない", "text": "loans は book_id しか持っていない。タイトルは books をネスト select で取る必要がある。出ない時は (1) ネストの書き方（select 指定文字列）と (2) FK/キー名（book_id 経由）を確認。books は SELECT ポリシーがあるので RLS でブロックはされない。" },
+        { "type": "callout", "variant": "warn", "label": "並び順が思った逆になる", "text": ".order() は order(\"borrowed_at\", { ascending: false }) のように第1引数=列名、第2引数=オプション。{ ascending: false } の置き場所を間違えると昇順のままになる。" },
+        { "type": "callout", "variant": "warn", "label": "loading.tsx を置いたのに読込中が出ない", "text": "クライアント取得（useEffect）では loading.tsx は効きにくい。読み込み中は自分でコンポーネント内の loading 状態で出す。自分が選んだ取得方法とどちらの仕組みが噛み合うかを意識する。" },
+        { "type": "callout", "variant": "tip", "label": "テストデータが無くて何も出ない", "text": "loans が空だと当然一覧も空。先にシードSQL（下記）で1〜2件入れてから画面を作ると進めやすい。" }
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        { "type": "ul", "items": [
+          "/history を開くと履歴の行が表示される → 出ない時: loans にデータが入っているか／取得エラーが console に出ていないか確認。",
+          "新しく入れた行が一番上に来る（borrowed_at 降順） → 逆順なら .order() の { ascending: false } を確認。",
+          "本のタイトルが各行に出ている → 空欄なら ネスト select のキー名／book_id 経由のFKを確認。",
+          "ゲスト借りの行で guest_name が出ている → 空なら borrower_type 分岐と guest_name の参照を確認。",
+          "（Auth後）user 借りの行で表示名が出る → 空なら users の SELECT ポリシー（RLS）有無をまず確認。",
+          "未返却の行に『未返却』、返却済みの行に返却日時が出る → returned_at が null かどうかの分岐を確認。",
+          "loans を全部消した想定（空）で『履歴がありません』が出る → 0件分岐（data.length===0）を確認。",
+          "本一覧 or 本詳細の『履歴を見る』リンクから /history に飛べる。"
+        ]}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        { "type": "callout", "variant": "tip", "label": "答えを書かせず導かせる", "text": "AIには完成コードを書かせないこと。『考え方』『調べる場所』『つまずきの切り分け』を聞く相棒として使う。" },
+        { "type": "code", "lang": "text", "code": "あなたはコーチです。答えのコードは書かず、考え方と調べる場所だけ教えてください。\n\n私は Next.js(App Router・16系) + React + TypeScript + Supabase JS で、貸出履歴ページ app/history/page.tsx を作っています。\nやりたいこと: loans テーブルを borrowed_at の降順で一覧表示し、本のタイトル(books)も一緒に出す。借りた人は guest なら guest_name を表示。日時は読みやすく整形。未返却(returned_at が null)は『未返却』と出す。\n前提: supabase は lib/supabaseClient.ts の publishable(ブラウザ向け)クライアント。users テーブルには SELECT ポリシーが無いので user の表示名は今は取れない(guest 中心で進める)。\n\n質問:\n1) このページはサーバー/クライアントどちらで作るのが素直? 確認すべき docs はどれ?\n2) Supabase JS で loans を select しつつ books をネストで取り、borrowed_at 降順にするには『どのリファレンスのどの節』を読めばいい?\n3) ネスト select が users では失敗し books では成功する理由(RLS)を、私の理解が合っているか確認したい。\nヒントと調べ先だけください。コードは出さないで。" }
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        { "type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["loans", "貸出履歴テーブル。誰が・どの本を・いつ借りて／返したかの記録。"],
+          ["borrowed_at / returned_at", "借りた日時／返した日時。returned_at が null＝まだ返していない（未返却）。"],
+          ["borrower_type", "借りた人の種類。'user'（ログイン利用者）か 'guest'（ゲスト）。表示の出し分けに使う。"],
+          ["降順（ascending: false）", "新しい→古いの順。Supabase では order(\"列名\", { ascending: false }) の形で指定する。"],
+          ["ネスト select", "関連テーブルを一緒に取る書き方。参照先にも SELECT ポリシー(RLS)が必要。books は可、users は現状不可。"],
+          ["RLS / SELECT ポリシー", "行レベルの閲覧許可ルール。許可が無いテーブルは anon キーでは取れない（空になる）。"],
+          ["use client", "そのファイルをクライアントコンポーネントにする宣言。useEffect/useState を使う取得で必要。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        { "type": "p", "text": "**リンク追加先（実パス）**: 本一覧 S-1 = `app/page.tsx`（ルート `/`）／ 本詳細 S-2 = `app/books/[id]/page.tsx`。どちらか1つに `<Link href=\"/history\">` を足せばOK。`app/books/page.tsx` は存在しないので注意。" },
+        { "type": "p", "text": "**関連要件/設計**: F-07（履歴表示）。DBスキーマは `supabase/schema.sql`（loans の列名・borrower_type・RLS を確認）。環境変数や起動でつまずいたら同フォルダの **環境構築ガイド.html**。" },
+        { "type": "p", "text": "**関連Issue**: 本一覧（S-1）、本詳細（S-2）、本の登録（loans に行を作る側）。リンクは S-1 か S-2 側に足す。" },
+        { "type": "callout", "variant": "tip", "label": "テスト用シードSQL（ゲスト借り）", "text": "Supabase の SQL Editor に貼って実行。下のように1回で実行できる形（サブクエリで book_id を引く）にしてあるので、idを手で貼り替える必要はありません。" },
+        { "type": "code", "lang": "sql", "code": "-- 前提: books に title='テスト本A' の本が1冊ある想定（無ければ先に1冊 insert）\n-- 例: insert into books (title, shelf_level) values ('テスト本A', 1);\n\n-- ゲスト借り・未返却の履歴を1件（book_id はサブクエリで自動取得＝貼替不要）\ninsert into loans (book_id, borrower_type, guest_name)\nselect id, 'guest', '山田ゲスト' from books where title = 'テスト本A' limit 1;\n\n-- ゲスト借り・返却済みの履歴も1件（returned_at を入れる）\ninsert into loans (book_id, borrower_type, guest_name, returned_at, returned_by)\nselect id, 'guest', '佐藤ゲスト', now(), '受付' from books where title = 'テスト本A' limit 1;" },
+        { "type": "callout", "variant": "warn", "label": "user借りのテストは難所", "text": "user 借りの履歴は users.id が auth.users(id) を参照するため、テスト行を作るには Auth 登録が絡みます。さらに users には SELECT ポリシーが無く表示名も取れません。Auth 未実装のうちは user 借りのテストは後回しでOK。まずは上のゲスト行で完成させましょう。" }
+      ]
+    }
+  ]
+}

@@ -12,11 +12,12 @@
   <header class="hero">
     <h1>📚 開発の手引き（困ったときはここ）</h1>
     <p>移動本棚ロボ アプリの開発で迷ったら、まずこのフォルダを開いてください。<br>
-    環境構築から、最初のスプリント（Issue #1〜#9）の進め方・調べ方までをまとめています。</p>
+    環境構築から、各Issueの進め方・調べ方、ロボ・ハード・公開までをまとめています。</p>
     <div class="badges">
       <span class="badge">🎓 初心者向け</span>
       <span class="badge">🧭 進め方＋調べ方</span>
       <span class="badge">🤖 AIコーチの使い方つき</span>
+      <span class="badge">📦 全Issue網羅</span>
     </div>
   </header>
 
@@ -37,7 +38,7 @@
   </section>
 
   <section>
-    <h2 class="sec">最初のスプリント：Issue #1〜#9 の進め方</h2>
+    <h2 class="sec">最初のスプリント：Issue #1〜#9</h2>
     <p class="section-intro">担当の色：<span class="pill role">アプリ</span> <span class="pill robot" style="background:#f3e8ff;border-color:#e9d5ff;color:#6b21a8">ロボ</span> <span class="pill done">基盤（PM・完了済み）</span>。番号は GitHub の実Issue番号です。</p>
     <div class="cards">
       <a class="card " href="issue-01.html">
@@ -98,12 +99,188 @@
   </section>
 
   <section>
+    <h2 class="sec">その先のすべてのIssue（カテゴリ別）</h2>
+    <p class="section-intro">#1〜#9 の後に取り組む Issue 一式。まだ GitHub 番号は振られていないものが多いので、<strong>タスク名・画面名(S-◯)・要件(F-◯/C-◯)で照合</strong>してください。</p>
+  </section>
+
+  <section>
+    <div class="group-head"><span class="g-emoji">💻</span><h2 class="sec" style="border:none;margin:0;padding:0">アプリ（追加機能）</h2><span class="g-count">3件</span></div>
+    <div class="cards">
+      <a class="card " href="app-s4-robot-call.html">
+      <div class="c-no">アプリ</div>
+      <div class="c-title">ロボ呼出（本＋席を選んで呼ぶ）</div>
+      <div class="c-desc">本と席（stop_points）を選んで「呼ぶ」を押すと robot_calls に1行 insert（status=queued）。今並んでいる呼出キュー（queued/moving）も画面に出す。</div>
+      <div class="c-tags"><span class="pill">S-4（S-2 本詳細から開く想定）</span><span class="pill role">アプリA</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    <a class="card " href="app-s5-history.html">
+      <div class="c-no">アプリ</div>
+      <div class="c-title">貸出履歴ページ（全体）</div>
+      <div class="c-desc">誰が・どの本を・いつ借りて／返したかを新しい順に一覧表示する /history ページを作る。</div>
+      <div class="c-tags"><span class="pill">S-5</span><span class="pill role">アプリB</span><span class="pill sprint">Sprint 3</span></div>
+    </a>
+    <a class="card " href="app-robot-status.html">
+      <div class="c-no">アプリ</div>
+      <div class="c-title">ロボの現在地・状態を表示</div>
+      <div class="c-desc">robot_status（常に1行）を購読し、idle/moving/arrived/returning を日本語で画面に映す。Supabase でstateを書き換えるとリロードなしで表示が変わる。</div>
+      <div class="c-tags"><span class="pill">S-1（ホームに状態表示ウィジェットを置く）</span><span class="pill role">アプリA</span><span class="pill sprint">Sprint 3</span></div>
+    </a>
+    </div>
+  </section>
+
+  <section>
+    <div class="group-head"><span class="g-emoji">🤖</span><h2 class="sec" style="border:none;margin:0;padding:0">ロボ側ソフト</h2><span class="g-count">4件</span></div>
+    <div class="cards">
+      <a class="card robot" href="robot-bridge-full.html">
+      <div class="c-no">ロボ</div>
+      <div class="c-title">ブリッジ完全版（状態遷移＋robot_status更新）</div>
+      <div class="c-desc">robot_calls の queued を取り出し、moving→arrived→done と状態を進めながら robot_status も整合させ、1件の呼出を最後まで処理しきる。</div>
+      <div class="c-tags"><span class="pill role">ハード制御</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    <a class="card robot" href="robot-nav2-drive.html">
+      <div class="c-no">ロボ</div>
+      <div class="c-title">Nav2で席まで自走する</div>
+      <div class="c-desc">席の座標(stop_points)をNav2のゴールに変換して送り、シミュ→実機の順で「指定した席まで移動して停止」を実現する。</div>
+      <div class="c-tags"><span class="pill role">ハード制御</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    <a class="card robot" href="robot-led.html">
+      <div class="c-no">ロボ</div>
+      <div class="c-title">LED点灯（到着時に該当段を光らせる）</div>
+      <div class="c-desc">ロボが到着(arrived)したら books.shelf_level に対応する段の NeoPixel を点灯し、その呼出が done になったら消灯する。LED は Pi 実機(GPIO/SPI直結)でしか動かない。</div>
+      <div class="c-tags"><span class="pill role">ハード制御</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    <a class="card robot" href="robot-safe-stop.html">
+      <div class="c-no">ロボ</div>
+      <div class="c-title">ネット切断時の安全停止→ホーム帰還</div>
+      <div class="c-desc">通信が切れたら暴走させず、まず『その場で安全停止』。一定時間（暫定30秒）復帰しなければホーム帰還を試みる。Sprint3の必達は (1)切断検知 (2)停止 まで。ホーム帰還は座標とマップがそろってからの後続。</div>
+      <div class="c-tags"><span class="pill role">ハード制御</span><span class="pill sprint">Sprint 3</span></div>
+    </a>
+    </div>
+  </section>
+
+  <section>
+    <div class="group-head"><span class="g-emoji">🔧</span><h2 class="sec" style="border:none;margin:0;padding:0">ハードウェア設計</h2><span class="g-count">6件</span></div>
+    <div class="cards">
+      <a class="card hw" href="hw-pi5-setup.html">
+      <div class="c-no">ハード</div>
+      <div class="c-title">Raspberry Pi 5 セットアップ（Ubuntu＋ROS2 Humble）</div>
+      <div class="c-desc">Pi 5 を起動して SSH で入れる状態にし、ROS2 のサンプル（talker/listener）が動くところまで持っていく。ロボ開発の土台づくり。</div>
+      <div class="c-tags"><span class="pill role">ハ設/ハ制</span><span class="pill sprint">Sprint 0（準備）</span></div>
+    </a>
+    <a class="card hw" href="hw-chassis.html">
+      <div class="c-no">ハード</div>
+      <div class="c-title">メカナム筐体の発注・組立</div>
+      <div class="c-desc">メカナムホイールの走行筐体（台車）を発注・組立。4輪が付き、ローラーが配置図どおりの向きで、本棚相当の重さを載せても歪まずガタつかず倒れない台車を作る。</div>
+      <div class="c-tags"><span class="pill role">ハ設</span><span class="pill sprint">Sprint 1〜2</span></div>
+    </a>
+    <a class="card hw" href="hw-motor.html">
+      <div class="c-no">ハード</div>
+      <div class="c-title">モーター／ドライバ選定・配線</div>
+      <div class="c-desc">走行用DCモータとモータドライバを選び、Raspberry Pi 5 のテスト信号で各モータを向き・速度ともに回せる状態まで配線する。</div>
+      <div class="c-tags"><span class="pill role">ハ設</span><span class="pill sprint">Sprint 1〜2</span></div>
+    </a>
+    <a class="card hw" href="hw-shelf-led.html">
+      <div class="c-no">ハード</div>
+      <div class="c-title">本棚部（5スロット）＋NeoPixel×5の組込</div>
+      <div class="c-desc">5段の本棚部を作り、各段に NeoPixel を1個ずつ組み込んで「5段に本が入る／各段のLEDを個別に光らせられる」状態にする。要件 F-10（呼んだ段を光らせる）の物理的な土台づくり。</div>
+      <div class="c-tags"><span class="pill role">ハ設</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    <a class="card hw" href="hw-circuit.html">
+      <div class="c-no">ハード</div>
+      <div class="c-title">回路設計（ブレッドボード検証→KiCad基板化）</div>
+      <div class="c-desc">いきなり基板化せず、まずブレッドボードで実際に配線して各部(Pi5該当GPIO・モータドライバ・NeoPixel・電源)を通電確認→確定したらKiCadで回路図→PCB→DRCを通し、製造データ(ガーバー)出力まで持っていく。</div>
+      <div class="c-tags"><span class="pill role">ハ設</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    <a class="card hw" href="hw-mapping.html">
+      <div class="c-no">ハード</div>
+      <div class="c-title">実機マッピング（SLAMで地図作成→席座標採取）</div>
+      <div class="c-desc">SLAMで部屋の地図を作って保存し、席3つの座標(x,y,theta)を実機から採取して stop_points テーブルに入れる。これが後でロボが席まで自走するための「地図」と「目的地リスト」になる。</div>
+      <div class="c-tags"><span class="pill role">ハ設＋ハ制</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    </div>
+  </section>
+
+  <section>
+    <div class="group-head"><span class="g-emoji">🚀</span><h2 class="sec" style="border:none;margin:0;padding:0">結合・品質・公開</h2><span class="g-count">5件</span></div>
+    <div class="cards">
+      <a class="card integ" href="rel-integration-test.html">
+      <div class="c-no">結合</div>
+      <div class="c-title">アプリ⇔ロボ 結合テスト（一気通貫）</div>
+      <div class="c-desc">「本を選ぶ→席へ呼ぶ→ロボ自走→到着でLED→借りる→返す」を最初から最後まで通し、つなぎ目（Supabase の各テーブル）が全部つながることを全員で確認する。</div>
+      <div class="c-tags"><span class="pill role">全員</span><span class="pill sprint">Sprint 3</span></div>
+    </a>
+    <a class="card integ" href="rel-uat.html">
+      <div class="c-no">結合</div>
+      <div class="c-title">受入テスト（ゼミ生が実際に使う）</div>
+      <div class="c-desc">ゼミ生に本物のアプリを触ってもらい、操作感の改善点とバグを集めて直す。</div>
+      <div class="c-tags"><span class="pill role">全員</span><span class="pill sprint">W11</span></div>
+    </a>
+    <a class="card integ" href="rel-deploy.html">
+      <div class="c-no">結合</div>
+      <div class="c-title">Vercelへ本番デプロイ（公開URL）</div>
+      <div class="c-desc">アプリをVercelに本番デプロイして、誰でも開ける公開URLを出す。mainマージで自動更新される状態にする。</div>
+      <div class="c-tags"><span class="pill role">PM / アプリA</span><span class="pill sprint">W12</span></div>
+    </a>
+    <a class="card integ" href="rel-security.html">
+      <div class="c-no">結合</div>
+      <div class="c-title">RLS・セキュリティ最終確認</div>
+      <div class="c-desc">公開前に RLS とキーの扱いを最終点検し、全削除・キー漏洩などの事故を防ぐ。</div>
+      <div class="c-tags"><span class="pill role">PM（水谷）</span><span class="pill sprint">W12</span></div>
+    </a>
+    <a class="card integ" href="rel-presentation.html">
+      <div class="c-no">結合</div>
+      <div class="c-title">発表準備（デモ・スライド・リハ）</div>
+      <div class="c-desc">ゼミ発表会で『課題→解決→デモ→学び』を短く確実に見せきる。デモは止まらず最後まで通し、失敗時は録画で代替できる状態にする。</div>
+      <div class="c-tags"><span class="pill role">全員</span><span class="pill sprint">W12</span></div>
+    </a>
+    </div>
+  </section>
+
+  <section>
+    <div class="group-head"><span class="g-emoji">✨</span><h2 class="sec" style="border:none;margin:0;padding:0">COULD（余力で）</h2><span class="g-count">5件</span></div>
+    <div class="cards">
+      <a class="card could" href="could-s7-search.html">
+      <div class="c-no">COULD</div>
+      <div class="c-title">検索（タイトル／著者で絞り込み）</div>
+      <div class="c-desc">検索ボックスに打った文字で、タイトル/著者から本を絞り込んで一覧表示する（今回はタグ検索は対象外）。</div>
+      <div class="c-tags"><span class="pill">S-7</span><span class="pill role">アプリ</span><span class="pill sprint">余力で</span></div>
+    </a>
+    <a class="card could" href="could-tags.html">
+      <div class="c-no">COULD</div>
+      <div class="c-title">タグ付け</div>
+      <div class="c-desc">本に自由なタグ（例: 機械学習・論文・卒研）を付けて、表示・絞り込みできるようにする（要件 C-02）。</div>
+      <div class="c-tags"><span class="pill">S-2 / S-3 / S-7</span><span class="pill role">アプリ</span><span class="pill sprint">余力で</span></div>
+    </a>
+    <a class="card could" href="could-edit-book.html">
+      <div class="c-no">COULD</div>
+      <div class="c-title">本情報の編集</div>
+      <div class="c-desc">登録済みの本（books）の情報を、既存値が入ったフォームから1件だけ安全に編集（update）できるようにする。</div>
+      <div class="c-tags"><span class="pill">S-2</span><span class="pill role">アプリ</span><span class="pill sprint">余力で</span></div>
+    </a>
+    <a class="card could" href="could-overdue.html">
+      <div class="c-no">COULD</div>
+      <div class="c-title">返却忘れ警告通知</div>
+      <div class="c-desc">借りたまま一定期間を超えた本に「返却忘れかも」の警告を出す（要件 C-04）。</div>
+      <div class="c-tags"><span class="pill">S-5（貸出履歴）</span><span class="pill role">アプリ</span><span class="pill sprint">余力で</span></div>
+    </a>
+    <a class="card could" href="could-google-login.html">
+      <div class="c-no">COULD</div>
+      <div class="c-title">Googleログイン有効化</div>
+      <div class="c-desc">Google アカウントでログインできるようにし、貸出に user_id を残せる土台を作る（MVP後の拡張）。</div>
+      <div class="c-tags"><span class="pill">S-6</span><span class="pill role">PM＋アプリ</span><span class="pill sprint">余力で</span></div>
+    </a>
+    </div>
+  </section>
+
+  <section>
     <h2 class="sec">着手のおすすめ順 ＆ 依存関係</h2>
 <pre class="ascii">[完了] #2 テーブル作成 / #4 リポジトリ雛形 ─┐
-                                          ├─ アプリ：#1 本一覧 → #5 本登録 / #6 ゲスト名 → #7 借りる/返す
    #3 サンプルデータ投入（PM）───────────────┤
-                                          └─ ロボ ：#8 ブリッジ最小 → #9 座標変換の下調べ</pre>
-    <div class="callout tip"><p>最初の山場は <strong>#1 本一覧（S-1）</strong>。「Supabaseから読んで画面に出す」最初の成功体験で、ここを越えると他の画面は同じ型で書けます。</p></div>
+   アプリ：#1 本一覧 → #5 本登録 / #6 ゲスト名 → #7 借りる/返す → S-4 呼出 → S-5 履歴 / 現在地表示
+   ロボ ：#8 ブリッジ最小 → ブリッジ完全版 →（#9 座標変換 → Nav2自走）/ LED / 切断時の安全停止
+   ハード：Pi5 → 筐体 / モーター / 本棚+NeoPixel / 回路設計(BB→KiCad) → 実機マッピング
+                          ↓（アプリとロボが各自そろったら）
+   結合テスト → 受入テスト → Vercel公開 → 発表準備</pre>
+    <div class="callout tip"><p>最初の山場は <strong>#1 本一覧（S-1）</strong>。「Supabaseから読んで画面に出す」最初の成功体験で、ここを越えると他の画面は同じ型で書けます。MVPの本命ラインは #1・#5・#7・S-4・現在地表示／#8・ブリッジ完全版・Nav2自走・LED／Pi5・筐体・本棚+LED・マッピング／結合テスト。</p></div>
   </section>
 
   <section>
@@ -120,6 +297,7 @@
       <tr><th>記号</th><th>意味</th><th>例</th></tr>
       <tr><td><strong>S-◯</strong></td><td>画面番号（Screen）。画面のIssueにだけ付く</td><td>S-1 本一覧</td></tr>
       <tr><td><strong>F-◯</strong></td><td>機能要件（Function）</td><td>F-08 ロボ呼出</td></tr>
+      <tr><td><strong>C-◯</strong></td><td>任意機能（Could）</td><td>C-01 検索</td></tr>
       <tr><td><strong>#◯</strong></td><td>GitHubのIssue番号（自動採番。S-とは別物）</td><td>#1</td></tr>
     </table>
   </section>

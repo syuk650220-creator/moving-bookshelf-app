@@ -1,0 +1,137 @@
+{
+  "id": "robot-nav2-drive",
+  "group": "ロボ側ソフト",
+  "order": 2,
+  "taskName": "Nav2で席まで自走する",
+  "screen": "",
+  "role": "ハード制御",
+  "sprint": "Sprint 2",
+  "priority": "★★☆",
+  "status": "",
+  "category": "ロボ",
+  "stack": ["Python", "rclpy", "ROS2 Nav2"],
+  "oneLineGoal": "席の座標(stop_points)をNav2のゴールに変換して送り、シミュ→実機の順で「指定した席まで移動して停止」を実現する。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {"type": "p", "text": "ゴールは一言でいうと **「ある席の座標を渡すと、ロボがそこまで自分で走って止まる」** を成立させること。これがロボ側の心臓部で、アプリが `robot_calls` に「この席へ来て」と書いた呼び出しを、実際の移動につなげる最後のピースになる。"},
+        {"type": "p", "text": "席の場所は DB の `stop_points` テーブルに `x, y, theta`（位置と向き）で入っている。これを **Nav2（ROS2 のナビゲーション基盤＝地図の上で目的地まで自動で経路を作って走る仕組み）** が理解できる「ゴール」の形にして送ると、Nav2 が経路を計算し、障害物をよけながら席まで走って停止してくれる。"},
+        {"type": "callout", "variant": "study", "label": "先行する下調べIssueがある", "text": "座標→ゴール(PoseStamped)への変換ロジックは、先行する下調べタスク **「席座標→Nav2ゴール変換の下調べ(#9)」** が素案を作る担当。本Issueはその成果物（変換関数）を取り込んで「実際にNav2へ送って走らせる」ところを作る。#9 が未完なら最小版を自作してよいが、二重に本格実装しないこと。"},
+        {"type": "callout", "variant": "warn", "label": "まずシミュ、実機はそのあと", "text": "いきなり実機で走らせると物が壊れる・怪我のリスクがある。**まずはシミュレータ（Gazebo＝ロボを画面の中で動かせる仮想空間）で TurtleBot3（学習用の小型ロボ）を席まで走らせて検証** し、仕組みを理解してから実機に進む。"}
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {"type": "p", "text": "**このIssueの必須Doneはシミュレータ検証まで**。実機自走は「実機マッピングが完了していること」が前提なので、マッピング未完なら本Issueをブロックしないよう **ストレッチ目標（任意）** として分離する。"},
+        {"type": "checklist", "items": [
+          "Gazebo + TurtleBot3 + Nav2 が起動し、RViz（ROSの可視化ツール）でロボと地図が見える",
+          "Pythonから席のゴールを送ると、シミュ内のロボが目的地まで走って停止する（途中で止まらない）",
+          "ゴール到達時にターミナル出力で結果が **succeeded（成功）** になることを確認できた",
+          "向きの確認: `theta` を `0` と `1.57`（≒90度）の2値で送り、停止したときの向きが目視で変わることを確認した",
+          "到着の合格基準: Nav2 の `xy_goal_tolerance`（既定の許容誤差）の範囲で止まればOK、と理解している",
+          "【ストレッチ・実機/マッピング完了が前提】実機でマッピング済みの地図を読み込み、`stop_points` のうち任意の1席まで自走・停止できた"
+        ]},
+        {"type": "callout", "variant": "tip", "label": "合格は数値と画面で判定", "text": "「なんとなく着いた」では合格にしない。ターミナルの結果文字列(succeeded)・RViz上の停止位置・theta違いでの向きの差、の3点を観測手段にする。実機はシード済みの席3つのうちどれか1つで良い。"}
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {"type": "callout", "variant": "danger", "label": "最初に：開発OSの前提を確認", "text": "ROS2 Humble / Gazebo / TurtleBot3 は **Ubuntu 22.04 が前提**。このプロジェクトのアプリ開発は Windows 11（環境構築ガイド.html も Windows/Mac 前提でROS2は範囲外）なので、Windowsしか無い人は **WSL2 で Ubuntu 22.04 を入れる** か、別のUbuntu PC / Raspberry Pi で作業する必要がある。ここで方針を決めずに進めると最初の30分で詰まる。"},
+        {"type": "steps", "items": [
+          {"title": "1. ROS2環境を用意してシミュを起動する", "detail": "Ubuntu 22.04（WSL2でも可）に ROS2 Humble・Nav2・TurtleBot3 を apt で入れる（パッケージ名は公式で確認）。つまずき所: ①新しいターミナルごとに `source /opt/ros/humble/setup.bash` を実行する ②`export TURTLEBOT3_MODEL=burger` を毎回設定する（未設定だとモデルが分からず起動しない） ③apt で入れるパッケージ群（Nav2 / TurtleBot3 / シミュ用）は版で名前が違うので公式の該当ページで確認。まず公式の Gazebo + Nav2 起動例どおりに動かす。"},
+          {"title": "2. RVizで地図上に初期位置を与える", "detail": "Nav2 は今ロボがどこに居るかを AMCL（地図の上で自己位置を推定する仕組み）で推定する。起動直後はズレているので RViz の「2D Pose Estimate」（地図上で現在地と向きを手で教えるボタン）で実際の位置に合わせる。これをしないとゴールを送っても動かない／変な経路になる。"},
+          {"title": "3. まず Simple Commander でゴールを1つ送る", "detail": "実装方式は **nav2_simple_commander の BasicNavigator（goToPose / isTaskComplete / getResult）に一本化** する。これは生のアクションを直接叩くより桁違いに易しい高レベルAPI。まずは座標をベタ書きで1つ送り、ロボが走って止まり getResult が succeeded になることを確認する。生のアクションクライアント(NavigateToPose)は仕組み理解用の参考にとどめる。"},
+          {"title": "4. 席座標→ゴール(PoseStamped)変換を組み込む", "detail": "ベタ書きを卒業し、`stop_points` の x,y,theta からゴールを作る。**この theta→quaternion 変換は下調べIssue(#9)の成果物**。#9 で作った変換関数を import して使う（無ければ平面ヨーの最小版 `qz=sin(theta/2), qw=cos(theta/2)` を自作）。frame_id は \"map\"、stamp は現在時刻を入れる。同じ変換を本格的に作り直さないこと。"},
+          {"title": "5. DBから席座標を読んで送る（橋渡しと接続）", "detail": "supabase-py で `stop_points` から対象席の x,y,theta を取得 → 変換 → goToPose で送る、という流れにする。呼び出しの検知は別タスク「ブリッジ最小実装(#8)」が担当なので、本Issueは「席を1つ指定したら走る」が動けばよい。"},
+          {"title": "6. 実機に進む（ストレッチ・マッピング完了後）", "detail": "実機マッピング（SLAMで地図を作る別作業）が終わっていることが前提。bringup（Nav2一式をまとめて起動する起動ファイル）で地図を読み込み、初期位置を合わせ、任意の1席へ送って自走・停止を確認する。安全のため最初は速度を落とし、緊急停止できる体制で。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {"type": "callout", "variant": "study", "text": "ここが核心。Nav2 は概念が多いので「何を・なぜ・どこで調べるか」を押さえてから手を動かすと迷子にならない。"},
+        {"type": "research", "items": [
+          {"topic": "ROS2 Humble / Nav2 / TurtleBot3 のシミュ環境セットアップ（OS前提込み）", "why": "本Issュー最大の詰まり所。Ubuntu 22.04 前提で、apt パッケージ名・source・TURTLEBOT3_MODEL の export を正しくやらないと何も起動しない。Windows勢はWSL2方針も要確認。", "where": "TurtleBot3 e-Manual の Quick Start と Simulation（https://emanual.robotis.com/docs/en/platform/turtlebot3/quick-start/ と /simulation/）／ Nav2 Getting Started（https://docs.nav2.org/getting_started/index.html）／ ROS2 Humble インストール（https://docs.ros.org/en/humble/）。同フォルダの 環境構築ガイド.html はアプリ用でROS2は範囲外なので頼らない。"},
+          {"topic": "Nav2 Simple Commander API（BasicNavigator の goToPose / isTaskComplete / getResult）", "why": "初心者の入口を一本化するため。これでゴール送信・完了待ち・結果取得が短く書ける。内部で NavigateToPose アクションが呼ばれていることも理解する。", "where": "Nav2 公式 commander_api（https://docs.nav2.org/commander_api/index.html）。メソッドの現行シグネチャはこのページで最終確認する。"},
+          {"topic": "地図(map)と自己位置推定(AMCL)・costmap の役割", "why": "ゴールを送っても動かない原因の多くは「初期位置を与えていない」「地図が無い」。AMCL=自己位置推定、costmap=障害物を避けるためのコスト地図、という役割を知ると原因切り分けができる。", "where": "Nav2 Concepts（https://docs.nav2.org/concepts/index.html）／ RViz の 2D Pose Estimate は Getting Started 内の手順。"},
+          {"topic": "theta（ヨー角・ラジアン）→ quaternion 変換と PoseStamped の組み立て", "why": "席の向きを正しく送るのに必須。ただしこの変換は下調べIssue(#9)の担当範囲なので、本Issueは成果物を使うのが基本。重複作業を避ける判断のために仕組みは理解しておく。", "where": "下調べIssue「席座標→Nav2ゴール変換の下調べ(#9)」の成果物をまず参照。式・APIは tf_transformations の quaternion_from_euler（**ROS2 Humbleでは要インストール: `sudo apt install ros-humble-tf-transformations`、環境により python3-transforms3d も**。入らない場合は平面ヨーの自前関数で代替可）。角度はROS2の規約(REP-103)で常にラジアン。"},
+          {"topic": "ゴール到達/失敗の判定と許容誤差", "why": "「着いた」を自分で判定できないと合格基準が曖昧になる。結果が succeeded か、xy_goal_tolerance の範囲で止まったかを観測手段にする。", "where": "Nav2 commander_api の getResult / TaskResult（https://docs.nav2.org/commander_api/index.html）／ 許容誤差は goal_checker の設定（Nav2 Configuration）。"},
+          {"topic": "Gazebo シミュで先に検証する流れ（TurtleBot3）", "why": "実機より安全・速く試行錯誤できる。シミュで成功してから実機に進むのが鉄則。", "where": "TurtleBot3 e-Manual Simulation（https://emanual.robotis.com/docs/en/platform/turtlebot3/simulation/）／ Nav2 Getting Started のシミュ手順。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {"type": "table", "headers": ["症状・勘違い", "原因と対処"], "rows": [
+          ["WindowsでROS2が動かない", "ROS2 Humble は Ubuntu 22.04 前提。WSL2でUbuntuを入れるか別PC/Piを使う。アプリ用の環境構築ガイドはROS2を含まない。"],
+          ["`ros2` コマンドが見つからない／パッケージが無い", "ターミナルごとに `source /opt/ros/humble/setup.bash` が必要。`~/.bashrc` に書いておくと毎回不要。"],
+          ["シミュは起動するがロボが動かない", "起動直後は自己位置がズレている。RVizの 2D Pose Estimate で現在地と向きを与える。"],
+          ["TurtleBot3 が起動しない", "`export TURTLEBOT3_MODEL=burger` の設定漏れが定番。毎ターミナルで必要。"],
+          ["ゴールを送っても無視される", "PoseStamped の frame_id が空。\"map\" を入れ、stamp に現在時刻を入れる。"],
+          ["`import tf_transformations` でエラー", "Humble標準では入っていないことが多い。`sudo apt install ros-humble-tf-transformations`。代替は平面ヨーの自前計算 `qz=sin(theta/2), qw=cos(theta/2)`。"],
+          ["theta の単位で事故る", "ROS2はラジアン統一（REP-103）。stop_points.theta も **ROS2と揃えるためラジアンで持つ想定（単位は #9 で確定）**。度で入れない。"],
+          ["生アクションとSimple Commanderを混ぜて混乱", "初心者はまず Simple Commander(goToPose)一本で。生のアクションクライアントは仕組み理解用の参考。"]
+        ]},
+        {"type": "callout", "variant": "danger", "label": "実機の安全注意", "text": "実機で初めて走らせるときは、必ず速度を落とし、人や物のない開けた場所で、いつでも電源を切れる/止められる状態で行う。ロボが本棚を載せて動く想定なので、暴走時の被害が大きい。1人作業を避ける。"}
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {"type": "ul", "items": [
+          "**シミュ**: ゴール送信後、RViz上でロボが経路をたどって席で停止する。Pythonの getResult が succeeded。",
+          "**向き**: theta=0 と theta=1.57 で送り、停止時の機首の向きが約90度違うのを目視確認。",
+          "**到着精度**: xy_goal_tolerance の範囲で止まっていればOK（ピクセル単位で合わせない）。",
+          "**実機（ストレッチ）**: マッピング済み地図で任意の1席へ自走・停止。"
+        ]},
+        {"type": "callout", "variant": "warn", "label": "下のコマンドの前提", "text": "以下の確認コマンドは Nav2 が起動済みであることが大前提。別ターミナルで Nav2(bringup)とシミュを起動し、`source /opt/ros/humble/setup.bash` を通しておくこと。何も起動せず叩くと「何も出ない」で詰まる。"},
+        {"type": "code", "lang": "bash", "code": "# Nav2のナビゲーション用アクションが居るか確認（一覧に navigate_to_pose が出ればOK）\nros2 action list\n\n# そのアクションの型・接続状況を見る\nros2 action info /navigate_to_pose\n\n# 自己位置推定(AMCL)の現在の推定値を見る（初期位置を与えた後に値が出る）\nros2 topic echo /amcl_pose"}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {"type": "callout", "variant": "tip", "text": "AIには「答えのコード」を書かせず、考え方・調べ場所・つまずき切り分けを聞くと学びになる。下をコピペして使う。"},
+        {"type": "code", "lang": "text", "code": "あなたはROS2/Nav2に詳しいコーチです。答えの完成コードは書かず、考え方と「どの公式docsのどこを見るか」で導いてください。\n\nやりたいこと: ROS2 Humble + Nav2 + TurtleBot3(Gazeboシミュ)で、ある席の座標(x,y,theta)まで自走して停止させたい。実装は nav2_simple_commander の BasicNavigator(goToPose) を使う方針です。OSは Ubuntu 22.04 / WSL2 を想定。\n\n質問1: シミュ環境を起動して最初のゴールを1つ送るまでの全体手順を、つまずき所(source・TURTLEBOT3_MODEL・2D Pose Estimate)込みでステップに分けて教えてください。各ステップで見るべき公式docsページ名も。\n質問2: ゴールを送っても動かないときの原因切り分けを、確認すべき順番で教えてください(答えのコードは不要)。"}
+        ]
+      },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["Nav2", "ROS2のナビゲーション基盤。地図の上で目的地まで経路を作って自動で走らせる。"],
+          ["TurtleBot3", "学習用の小型ロボ。シミュ検証の定番。"],
+          ["Gazebo", "ロボを画面の中で動かせる仮想空間（シミュレータ）。"],
+          ["RViz", "ROSの可視化ツール。地図・ロボ・経路・ゴールを見られる。"],
+          ["bringup", "Nav2一式をまとめて起動する起動(launch)ファイルのこと。"],
+          ["AMCL", "地図の上で「今ロボがどこに居るか」を推定する仕組み。"],
+          ["costmap", "障害物を避けるための「ここは通りにくい」を表したコスト地図。"],
+          ["2D Pose Estimate", "RViz上で現在地と向きを手で教えるボタン（初期位置の指定）。"],
+          ["PoseStamped", "座標(x,y,z)と向き(quaternion)と基準フレーム(frame_id)をまとめた位置データ。"],
+          ["frame_id", "その座標がどの座標系の値かを示す名前。地図基準なら \"map\"。"],
+          ["quaternion", "向きを4つの数で表す方式。thetaから変換して使う。"],
+          ["Simple Commander", "Nav2の高レベルAPI。goToPose等で短くゴール送信できる。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {"type": "ul", "items": [
+          "要件: **F-08（指定した席まで自走して停止）**。文言は基本設計で最終確認する。",
+          "先行Issue: **「席座標→Nav2ゴール変換の下調べ(#9)」** — このIssueと内容が重なる先行調査。theta→quaternion / PoseStamped 変換関数の素案を作る担当。その成果物を本Issueで取り込んで使う。",
+          "前提データ: 席の座標(stop_points の x/y/theta)は **「サンプルデータを投入する(#3)」** で席3つがシード投入される（要件 F-09 周辺・画面なし）。テーブル自体は「Supabaseにテーブルを作成する(#2)」で作成済み。",
+          "関連Issue: **「ブリッジ最小実装（robot_calls購読）(#8)」** — 呼び出しの検知側。本Issueの「走らせる」とつなげる相手。",
+          "関連（物理・別作業）: **実機マッピング（SLAMで地図を作る）** — 実機自走（本Issueのストレッチ）の前提。完了するまで実機Doneはブロックされる。",
+          "ROS2/Nav2 公式: docs.nav2.org（commander_api / concepts / getting_started）、docs.ros.org/en/humble、TurtleBot3 e-Manual。",
+          "環境: 同フォルダの 環境構築ガイド.html は **アプリ用（Windows/Mac）でROS2は対象外**。ROS2はUbuntu 22.04/WSL2を各自用意。"
+        ]}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>実機マッピング（SLAMで地図作成→席座標採取）｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero hw">
+    <h1>実機マッピング（SLAMで地図作成→席座標採取）</h1>
+    <p>SLAMで部屋の地図を作って保存し、席3つの座標(x,y,theta)を実機から採取して stop_points テーブルに入れる。これが後でロボが席まで自走するための「地図」と「目的地リスト」になる。</p>
+    <div class="badges">
+      <span class="badge">担当：ハ設＋ハ制</span>
+      <span class="badge">Sprint 2</span>
+      <span class="badge">優先 ★★☆</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill role">担当：ハ設＋ハ制</span>
+    <span class="pill sprint">Sprint 2</span>
+    <span class="pill prio">優先 ★★☆</span>
+    <span class="pill lang">Python</span>
+    <span class="pill lang">ROS2</span>
+    <span class="pill lang">SLAM(slam_toolbox)</span>
+    <span class="pill lang">LiDAR</span>
+    <span class="pill lang">RViz</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p>ゴールは2つ。<strong>(1) SLAM で部屋の地図を作って保存する</strong>、<strong>(2) 各席の座標 (x, y, theta) を採って <code>stop_points</code> テーブルに入れる</strong>。これができると、後のIssueでロボが Nav2 を使って「3番の席まで行って」と指示されたとき、地図上の座標をめがけて自走できるようになる。</p>
+  <p>SLAM(スラム)＝Simultaneous Localization And Mapping。ロボがLiDAR(レーザーで周囲の距離を測るセンサ)で周りを見ながら走り回り、<strong>地図を作る</strong>のと<strong>自分が地図のどこにいるか</strong>を同時に推定する技術。今回は ROS2 の <code>slam_toolbox</code> を使う。</p>
+  <div class="callout study"><span class="label">このIssueの立ち位置（準備系）</span><p>これは「ロボが自走する(Nav2)」の<strong>前準備</strong>。地図と席座標が無いとNav2は目的地を持てない。逆に言うと、本Issue完了時点ではまだNav2で実際に走らせる必要はない（座標の最終的な正しさはNav2導入後に確定する）。Sprint2の走行・Nav2系Issueと並走する位置づけ。</p></div>
+  <div class="callout warn"><span class="label">前提Issueにぶら下がっている</span><p>本Issueは「走行系(/cmd_vel に値を流すと実機が動く)」「LiDARセットアップ(型番確定・ros2で点群が出る)」が<strong>先に完了している</strong>ことが前提。これらが未完了だと本Issueは進められない。揃っていなければ先にそちらへ戻る（下のステップ1で確認）。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li>SLAM(slam_toolbox)を起動し、ロボを走らせて部屋の地図ができる（RVizで部屋の形が見える）</li><li>地図が<strong>ファイルに保存できる</strong>（Nav2で使う形式なら <code>.pgm</code>(画像)+<code>.yaml</code>(設定)の2点が残る。slam_toolbox独自保存だと <code>.posegraph</code> 等別形式になる場合もある）</li><li>保存した地図が実際の部屋とおおむね合っている（合格目安：主要な壁2面と本棚の位置が判別できる／白い未探索の大穴が無い）</li><li>席3つの座標 (x, y, theta) が実機から採れている（TFまたは推定姿勢から数値を読み取れた）</li><li>採った3つの座標が <code>stop_points</code> テーブルに入っている（SQL Editorで insert 済み、<code>select</code> で3行見える）</li></ul>
+  <div class="callout tip"><span class="label">「実機で席へ行かせる」検証はこのIssueでは任意</span><p>座標が本当に正しいか（行かせて確かめる）は <strong>Nav2が動く別Issue完了後</strong>の追検証。本Issue段階でNav2未導入ならスキップ可。ここで行かせ方が分からなくても自分の失敗ではない。</p></div>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">ステップ0：ROS2ワークスペースの基本（最初に押さえる）</span><div class="st-detail"><code>apt</code> で入れたパッケージ（slam_toolbox等）はそのまま <code>ros2 run/launch</code> で動くが、自分でgit cloneした/自作したノードは <code>colcon build</code> → <code>source install/setup.bash</code> をしないと使えない。<strong>「コマンドが見つからない(command not found / package not found)」ときは、まず source し忘れを疑う</strong>。新しいターミナルを開くたびに <code>source /opt/ros/humble/setup.bash</code>（と必要なら自分のワークスペースの setup.bash）が要る。詳しくはresearch『ROS2の起動準備』。</div></li><li><span class="st-title">ステップ1：前提を確認する</span><div class="st-detail">(a) <strong>走行できるか</strong>＝別Issue(走行系)で『/cmd_vel に値を流すと実機が動く』が達成済みか。<code>ros2 topic info /cmd_vel</code> で購読ノード(モーター制御)がいるか確認。(b) <strong>LiDARが点群を出すか</strong>＝LiDARセットアップIssueで型番が確定し、<code>ros2 topic echo /scan</code>（または使用ドライバのトピック）でデータが流れるか確認。<strong>使用LiDARの型番が分からなければ、まずPM(水谷)・ハ設に聞く／前提Issueを確認する</strong>（型番が決まらないとドライバも調べられない）。揃っていなければ本Issueは保留して前提Issueへ戻る。</div></li><li><span class="st-title">ステップ2：slam_toolbox を起動する</span><div class="st-detail"><code>slam_toolbox</code> を apt で入れ、オンライン(逐次)マッピング用の launch を起動する。起動の正確なコマンド名/launchファイル名は research『slam_toolboxの起動』で公式READMEを見て確認する（答えは書かない）。起動できると、地図作成モードが立ち上がる。</div></li><li><span class="st-title">ステップ3：RVizを開いて地図を見られるようにする</span><div class="st-detail">別ターミナルで RViz を起動し、<code>Map</code> 表示と LiDAR の <code>LaserScan</code> 表示を追加して、地図が育っていく様子を見られるようにする。最初は自分の周りだけ地図ができている。フレームは <code>map</code> を基準にする。</div></li><li><span class="st-title">ステップ4：teleop（キーボード操作）でロボを動かす準備</span><div class="st-detail">ロボを動かすのは<strong>teleop(キーボード遠隔操作)で行う</strong>。<code>teleop_twist_keyboard</code> パッケージを使い、押したキーが <code>/cmd_vel</code>(速度指令トピック)に流れ、それをモーター制御ノードが受けて実機が動く、という経路。まず <code>ros2 topic info /cmd_vel</code> でモーター側がそのトピックを購読しているか確認してから teleop を起動する。起動方法と操作キーは research『teleopの起動と確認』を参照。</div></li><li><span class="st-title">ステップ5：ゆっくり走らせて地図を作る</span><div class="st-detail">teleopで<strong>ゆっくり</strong>部屋を一周する。急加速・急旋回はLiDARが追従できず地図がズレる。壁ぎわや本棚の前を通って、RViz上で地図が部屋全体に広がるまで走る。白い未探索の穴が埋まり、壁が一本につながればよい。</div></li><li><span class="st-title">ステップ6：地図を保存する</span><div class="st-detail">Nav2が後で読む地図(<code>.pgm</code>+<code>.yaml</code>)を作るなら <strong><code>ros2 run nav2_map_server map_saver_cli</code></strong>（=Nav2側のツール。パッケージ名込みで覚える）を使う。<strong>注意</strong>：slam_toolbox には独自の保存(serialize → <code>.posegraph</code>/<code>.data</code>、RVizのSlamToolboxプラグインのパネルからも保存可)もある。<strong>Nav2で使うなら map_saver で <code>.pgm</code>/<code>.yaml</code> を出す</strong>。どちらを採るかは research で確認。</div></li><li><span class="st-title">ステップ7：席の座標を採る（x, y, theta）</span><div class="st-detail"><strong>ロボを採りたい席の位置・向きに実際に置く</strong>。そのうえで地図座標系での自己位置を数値で読む。第一候補は <strong><code>ros2 run tf2_ros tf2_echo map base_link</code></strong>（=map から base_link への変換＝ロボの位置と向き）。ここに出る x, y が席の座標。向きはクォータニオン(x,y,z,w の4値)で出るので、theta(yaw, ラジアン)へ変換が要る（research参照）。slam_toolbox使用中で AMCL を使っていない場合は tf2_echo か slam_toolbox の推定位置を使うのが現実的（AMCLを使う構成なら <code>ros2 topic echo /amcl_pose</code> でも読める）。3席ぶん繰り返す。</div></li><li><span class="st-title">ステップ8：stop_points に座標を入れる（SQL Editor）</span><div class="st-detail">Supabase の <strong>SQL Editor</strong> から <code>stop_points</code> に <code>insert</code>。列は <code>id, label, x, y, theta</code>（<code>created_at</code> はdefaultありなので省略可）。<strong><code>id</code> は自動採番ではない手動採番の int</strong>。席ごとに 1, 2, 3 など<strong>重複しない番号を自分で決めて</strong>入れる。この <code>id</code> が後で <code>robot_calls.seat_id</code> の参照先（＝アプリの席選択で使う番号）になるので、番号の割り当ては<strong>アプリ担当と取り決めて</strong>おく。SQLは下のコードブロック参照。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <ul class="research"><li><div class="r-topic">SLAM の考え方（slam_toolbox / Cartographer の違い）</div><div class="r-why">「地図を作る」と「自分の位置を知る」を同時にやるのがSLAM。仕組みのイメージが無いと、なぜゆっくり走るのか・なぜオドメトリが要るのかが腑に落ちず、ズレた地図をそのまま使ってしまう。</div><div class="r-where">slam_toolbox 公式README: https://github.com/SteveMacenski/slam_toolbox （online/offline モードの違い）。比較対象として Cartographer の概念も。ROS2 Humble docs: https://docs.ros.org/en/humble/ 。</div></li><li><div class="r-topic">ROS2の起動準備（source / colcon build）</div><div class="r-why">「コマンド/パッケージが見つからない」の最頻原因が source 忘れ。新しいターミナルごとに環境を読み込む必要があり、自作ノードは build も要る。ここを知らないと最初の一歩で詰まる。</div><div class="r-where">ROS2 Humble: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Configuring-ROS2-Environment.html および Colcon ビルドのチュートリアル（同サイト内 Beginner: Client libraries）。</div></li><li><div class="r-topic">LiDARのセットアップ（型番確定→ros2ドライバ）</div><div class="r-why">LiDARが点群(/scan)を出さないとSLAMは何もできない。製品ごとにドライバ(ros2パッケージ)が違うため、まず<strong>使用LiDARの型番を確定</strong>させてから『型番 + ros2 driver』で探す必要がある。</div><div class="r-where"><strong>まず本プロジェクトの前提Issue(LiDARセットアップ)で型番を確認／不明ならPM・ハ設に聞く</strong>（型番は本資料・robot/READMEに未記載）。型番確定後に『(型番) ros2 driver』で公式リポジトリを検索。レーザークラスは製品仕様書で確認（多くの屋内2D LiDARはClass1=目に安全だが要確認）。</div></li><li><div class="r-topic">teleopの起動と確認（/cmd_vel への経路）</div><div class="r-why">ロボを動かせないとマッピングできない。<strong>手押しはオドメトリが取れず地図が必ずズレるので原則NG</strong>。teleopでキー入力を /cmd_vel に流し、モーター制御ノードがそれを受けて動く、という経路を理解・確認する必要がある。</div><div class="r-where">まず <code>ros2 topic info /cmd_vel</code> で購読ノード(モーター制御)がいるか確認 → <code>ros2 run teleop_twist_keyboard teleop_twist_keyboard</code> の操作キー。teleop_twist_keyboard: https://github.com/ros-teleop/teleop_twist_keyboard 。Nav2 Getting Started: https://docs.nav2.org/getting_started/index.html 。</div></li><li><div class="r-topic">地図の保存（map_server / slam_toolbox serialize の2系統）</div><div class="r-why">保存手段が2つあり、出力形式も違う。Nav2で使うなら nav2_map_server の map_saver で <code>.pgm</code>/<code>.yaml</code>、slam_toolbox独自なら <code>.posegraph</code> 等。混同すると「コマンド/サービスが無い」で迷う。</div><div class="r-where">Nav2 map_server: https://docs.nav2.org/ （Map Server / map_saver_cli）。slam_toolbox の serialize/save 機能: https://github.com/SteveMacenski/slam_toolbox の README（Saving/serialization の節）。</div></li><li><div class="r-topic">席座標 (x, y, theta) を正しく読む手段（TF / 推定姿勢）</div><div class="r-why"><strong>RVizの『2D Pose Estimate』は座標を読むツールではなく、自己位置をクリックで“与える”入力ツール</strong>（/initialpose にpublish）。これで座標を読もうとすると確実に詰まる。正しくは TF か推定姿勢から数値を取る。</div><div class="r-where">TF/tf2_echo: ROS2 Humble TF2 チュートリアル https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Tf2-Main.html （<code>ros2 run tf2_ros tf2_echo map base_link</code>）。AMCL構成なら Nav2 docs の <code>/amcl_pose</code>。x,yの当たりだけなら RViz の『Publish Point』（数値はターミナルログに出る／向きthetaは出ない）。</div></li><li><div class="r-topic">クォータニオン → yaw(theta) 変換と座標系の向き</div><div class="r-why">ROSの向きは内部で<strong>クォータニオン(x,y,z,w の4値)</strong>で持つ。tf2_echoや/amcl_poseもクォータニオンで出る。stop_points.theta に入れる<strong>1つの角度(yaw, ラジアン)</strong>へは変換が必要。『thetaが無い』と混乱しがちな所。基準は地図の+x方向、反時計回りが正。</div><div class="r-where">REP-103(座標系・単位の標準): https://www.ros.org/reps/rep-0103.html 。tf2の変換: https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Tf2-Main.html 。yaw換算の考え方(euler_from_quaternion 等)を確認（コードは書かず考え方として）。</div></li><li><div class="r-topic">stop_points へ SQL Editor で入れる理由とid採番</div><div class="r-why">「insertポリシーが無い＝誰も入れられないのでは？」と矛盾に見えて不安になる。<strong>SQL Editorは管理者権限(service role)で動くためRLSをバイパスして入れられる</strong>。一方アプリのブラウザ(匿名/publishableキー)はポリシーが無いので弾かれる、という非対称が仕様。id採番ルールも要確認。</div><div class="r-where">Supabase RLS / service role: https://supabase.com/docs/guides/database/postgres/row-level-security （bypass / service_role の節）。schema.sql(<code>supabase/schema.sql</code>)で <code>stop_points</code> に select ポリシーのみ・insertポリシー無し・<code>id</code> が手動採番int であることを実物で確認。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <table><tr><th>症状・勘違い</th><th>原因・対処</th></tr><tr><td>コマンド/パッケージが見つからない</td><td>source忘れが最頻。新ターミナルごとに <code>source /opt/ros/humble/setup.bash</code>（自作ノードなら自分のワークスペースの <code>install/setup.bash</code> も）。自作ノードは先に <code>colcon build</code>。</td></tr><tr><td>地図が大きくズレる・二重に見える</td><td>走るのが速すぎ、または<strong>手押しでオドメトリが無い</strong>のが原因。手押しは原則NG。teleopで /cmd_vel 経由＝オドメトリのある駆動でゆっくり走らせる。手押ししかできない段階なら走行系の前提Issueが未完了なので戻る。</td></tr><tr><td>『2D Pose Estimate』をクリックしても座標が出ない</td><td>それは座標を“読む”ツールではなく自己位置を“与える”入力ツール。座標は <code>ros2 run tf2_ros tf2_echo map base_link</code> や <code>/amcl_pose</code> から読む（ステップ7）。</td></tr><tr><td>thetaが見当たらない（x,y,z,wの4値が出る）</td><td>向きはクォータニオンで出る。stop_points.theta には yaw(ラジアン)へ変換した1つの角度を入れる。変換はtf2 docs/REP-103参照。</td></tr><tr><td>map_saver でコマンド/サービスが無いと言われる</td><td>map_saver_cli は <strong>Nav2(nav2_map_server)</strong> のツール。<code>ros2 run nav2_map_server map_saver_cli</code>。slam_toolbox独自保存(serialize)とは別系統なので混同しない。</td></tr><tr><td>RVizが映らない/重い（別PCで見たい）</td><td>別PCで見るときは<strong>両方のターミナルで <code>export ROS_DOMAIN_ID=同じ数字</code> を実行</strong>（<code>.bashrc</code>に書くと毎回不要で楽）。同一Wi-Fi/LAN(同一サブネット)であること。繋がらないときはまずDOMAIN_IDの不一致、次にファイアウォールを疑う。</td></tr><tr><td>SQL Editorで入れていいのか不安（insertポリシー無し）</td><td>SQL Editorは管理者権限(service role)でRLSをバイパスするので入る。アプリの匿名キーは弾かれる、という非対称が仕様。schema.sqlの通りで正しい。</td></tr><tr><td>stop_points.id をどう決める？</td><td>自動採番ではない手動採番のint。1,2,3 など重複しない番号を自分で決める。robot_calls.seat_id とアプリの席選択UIの番号と整合させるため、アプリ担当と取り決める。</td></tr></table>
+  <div class="callout danger"><span class="label">安全注意（実機を動かす作業）</span><p>実機を動かす際は <strong>転倒・挟み込み・人やモノへの突進</strong>に注意。teleopは低速から。<strong>緊急停止の手段</strong>（電源スイッチの位置・キー操作での停止）を動かす前に必ず確認しておく。床の段差・ケーブルの巻き込みにも注意。LiDARのレーザーは使用製品のレーザークラスを仕様書で確認（多くはClass1=目に安全だが要確認）。</p></div>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <ol><li>RVizで地図を見ながら一周し、<strong>白い未探索の大穴が無く、壁が一本につながり、本棚の位置が分かる</strong>こと（地図が部屋とおおむね一致）。</li><li>地図を保存 → ファイルが残ること（Nav2用なら <code>.pgm</code>+<code>.yaml</code> の2点が生成される）。保存した画像を開いて部屋の形に見えればOK。</li><li>ロボを各席に置いて <code>tf2_echo</code>（または <code>/amcl_pose</code>）で x,y を読み、向きを yaw に変換して theta を得る。3席ぶん数値がメモできていること。</li><li>Supabase SQL Editor で <code>select * from stop_points;</code> を実行し、入れた<strong>3行(席1/2/3)が x,y,theta 付きで見える</strong>こと。idが1,2,3など重複なく振られていること。</li><li>【任意・後日】Nav2が動く別Issue完了後に、1席だけ実機で行かせて座標が妥当か追検証。本Issue段階でNav2未導入ならスキップ可（座標の最終確定はNav2導入後）。</li></ol>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AIには<strong>答えのコード/設定ファイルを書かせない</strong>。手順・考え方・調べ先・つまずきの切り分けを引き出すコーチとして使う。下をコピペして使ってよい。</p>
+  <pre><code>私はROS2 Humble・slam_toolbox・LiDARの初心者です。
+Raspberry Pi 5 + 2D LiDAR の移動ロボで、(1)SLAMで部屋の地図を作って保存し、
+(2)席3つの座標(x,y,theta)を採ってDB(stop_points)に入れたいです。
+
+お願い：
+- 完成コードやlaunch/設定の中身は書かないでください。手順・考え方・調べる場所(公式docs名/URL)だけ。
+- まず私に質問して、前提(走行/cmd_velが動くか、LiDARが/scanを出すか、source/colconの理解)を確かめてから進めて。
+- 次の順で整理して: (1)slam_toolboxのonline起動の調べ方 (2)RVizでmap/scanを見る
+  (3)teleop_twist_keyboardで/cmd_vel経由でゆっくり動かす(手押しがNGな理由も) (4)地図保存はnav2のmap_saverかslam_toolbox serializeかの選び方
+  (5)席座標をtf2_echo map base_link で読む方法 (6)クォータニオンからyaw(theta)への変換の考え方。
+- 「2D Pose Estimateは座標を読むツールではない」点を私が誤解していたら正してください。
+- 公式docsの該当ページ名/URLを示し、私自身に読ませてください。
+
+今つまずいているのは：（ここに状況を書く。例：tf2_echoでx,y,z,wが出るがthetaの出し方が分からない）</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>SLAM</td><td>走りながら地図を作り、同時に自分の位置も推定する技術。</td></tr><tr><td>slam_toolbox</td><td>ROS2でSLAMを行う代表的パッケージ。今回これを使う。</td></tr><tr><td>LiDAR(ライダー)</td><td>レーザーで周囲の距離を測るセンサ。地図と自己位置の元データ(点群/scan)を出す。</td></tr><tr><td>RViz</td><td>ROSの可視化ツール。地図やセンサ値、ロボの位置を画面で見る。</td></tr><tr><td>teleop</td><td>キーボード等での遠隔手動操作。teleop_twist_keyboardで/cmd_velに速度指令を流す。</td></tr><tr><td>/cmd_vel</td><td>ロボへの速度指令トピック。teleopやNav2がここに値を流し、モーター制御が受け取る。</td></tr><tr><td>オドメトリ</td><td>車輪の回転などから推定する『自分がどれだけ動いたか』。これが無い手押しは地図がズレる。</td></tr><tr><td>TF / tf2_echo</td><td>座標系どうしの位置・向きの関係。tf2_echoでmap→base_linkの位置(x,y)と向きを読める。</td></tr><tr><td>map / base_link</td><td>map=地図の基準座標系、base_link=ロボ本体の座標系。両者の関係＝地図上のロボの位置。</td></tr><tr><td>クォータニオン</td><td>向きを4つの数(x,y,z,w)で表す方式。stop_pointsに入れるyaw(角度)に直して使う。</td></tr><tr><td>theta(yaw)</td><td>地図上での向き。ラジアン、基準は+x方向で反時計回りが正。クォータニオンから変換して得る。</td></tr><tr><td>map_saver_cli</td><td>Nav2(nav2_map_server)の地図保存ツール。.pgm(画像)+.yaml(設定)を出す。</td></tr><tr><td>.pgm / .yaml</td><td>Nav2が読む地図ファイル。.pgmが画像、.yamlが縮尺や原点などの設定。</td></tr><tr><td>ROS_DOMAIN_ID</td><td>同じ番号同士のROS2機だけが通信できる仕分け番号。別PC連携時は両機で同じ値に揃える。</td></tr><tr><td>stop_points</td><td>席(停車ポイント)の座標表。id,label,x,y,theta を持つ。idは手動採番。</td></tr><tr><td>service role / RLSバイパス</td><td>管理者権限。SQL Editorはこれで動くのでRLSを無視して書き込める。アプリの匿名キーは弾かれる。</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>DB列名の正は schema.sql（<code>supabase/schema.sql</code>）。<code>stop_points</code>: <code>id</code>(手動採番int) / <code>label</code> / <code>x</code> / <code>y</code> / <code>theta</code> / <code>created_at</code>(defaultありinsert時省略可)。select は <code>sel_stops</code> で全員可、<strong>insert/update/deleteポリシー無し＝アプリからは入れられない</strong>（SQL Editorからのみ）。<code>robot_calls.seat_id</code> が <code>stop_points.id</code> を参照する。</li><li>疎結合の設計（アプリ⇄ロボはDB経由）：ロボは <code>robot_calls</code> を購読しNav2ゴールへ変換、<code>robot_status</code> を更新。本Issueで作る地図と席座標はその土台。robot/README参照。</li><li>関連Issue（タスク名）：「走行系(/cmd_velで実機が動く)」「LiDARセットアップ(型番確定・/scanが出る)」＝<strong>本Issueの前提</strong>。「ロボ自走(Nav2でstop_pointsへ移動)」＝本Issueの座標を使う側・座標の最終検証もそこで行う。アプリ側「本を呼び出す(robot_callsにinsert・seat選択)」＝stop_points.idの番号を共有する相手。</li><li>要件 F-08（席座標の採取と登録）。基本設計のロボ連携・座標系の項も参照。</li><li>確認事項（PM/チームへ）：①使用LiDARの型番（本資料・robot/README未記載）②teleopの正確な経路と走行系Issueの完了基準 ③stop_points.id の採番割り当て（アプリ担当と）④Nav2導入の進行順（実機検証の可否）。不明点はPM(水谷)へ。</li><li>環境変数キーは <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> が正。<code>.env.local</code> は各自手作り。詳しくは同フォルダ 環境構築ガイド.html。</li></ul>
+  <pre><code>-- Supabase の SQL Editor で実行（service role権限でRLSをバイパスして入る）
+-- id は手動採番。1,2,3 を重複しないよう自分で決める（アプリ担当と番号を取り決め）
+-- x,y,theta は実機から採った値に置き換える（theta は yaw・ラジアン）
+insert into stop_points (id, label, x, y, theta) values
+  (1, '席1', 0.00, 0.00, 0.00),
+  (2, '席2', 0.00, 0.00, 0.00),
+  (3, '席3', 0.00, 0.00, 0.00);
+
+-- 確認
+select * from stop_points order by id;</code></pre>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

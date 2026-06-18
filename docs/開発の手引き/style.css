@@ -34,6 +34,9 @@ header.hero{
 }
 header.hero.robot{background:linear-gradient(135deg,#7c3aed,#5b21b6); box-shadow:0 10px 30px rgba(124,58,237,.25);}
 header.hero.done{background:linear-gradient(135deg,#0d9488,#115e59); box-shadow:0 10px 30px rgba(13,148,136,.25);}
+header.hero.hw{background:linear-gradient(135deg,#ea580c,#9a3412); box-shadow:0 10px 30px rgba(234,88,12,.25);}
+header.hero.integ{background:linear-gradient(135deg,#0891b2,#155e75); box-shadow:0 10px 30px rgba(8,145,178,.25);}
+header.hero.could{background:linear-gradient(135deg,#64748b,#334155); box-shadow:0 10px 30px rgba(100,116,139,.25);}
 header.hero h1{margin:0 0 8px; font-size:1.6rem; line-height:1.45;}
 header.hero p{margin:6px 0 0; opacity:.95;}
 .badges{margin-top:16px; display:flex; flex-wrap:wrap; gap:8px;}
@@ -134,6 +137,13 @@ tr:nth-child(even) td{background:#fafbfd;}
 .card .c-tags{display:flex; flex-wrap:wrap; gap:6px;}
 .card.env{border-color:#bfdbfe; background:linear-gradient(135deg,#eff6ff,#ffffff);}
 .card.robot:hover{box-shadow:0 8px 22px rgba(124,58,237,.13); border-color:#ddd6fe;}
+.card.hw:hover{box-shadow:0 8px 22px rgba(234,88,12,.13); border-color:#fed7aa;}
+.card.integ:hover{box-shadow:0 8px 22px rgba(8,145,178,.13); border-color:#a5f3fc;}
+.card.could:hover{box-shadow:0 8px 22px rgba(100,116,139,.13); border-color:#cbd5e1;}
+/* index のグループ見出し */
+.group-head{display:flex; align-items:baseline; gap:10px; margin:6px 0 2px;}
+.group-head .g-emoji{font-size:1.2rem;}
+.group-head .g-count{font-size:.82rem; color:var(--muted);}
 
 /* ---- その他 ---- */
 hr{border:none; border-top:1px solid var(--border); margin:26px 0;}

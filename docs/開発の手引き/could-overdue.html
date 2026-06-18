@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>返却忘れ警告通知｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero could">
+    <h1>返却忘れ警告通知（S-5（貸出履歴））</h1>
+    <p>借りたまま一定期間を超えた本に「返却忘れかも」の警告を出す（要件 C-04）。</p>
+    <div class="badges">
+      <span class="badge">担当：アプリ</span>
+      <span class="badge">余力で</span>
+      <span class="badge">優先 ★☆☆</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill">画面 S-5（貸出履歴）</span>
+    <span class="pill role">担当：アプリ</span>
+    <span class="pill sprint">余力で</span>
+    <span class="pill prio">優先 ★☆☆</span>
+    <span class="pill lang">TypeScript</span>
+    <span class="pill lang">Supabase JS</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p><strong>ゴール:</strong> まだ返していない貸出（<code>returned_at</code> が空）のうち、借りてから一定日数（例: 14日）を超えたものを見つけて「返却忘れかも」と画面に警告を出す。要件 <strong>C-04</strong>。</p>
+  <p><strong>なぜ必要か:</strong> 研究室の本は紙の台帳がなく、借りた人が返し忘れても誰も気づけない。「○日経っても返却されていない」を自動であぶり出せば、声かけや督促のきっかけになる。まずは貸出履歴画面（<strong>S-5</strong> = <code>app/history/page.tsx</code>）に警告バッジを出すところから始め、余力があれば全画面共通の件数表示やメール通知へ広げる、という段階設計のIssue。</p>
+  <div class="callout study"><span class="label">学び方</span><p>答えのコードは載せません。「経過日数の計算」「未返却データの抽出」「どこで取得するか（Server/Client）」を自分で調べて手を動かすためのガイドです。AIには答えでなく“考え方”を聞きましょう。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li>未返却（<code>returned_at</code> が NULL）の貸出だけを Supabase から取得できている</li><li>各貸出の <code>borrowed_at</code> からの経過日数を計算し、しきい値（例 14日）を超えたものを「警告」と判定できる</li><li>S-5（貸出履歴 <code>app/history/page.tsx</code>）で、警告対象の行に「返却忘れかも」等のバッジ／色が出る</li><li>本のタイトルも一緒に表示されている（loans 単体だと book_id しか無いため books をネスト取得）</li><li>テストデータ（20日前の未返却）で警告が出て、返却済みにすると警告が消えることを確認した</li><li>（余力）全画面共通の「未返却 N件」バッジ、またはメール/通知へ拡張</li></ul>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <p>まず現状把握から。<code>app/history/page.tsx</code> を開くと、いまは見出しだけのスタブ（<code>&lt;h1&gt;貸出履歴 / S-5&lt;/h1&gt;</code>）で、データ取得コードも <code>"use client"</code> も付いていません。ここに少しずつ機能を足していきます。</p>
+  <ol class="steps"><li><span class="st-title">1. テストデータを仕込む（土台）</span><div class="st-detail">Supabase の SQL Editor を開き、まず books から1件 id をコピーする（select id, title from books limit 1;）。その id を使って loans に「20日前に借りて、まだ返していない」行を1件作る。ポイントは2つ: returned_at を入れない（=NULL=未返却）、borrowed_at に過去の日時を入れる。過去日時は now() - interval '20 days' のように書く（このSQL書き方は次の code ブロック参照）。これが無いと何を作っても警告が出ず、入口で詰まるので最優先。</div></li><li><span class="st-title">2. 未返却データを取る（タイトル付き）</span><div class="st-detail">S-5 で supabase から loans を取得する。条件は returned_at が NULL の行だけ（.is("returned_at", null) のような絞り込みを調べる）。さらに loans は book_id で books を参照している（schema.sql の references books(id)）ので、select の文字列の中に books をネストして書くとタイトルも一緒に取れる。どう取得するかは下の research と「動作確認」を参照。</div></li><li><span class="st-title">3. 経過日数としきい値を計算（置き場所も決める）</span><div class="st-detail">lib/ に小さいファイルを新規作成する（例: lib/overdue.ts。supabaseClient.ts と同じ lib/ 配下）。そこに OVERDUE_DAYS = 14 のような定数と、isOverdue(borrowedAt: string): boolean のような判定関数を export し、history/page.tsx から import して使う。判定は『今 − borrowed_at が OVERDUE_DAYS 日を超えているか』。日時の比較方法は research のタイムゾーン項目を読んでから書く。</div></li><li><span class="st-title">4. 画面に警告を出す（S-5）</span><div class="st-detail">取得した各行を一覧表示し、isOverdue が true の行に「返却忘れかも」バッジや赤色を付ける。このプロジェクトの lib/supabaseClient.ts は NEXT_PUBLIC キーで作った『ブラウザ用クライアント』なので、まずは history/page.tsx の先頭に "use client" を付けたクライアントコンポーネントで取得するのが今ある仕組みに一番素直。useEffect で取得→useState に入れて表示、という流れを調べる。</div></li><li><span class="st-title">5. （余力で）全画面共通バッジへ昇格</span><div class="st-detail">app/layout.tsx に直接フェッチを足すとレイアウト全体がクライアント化したり全ページで毎回取得が走る副作用がある。なので『未返却 N件』だけを表示する小さなクライアントコンポーネント（例: components/OverdueBadge.tsx を新規作成。現状 components/ ディレクトリはまだ無いので自分で作る）を用意し、layout から呼ぶ形に分離する。</div></li></ol>
+  <pre><code>-- ① books から本を1件確認して id をコピーする
+select id, title from books limit 1;
+
+-- ② コピーした id を &lt;BOOK_ID&gt; に貼り、20日前の未返却 loans を1件作る
+--    returned_at を入れない＝未返却。borrowed_at に過去日時を入れるのがミソ
+insert into loans (book_id, borrower_type, borrowed_at)
+values ('&lt;BOOK_ID&gt;', 'guest', now() - interval '20 days');
+
+-- 確認: 未返却（returned_at が NULL）の行が取れるか
+select id, book_id, borrowed_at, returned_at from loans where returned_at is null;</code></pre>
+  <div class="callout tip"><span class="label">ブランチ名</span><p>作業ブランチは <code>feature/overdue-warning</code> に統一しましょう（main へ直 push 禁止 → ブランチで PR）。カードの id（<code>could-overdue</code>）は資料上の識別子で、ブランチ名とは別物です。</p></div>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <ul class="research"><li><div class="r-topic">未返却だけを抽出する（NULL 絞り込み）</div><div class="r-why">返却忘れ判定の前提は『まだ返していない＝returned_at が NULL』。等号(.eq)では NULL は拾えないので NULL 専用の書き方が要る。</div><div class="r-where">Supabase JS の select リファレンス https://supabase.com/docs/reference/javascript/select で『is』や null フィルタの項目を探す（.is("returned_at", null) のような書き方）。</div></li><li><div class="r-topic">本のタイトルを一緒に取る（ネスト select / 外部キー）</div><div class="r-why">loans 単体だと book_id（UUID）しか無く、画面に本の名前を出せない。loans.book_id が books(id) を参照しているおかげで、1回のクエリでタイトルもネスト取得できる。</div><div class="r-where">Supabase JS の埋め込み(ネスト)select: https://supabase.com/docs/reference/javascript/select の『Query referenced tables / nested』。select の文字列の中にテーブル名(books)をネストして書く方法を読む。因果: schema.sql の <code>book_id ... references books(id)</code> があるから loans→books の関係が成立する。</div></li><li><div class="r-topic">データ取得をどこで行うか（Server / Client）</div><div class="r-why">Next.js 16系では Server Component と Client Component で書き方が違う。今回 lib/supabaseClient.ts は NEXT_PUBLIC キー＝ブラウザ用なので、まずはクライアント側で取得するのが無難（共有 supabase を Server Component で使うとクッキー/環境変数まわりで詰まりやすい）。</div><div class="r-where">まず node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md（"use client" の付け方）。次に 01-app/01-getting-started/05-server-and-client-components.md と 06-fetching-data.md で取得場所の考え方。『Server で取得したいなら別途サーバー用 Supabase クライアントが必要（今は未用意）』という事実も押さえる。</div></li><li><div class="r-topic">経過日数の計算とタイムゾーン</div><div class="r-why">borrowed_at は schema.sql で timestamptz（タイムゾーン付き）。Supabase JS は ISO 文字列（例 2026-06-18T...Z）で返すので、扱い方を知らないと比較を間違える。</div><div class="r-where">MDN の Date: https://developer.mozilla.org/ja/docs/Web/JavaScript/Reference/Global_Objects/Date 。<code>new Date(文字列)</code> は内部で UTC として正しく比較できるので、ミリ秒差→日数で計算する限り基本ズレない（『UTCだからズレる』は誤解）。表示用に日本時間へ直すかは別問題。</div></li><li><div class="r-topic">（任意）通知手段の選択肢</div><div class="r-why">C-04 の『通知』は画面バッジ／メール／Push と幅がある。まずは画面バッジが最小・確実。拡張時にどれを選ぶか判断材料が要る。</div><div class="r-where">Supabase Realtime（リアルタイム購読で件数更新）: https://supabase.com/docs/guides/realtime 。メール/定期実行に踏み込むなら Edge Functions + cron の発想（参考: Supabase Docs の Functions / Cron）。まずはバッジで Done を満たし、ここは余力で。</div></li><li><div class="r-topic">（任意）定期実行の仕組み（cron / Edge Functions）</div><div class="r-why">『毎朝チェックして通知』のような自動化に必要。ただし学生プロジェクトの初手では過剰になりがちなので最後でよい。</div><div class="r-where">Supabase の Scheduled Functions / pg_cron の解説（https://supabase.com/docs/guides/functions の周辺）。まずは画面を開いたら計算する方式で十分、と割り切る判断も学ぶ。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <ul><li><strong>警告が一切出ない:</strong> たいてい『テストデータが無い/条件に合っていない』。ステップ1のSQLで returned_at を入れていない（=NULL）か、borrowed_at が本当に過去（20日前）かを SQL Editor で確認する。</li><li><strong>NULL 絞り込みで .eq を使ってしまう:</strong> returned_at = null は効かない。NULL 専用フィルタ（is）を使う。</li><li><strong>Server Component で client 用の処理を書いて詰まる:</strong> 共有 supabase はブラウザ用（NEXT_PUBLIC キー）。今回はファイル先頭に "use client" を付けてクライアント側で取得するのが素直。Server で取りたいなら別のサーバー用クライアントが必要（今は未用意）。</li><li><strong>タイムゾーンで1日ズレる気がする:</strong> timestamptz は <code>new Date()</code> に渡せば内部で UTC として正しく比較できるので、ミリ秒差→日数で計算する限り基本ズレない。1日ズレが起きるのは『日付を 00:00 で切り捨てて数える』ときなので、まずは経過ミリ秒で判定すると安全。</li><li><strong>定数や関数の置き場所で迷う:</strong> lib/overdue.ts（supabaseClient.ts と同じ lib/）に置いて import する、と決め打ちでよい。ページの中に直書きしてもよいが、再利用しづらい。</li><li><strong>layout に直接フェッチを足してレイアウトが重くなる/全クライアント化する:</strong> バッジは小さなクライアントコンポーネントに切り出して layout から呼ぶ。</li></ul>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <ol><li><code>npm run dev</code> で開発サーバを起動し、ブラウザで http://localhost:3000/history を開く（package.json の scripts の dev = next dev）。</li><li>ステップ1のテストデータ（20日前・未返却）の行に「返却忘れかも」バッジ／赤色が出ていることを確認する。</li><li>その行を返却済みにする: Supabase の Table Editor で該当 loans 行の returned_at に now（現在時刻）を入れる、または SQL Editor で <code>update loans set returned_at = now() where id = '&lt;行のid&gt;';</code>（loans の update は upd_loans ポリシーで全員許可されているので通る）。</li><li>画面を再読み込みし、バッジが消える（returned_at が入った＝未返却ではなくなった）ことを確認する。</li><li>（余力バッジを作った場合）どのページでも『未返却 N件』が出て、返却すると件数が減ることを確認する。</li></ol>
+  <div class="callout ok"><span class="label">OK の目安</span><p>『20日前・未返却 → 警告が出る』『返却済みにする → 警告が消える』の往復が確認できれば判定ロジックは正しく動いています。</p></div>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>答えのコードを書かせず、考え方とつまずき所を引き出すために、次のプロンプトをコピペして使ってください。</p>
+  <pre><code>私は Next.js(16系) と Supabase JS 初心者です。答えのコードは書かないでください。
+代わりに「何を・なぜ・どこで調べるか」をヒント粒度で導いてください。
+
+やりたいこと: loans テーブルから returned_at が NULL（未返却）の行だけを取り、
+borrowed_at から14日以上経った貸出に「返却忘れかも」警告を出したい（要件 C-04 / 画面は S-5）。
+lib/supabaseClient.ts の supabase はブラウザ用（NEXT_PUBLIC キー）です。
+
+聞きたいこと:
+1) NULL を絞り込む正しい考え方（具体的な関数名は私が公式 docs で探します。どのページのどの項目を見ればよいか教えて）
+2) loans から books(title) をネスト取得する発想と、外部キーがなぜ効くのかの説明
+3) timestamptz の文字列を JS の Date でズレなく日数比較するときの注意点
+4) クライアントコンポーネントで取得する場合の流れ（"use client" / useEffect / useState の役割）の概念だけ
+コードの完成形ではなく、私が自分で書けるように段階的に質問し返してください。</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>未返却</td><td>loans の returned_at が NULL（まだ返した記録が無い）状態。</td></tr><tr><td>しきい値 (OVERDUE_DAYS)</td><td>ここを超えたら警告にする日数。例: 14日。</td></tr><tr><td>timestamptz</td><td>タイムゾーン付きの日時型。Supabase は ISO 文字列で返す。</td></tr><tr><td>ネスト select</td><td>1回のクエリで関連テーブル（books のタイトル等）も一緒に取る書き方。</td></tr><tr><td>外部キー (FK)</td><td>loans.book_id が books(id) を指す関係。これがあるからネスト取得できる。</td></tr><tr><td>use client</td><td>そのコンポーネントをブラウザ側で動かす宣言。先頭に書く。</td></tr><tr><td>RLS / upd_loans</td><td>行レベルのアクセス制御。loans の update は全員許可（返却記録の更新が通る）。</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>対象画面: S-5（貸出履歴）= <code>app/history/page.tsx</code>（現状は見出しだけのスタブ）。</li><li>DB スキーマ: <code>supabase/schema.sql</code> の loans（book_id references books(id) / borrowed_at timestamptz / returned_at timestamptz）。</li><li>Supabase クライアント: <code>lib/supabaseClient.ts</code> の <code>supabase</code> を import（NEXT_PUBLIC キー＝ブラウザ用）。</li><li>環境変数キーは <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> が正。<code>.env.local</code> は各自手作り。詳細は同フォルダ 環境構築ガイド.html。</li><li>関連: 貸出履歴の表示（S-5 本体タスク）、本一覧/貸出まわりのタスクと整合させる。</li><li>ブランチは <code>feature/overdue-warning</code> → PR → PM 承認後 Squash マージ。</li></ul>
+  <div class="callout warn"><span class="label">やりすぎ注意</span><p>C-04 は『余力で』の COULD。まずは S-5 の画面バッジで Done を満たすことが優先。メール/Push/定期実行は時間が余ったときの拡張です。</p></div>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

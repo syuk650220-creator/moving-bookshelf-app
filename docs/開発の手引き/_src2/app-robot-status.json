@@ -1,0 +1,129 @@
+{
+  "id": "app-robot-status",
+  "group": "アプリ（追加機能）",
+  "order": 3,
+  "taskName": "ロボの現在地・状態を表示",
+  "screen": "S-1（ホームに状態表示ウィジェットを置く）",
+  "role": "アプリA",
+  "sprint": "Sprint 3",
+  "priority": "★★☆",
+  "status": "",
+  "category": "アプリ",
+  "stack": ["TypeScript", "React", "Next.js", "Supabase Realtime"],
+  "oneLineGoal": "robot_status（常に1行）を購読し、idle/moving/arrived/returning を日本語で画面に映す。Supabase でstateを書き換えるとリロードなしで表示が変わる。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {"type": "p", "text": "ゴールは、**ロボの今の状態**（待機中・移動中・到着・帰還中）をアプリの画面にリアルタイムで映すこと。利用者は本を呼び出したあと「ロボが今どこで何をしているか」を知りたい。これがあると安心感が段違いに上がる、地味だけど効く機能。"},
+        {"type": "p", "text": "状態の出どころは `robot_status` テーブル。このテーブルは **常に1行だけ**（`id=1` 固定）で、`state` 列に `idle`/`moving`/`arrived`/`returning` のどれかが入っている。アプリはこの1行を**読む**だけ。書き換えるのはロボ側の役目（このIssueでは書き換えない）。"},
+        {"type": "callout", "variant": "study", "label": "設計の肝（疎結合 / アプリ⇄ロボはDB経由）", "text": "アプリとロボは直接つながらず、Supabaseのテーブルを介して間接的につながる。アプリは `robot_status` を**購読して読むだけ**、ロボ側が `robot_status.state` を**更新する**。だから今回作るのは「読む・映す」側だけでよい。"},
+        {"type": "p", "text": "**置き場所（最初の一歩）**: `components/RobotStatus.tsx` という新規クライアントコンポーネントを作り、トップ画面 `app/page.tsx`（S-1・本一覧/ホーム）で `import` して表示する。トップに小さなステータス表示ウィジェットを置くイメージ。"}
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {"type": "checklist", "items": [
+          "`components/RobotStatus.tsx`（クライアントコンポーネント）を作り、`app/page.tsx` で読み込んで画面に表示できている",
+          "最初に画面を開いたとき、`robot_status` の現在の `state` が日本語ラベルで正しく出る（初回ロードで Console に取得エラーが出ない）",
+          "【必須・単体確認】Supabase の Table Editor で `robot_status` の `state` を手で書き換えると、ページをリロードせずに画面の表示が変わる",
+          "コンポーネントが消える/別画面へ移ると購読が解除される（後片付けができている）",
+          "【任意・統合確認】呼出を行ったあと（=ロボ側Issueが動く環境で）`moving`→`arrived` と自然に変わるのが見える"
+        ]},
+        {"type": "callout", "variant": "tip", "label": "Doneは単体で満たせる", "text": "状態を更新するのはロボ側Issue（別Issue・未実装でもOK）。このIssュー単体では Supabase の手入力で代用して検証してよい。最後の項目だけは「他Issue/ロボがそろってからの統合確認」なので、できなくても自分の実装が悪いわけではない。"}
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {"type": "steps", "items": [
+          {"title": "置き場所を決めて空のコンポーネントを作る", "detail": "`components/RobotStatus.tsx` を新規作成し、ファイル先頭に `use client` を付けた**クライアントコンポーネント**として作る（後で購読hookを使うので最初からクライアント側にする。理由は手順3とdocsで確認）。まずは固定文字だけ返して、`app/page.tsx` で import → 画面に出ることを確認する。"},
+          {"title": "1行を読むだけのコードを足す", "detail": "`lib/supabaseClient.ts` の `supabase` を import し、`robot_status` から1行 select して、その **DBの `state` 値**を画面に出す。まだリアルタイムでなくてよい（開いた瞬間の状態が出ればOK）。1行取得の方法は research の『1行取得』を参照。"},
+          {"title": "なぜ use client が要るのかを docs で理解する", "detail": "useState / useEffect / 購読はブラウザ側でしか動かないので `use client` が必須。App Router の既定はサーバー側なので、これを付けないと state が使えない。理由は `node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md` と `.../03-api-reference/01-directives/use-client.md` で確認する。"},
+          {"title": "DBの state 値を React の状態に入れる", "detail": "手順2で読んだ **DBの `state` 文字列**を、`useState` で作った **React の状態（useState）**に入れて表示するように直す。ここで「DBの列 state」と「Reactの状態(useState)」は別物だと意識する（用語ミニ辞典参照）。"},
+          {"title": "Realtime購読を足してリアルタイムにする", "detail": "`useEffect` の中で `robot_status` の変更を購読し、変更が来たら **DBの新しい state 値を React の状態に入れ直す**。購読の張り方は research の『Realtime購読』を参照。これで Supabase 側で値が変わると画面が自動更新される。"},
+          {"title": "後片付け（unsubscribe）を入れる", "detail": "`useEffect` は**クリーンアップ関数を返す**ことで、コンポーネントが消えるときに購読を解除できる。`supabase.removeChannel(channel)` 等で解除する。やらないと購読が二重・三重に増える。"},
+          {"title": "stateを日本語ラベルに変換して表示する", "detail": "`idle`→「待機中」のような対応表（オブジェクト等）を作り、DBの英語の state を日本語に変換して見せる。用語ミニ辞典の対応をそのまま使ってよい。"},
+          {"title": "Supabase側で robot_status の Realtime を有効化する", "detail": "対象テーブル `robot_status` の Realtime を有効にしないと、購読しても何も届かない。**SupabaseのUIはバージョンで場所が変わる**ため、ダッシュボード上部の検索で「Realtime」「Publications」を検索するか、Table Editor で `robot_status` を開いて Enable Realtime のトグルを探す。手順は research の『Realtime有効化』で公式ガイドを確認。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {"type": "research", "items": [
+          {"topic": "robot_status の1行取得（select / single と maybeSingle）", "why": "開いた瞬間の状態を出すには、まず現在の1行を読む必要がある。`robot_status` は `id=1` 固定で常に1行ある想定だが、`single()` は**0行や複数行だと例外**を投げる。schema未投入や空テーブルで試すと初期表示が落ちることがある。", "where": "Supabase JS select: https://supabase.com/docs/reference/javascript/select 。`single()` と、行が無くても落ちにくい `maybeSingle()` の違いを確認する。"},
+          {"topic": "Supabase Realtime の購読（channel / postgres_changes）", "why": "値が変わったら自動で画面を更新するため。`supabase.channel(...)` で購読を作り、`postgres_changes` で `robot_status` テーブルの変更を受け取る考え方を理解する。", "where": "Realtimeガイド: https://supabase.com/docs/guides/realtime と Postgres Changes: https://supabase.com/docs/guides/realtime/postgres-changes 。`channel`・`on('postgres_changes', ...)`・`subscribe()` の流れを見る。"},
+          {"topic": "RLS有効テーブルで postgres_changes が届く条件（最大のハマりどころ）", "why": "`robot_status` は schema.sql で **RLSが有効**。postgres_changes は **RLSで select できる行・テーブルだけ配信**される。今回は `sel_stat` ポリシー（全員 select OK）があるので publishable(anon) キーでも届く。ただし**ダッシュボードでテーブルをRealtime対象に追加し忘れると一切来ない**。「有効化したのに来ない」で長時間詰まる典型。", "where": "https://supabase.com/docs/guides/realtime/postgres-changes の Authorization（認可）節。『RLS有効テーブルのRealtime』の条件を確認する。schema.sql の `sel_stat`（robot_status の select=true）が届く根拠。"},
+          {"topic": "Supabaseダッシュボードでの Realtime 有効化の現行UI", "why": "テーブルをRealtime配信対象に入れないと購読しても無音。`Database > Replication` という古いメニュー名は現行UIでは無い/改称されていることがあり、固定の導線名を覚えると迷子になる。", "where": "https://supabase.com/docs/guides/realtime/postgres-changes で現在の手順を確認。現行は Table Editor のテーブル設定の Realtime トグル、または `Database > Publications` の `supabase_realtime` に `robot_status` を追加。UIが変わるので**探し方ベース**（上部検索で Realtime/Publications を検索）で当たる。"},
+          {"topic": "リアルタイム更新を React の状態(useState)に反映する考え方", "why": "購読で受け取った**新しいDBの state 値**を **React の状態(useState)**に入れ直すと、画面が再描画されて表示が変わる。DBの値とReactの状態をつなぐ橋渡しの理解が核心。", "where": "react.dev/reference/react/useState 。状態を更新すると再描画される基本を確認する。"},
+          {"topic": "useEffect と後片付け（クリーンアップ関数）", "why": "購読は `useEffect` の中で1回だけ張り、コンポーネントが消えるときに解除する。解除しないと購読が増え続け、更新が多重に走る。", "where": "react.dev/reference/react/useEffect の『クリーンアップ関数を返す』節。返り値の関数で `removeChannel`/`unsubscribe` を呼ぶ形を確認。"},
+          {"topic": "Client Component（use client）が必要な理由", "why": "useState/useEffect/購読はブラウザでしか動かない。App Routerの既定はサーバー側なので、付け忘れると state が使えずエラー/手戻りになる。", "where": "`node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md` と `.../03-api-reference/01-directives/use-client.md`。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {"type": "table", "headers": ["症状", "原因・対処"], "rows": [
+          ["購読しても画面が変わらない", "対象テーブルの Realtime が未有効が最多。`robot_status` をRealtime配信対象に追加する（Table Editor の Realtime トグル、または Database > Publications の supabase_realtime に追加）。UIは時期で変わるので上部検索で「Realtime/Publications」を探す。"],
+          ["Realtimeを有効にしたのに何も来ない", "RLS有効テーブルは select できる行だけ配信される。`robot_status` は `sel_stat`（全員select OK）があるので本来届く。届かないならテーブルがRealtime publication に入っているか、購読対象の table 名（robot_status）が正しいか確認。"],
+          ["初回ロードでエラーになる（落ちる）", "`single()` は0行・複数行で例外。空テーブルで試していないか確認。schema.sql の `insert into robot_status ... (1,'idle')` が実行済みか、または `maybeSingle()` を使う。"],
+          ["use client を付けずにエラー", "useState/useEffectを使うファイルには先頭に `use client` が必須。手順3のdocsで理由を確認。"],
+          ["購読が二重・三重に走る", "useEffect のクリーンアップ（返り値の関数）で `removeChannel` していない。後片付けを入れる。"],
+          ["DBのstateとReactのstateを取り違える", "`robot_status.state`（DBの列）と React の状態(useState)は別物。手順4で『DBの値をReactの状態に入れる』と主語を意識する。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {"type": "ol", "items": [
+          "`npm run dev` でアプリを起動し、トップ（S-1）に状態ウィジェットが出ることを確認する。",
+          "初回ロードで現在の `state`（初期は『待機中(idle)』のはず）が正しく日本語で出ること。ブラウザのConsoleに取得エラーが出ていないこと。",
+          "Supabase ダッシュボードの Table Editor で `robot_status` の `state` を `moving` に手で書き換える → アプリ画面が**リロードなしで**『移動中』に変わればOK。",
+          "続けて `arrived`/`returning`/`idle` に変えて、それぞれ正しい日本語に切り替わることを確認する。",
+          "別画面に移動して戻る、を繰り返しても更新が多重にならない（後片付けが効いている）こと。",
+          "【任意】ロボ側が動く環境なら、本を呼び出して `moving`→`arrived` と自然に変わるのを見る。"
+        ]}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {"type": "p", "text": "AIには**答えのコードを書かせない**。考え方・調べ先・つまずきの切り分けを引き出すコーチとして使う。下のプロンプトをコピペして使ってよい。"},
+        {"type": "code", "lang": "text", "code": "私はNext.js(App Router, 16系)とSupabaseの初心者です。\n「robot_statusテーブル(常に1行・state列にidle/moving/arrived/returning)を購読して、\nアプリのトップ画面にリアルタイムで日本語表示する」コンポーネントを自分で書いて学びたいです。\n\nお願い：\n- 完成コードは書かないでください。考え方・手順・調べる場所だけ教えてください。\n- まず私に質問して、理解度を確かめながら進めてください。\n- 次の観点を順に整理して: (1)use clientが要る理由 (2)初回の1行取得(single/maybeSingleの違い)\n  (3)channel/postgres_changesでの購読の張り方 (4)受け取った値をuseStateに反映する流れ\n  (5)useEffectのクリーンアップで購読解除 (6)Supabase側でRealtimeを有効化する場所の探し方。\n- 「robot_statusはRLS有効。postgres_changesがanonキーで届く条件」も切り分けを手伝ってください。\n- 公式docsの該当ページ名/URLを示し、私自身に読ませてください。\n\n今つまずいているのは：（ここに状況を書く。例：有効化したのにRealtimeが来ない）"}
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["robot_status.state（DBの列）", "ロボの状態を表すテーブルの列。idle/moving/arrived/returning のどれかが入る。"],
+          ["React の状態(useState)", "画面の表示を覚えておくReactの仕組み。ここにDBの値を入れると、変えたとき画面が描き直される。"],
+          ["idle / moving / arrived / returning", "待機中 / 移動中 / 到着 / 帰還中。表示はこの日本語に変換する。"],
+          ["Realtime（リアルタイム）", "DBの変更を即座に受け取るSupabaseの仕組み。テーブルごとに有効化が必要。"],
+          ["postgres_changes", "Realtimeで『どのテーブルのどの変更を受け取るか』を指定する種類。"],
+          ["channel / subscribe", "購読の通り道を作って受信を開始する操作。"],
+          ["unsubscribe / removeChannel", "購読をやめる後片付け。useEffectのクリーンアップで呼ぶ。"],
+          ["RLS", "行レベルセキュリティ。selectできる範囲しかRealtimeも届かない。robot_statusは全員select可。"],
+          ["use client", "そのファイルをブラウザ側で動かす宣言。useState/useEffectを使うなら必須。"],
+          ["疎結合", "アプリとロボが直接つながらず、DB(robot_status等)を介して間接的につながる設計。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {"type": "ul", "items": [
+          "DB列名の正は schema.sql（`supabase/schema.sql`）。`robot_status`: `id`(=1固定) / `state` / `current_call_id` / `updated_at`。select は `sel_stat` で全員可、update は `upd_stat`、**insert ポリシー無し＝アプリから行追加は不可**（常に1行のまま）。",
+          "疎結合の設計（アプリ⇄ロボはDB経由）の詳細は基本設計のロボ連携の項を参照（資料では『疎結合(アプリ⇄ロボはDB経由)』として統一）。",
+          "関連Issue: 「本を呼び出す（robot_calls に insert）」（状態が変わるきっかけを作る側）、ロボ側の「robot_status を更新する」Issue（state を書き換える側・未実装でも本Issューは単体で進む）。",
+          "環境変数キーは `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` が正。`.env.local` は各自手作り。詳しくは同フォルダ 環境構築ガイド.html。",
+          "Next.js 16系は学習データと挙動が違う可能性。必ず `node_modules/next/dist/docs/` の該当ガイドで現行の書き方を確認する。"
+        ]}
+      ]
+    }
+  ]
+}

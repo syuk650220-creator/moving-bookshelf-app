@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Vercelへ本番デプロイ（公開URL）｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero integ">
+    <h1>Vercelへ本番デプロイ（公開URL）</h1>
+    <p>アプリをVercelに本番デプロイして、誰でも開ける公開URLを出す。mainマージで自動更新される状態にする。</p>
+    <div class="badges">
+      <span class="badge">担当：PM / アプリA</span>
+      <span class="badge">W12</span>
+      <span class="badge">優先 ★★★</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill role">担当：PM / アプリA</span>
+    <span class="pill sprint">W12</span>
+    <span class="pill prio">優先 ★★★</span>
+    <span class="pill lang">Vercel</span>
+    <span class="pill lang">Next.js</span>
+    <span class="pill lang">環境変数</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p><strong>ゴール:</strong> 手元(ローカル)でしか動いていないアプリを、インターネット上の公開URL（例 <code>https://moving-bookshelf-app.vercel.app</code>）で誰でも開ける状態にする。さらに <code>main</code> ブランチにマージするたびに自動で本番が更新される仕組みを作る。</p>
+  <p><strong>なぜ必要?</strong> ゼミ生に触ってもらう受入テストも、最終発表も、URLを送るだけで全員が同じアプリを開けるからこそ成り立つ。各自がローカルで <code>npm run dev</code> する状態のままでは、開発者本人しか使えない。<strong>デプロイ</strong>＝書いたコードをサーバーに置いて『誰でもアクセスできる状態』にすること。</p>
+  <div class="callout warn"><span class="label">前提: 先に画面が“ローカルで動く”状態にしておく</span><p>現状リポジトリの app/page.tsx や app/search/page.tsx は『担当者が実装します』のプレースホルダで、Supabase からデータを取るコードがまだ入っていない場合がある。デプロイはあくまで『ローカルで動くものをそのまま公開する』作業。本一覧/呼び出し画面の実装Issueが終わり、ローカルで本のデータが表示できている状態になってから、もしくは並行して進める。デプロイ自体は画面が空でも成功するが、Doneの『データが表示される』はローカルで表示できていないと満たせない。</p></div>
+  <div class="callout study"><span class="label">Vercelとは</span><p>Next.js を作っている会社が運営する、Next.js を一番ラクに公開できるホスティングサービス。GitHub リポジトリとつなぐと、push/マージのたびに自動でビルドして公開してくれる。無料枠で学生プロジェクトには十分。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li>公開URL（https://〜.vercel.app）が発行され、ブラウザで開いてアプリが表示される</li><li>公開URL上で本の一覧などSupabaseのデータが実際に表示される（環境変数が正しく効いている証拠）</li><li>Vercelに環境変数を2つ（NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY）登録した</li><li>その2つの変数が Production 環境に入っていることを確認した（Settings → Environment Variables で対象に Production が含まれている）</li><li>本番(Production)に紐づくブランチが main になっていることを確認した</li><li>PR を立てると Preview URL が自動生成される（自動デプロイの仕組みが効いている）ことを確認した</li><li>公開URLをチーム(PM/メンバー)に共有した</li></ul>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">1. まずローカルで本番ビルドが通るか確認する</span><div class="st-detail"><strong>プロジェクトのルート（package.json があるフォルダ）で</strong> <code>npm run build</code> を実行する。前提として、先に <code>npm install</code> 済み・<code>.env.local</code> 作成済みであること（環境構築ガイド.html 参照）。Vercel は中でこのビルドを行うので、ローカルで通らないものは本番でも必ず失敗する。<strong>成功サイン:</strong> 最後に『Compiled successfully』やビルド完了の表示が出てプロンプト（入力待ち）に戻ればOK。赤い『Error』で途中停止したら失敗なので、その内容を読んで先に直す。</div></li><li><span class="st-title">2. Vercelアカウントを用意する（PMと一緒に）</span><div class="st-detail">本番の所有はPM(水谷)アカウントが基本。各自が勝手に別アカウントで公開すると本番が複数できて混乱する。Vercel に GitHub アカウントでサインアップ/ログインする。<strong>この時に出る『リポジトリへのアクセス許可』画面</strong>（All repositories か Only select か）で、必ず moving-bookshelf-app へのアクセスを許可する。</div></li><li><span class="st-title">3. GitHubリポジトリをImport（取り込み）する</span><div class="st-detail">Vercel ダッシュボードで『Add New… → Project』→ GitHub の一覧から moving-bookshelf-app を選んで Import。<strong>一覧に出てこない場合</strong>は、リポジトリの所有者（個人かOrganizationか）とアクセス権をPMに確認する（Organization所有だと個人アカウントからは見えないことがある）。Framework は Next.js が自動認識されるので、ルートディレクトリ等はそのままでよい。</div></li><li><span class="st-title">4. 環境変数を2つ登録する（最重要）</span><div class="st-detail">Import 画面（または後から Settings → Environment Variables）で、Key と Value を2組登録する。Key は <code>NEXT_PUBLIC_SUPABASE_URL</code> と <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>（コードが読む名前と完全一致が必須）。値は各自の .env.local と同じもの＝<strong>URLは <code>https://〜.supabase.co</code> の形、キーは <code>sb_publishable_</code> で始まる文字列</strong>。正しい2行は同フォルダ <strong>環境構築ガイド.html のステップ4に実際の値が載っている</strong>ので、それと同じものを貼ると取り違えない。<strong>環境(Environment)の選択欄では Production・Preview・Development すべてにチェックを入れておくと安全（特に Production を必ず含める）</strong>。ここを間違えると本番URLでだけ変数が効かず、データが表示されない。</div></li><li><span class="st-title">5. Deploy（デプロイ）を実行する</span><div class="st-detail">Deploy ボタンを押すとビルドが始まる。数分待つとビルドログが流れ、完了すると公開URLが表示される。失敗したら赤字のログを上から読む（ステップ1で通っていればたいてい原因は環境変数まわり）。</div></li><li><span class="st-title">6. 公開URLを開いて動作確認する</span><div class="st-detail">発行された URL をブラウザで開く。アプリが表示され、本一覧などのデータが出れば成功（=環境変数が効いている）。データが出ない・エラーになる場合は『動作確認のしかた』と『つまずきポイント』を見る。</div></li><li><span class="st-title">7. 自動デプロイの仕組みを確認する</span><div class="st-detail">確認目的なら、まず適当な feature ブランチで小さな変更のPRを立てると、Vercel がそのPR用の <strong>Preview URL を自動生成</strong>する。これで『push/マージで自動デプロイが効く』ことが確認できる。<strong>本番(Production)を更新する main へのマージは、勝手に行わずPM承認の上で</strong>（main直push禁止・マージはPM承認後Squash の開発フローに従う）。main にマージされたものが自動で本番URLに反映される。</div></li><li><span class="st-title">8. 公開URLをチームに共有する</span><div class="st-detail">発行された本番URLをPM/メンバーに共有し、受入テスト(関連Issue)に進める。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <ul class="research"><li><div class="r-topic">VercelとGitHubリポジトリの連携／Import の流れ</div><div class="r-why">デプロイの出発点。リポジトリをVercelに取り込んで初めて自動ビルドが始まる。連携時のアクセス許可で対象リポジトリを含め忘れると、そもそもImport一覧に出てこず最初の一歩で詰まる。</div><div class="r-where">Vercel公式 https://vercel.com/docs/frameworks/nextjs （Next.jsのImport手順）。GitHub側のアクセス許可（All / Only select repositories）の概念は https://vercel.com/docs/git のGit連携の節。一覧に出ない時はリポジトリ所有者・アクセス権をPMに確認。</div></li><li><div class="r-topic">Vercelの環境変数と『適用環境（Production/Preview/Development）』の選択</div><div class="r-why">本Issue最大の詰まり所。<code>NEXT_PUBLIC_SUPABASE_*</code> を登録しても、Production にチェックを入れ忘れると本番URLでだけ変数が undefined になり、Supabaseに接続できずデータが出ない。どこにチェックを入れるかを必ず確認する。</div><div class="r-where">Vercel公式 https://vercel.com/docs/environment-variables の Environments(適用環境)の節。値の正しい中身は同フォルダ 環境構築ガイド.html のステップ4。</div></li><li><div class="r-topic">Supabaseの新形式 publishable key（sb_publishable_...）の見分け方</div><div class="r-why">Supabaseダッシュボードには新形式の publishable key と旧来のキーが別々に並ぶことがあり、どれをコピーするか迷う。違うキーを貼ると本番でだけ認証エラーになる。</div><div class="r-where">正典は同フォルダ <strong>環境構築ガイド.html のステップ4</strong>（実際の2行＝<code>https://〜.supabase.co</code> と <code>sb_publishable_...</code> がそのまま載っている）。自分で確認するなら Supabase ダッシュボード → Project Settings → API。</div></li><li><div class="r-topic">NEXT_PUBLIC_ プレフィックスの意味（なぜブラウザから使えるのか）</div><div class="r-why">Next.js では <code>NEXT_PUBLIC_</code> で始まる変数だけがビルド時にブラウザ側コードへ埋め込まれる。これを理解していないと『変数を登録したのにクライアントで読めない』『逆に秘密のキーをうっかり公開してしまう』を防げない。</div><div class="r-where">node_modules/next/dist/docs/01-app/02-guides/environment-variables.md を開く（App Router=01-app配下が現行16系）。NEXT_PUBLIC_ の項と、env変更後はRedeployが必要な旨を確認。</div></li><li><div class="r-topic">プレビュー環境(Preview)と本番環境(Production)の違い</div><div class="r-why">PRごとに作られるPreview URLで安全に確認してから、main経由で本番(Production)を更新する流れを理解するため。確認はPreviewで、本番反映はmainマージで、という使い分けがわかる。</div><div class="r-where">Vercel公式 https://vercel.com/docs/deployments/environments 。補足: Vercelはデフォルトで Local / Preview / Production の3環境を持ち、<strong>環境変数は Production / Preview / Development の単位で割り当てる</strong>（環境名と環境変数の適用先の名前は少しズレるので注意）。</div></li><li><div class="r-topic">Next.jsのビルド設定（Vercelが自動でやってくれる範囲）</div><div class="r-why">Vercelは Next.js を自動認識し、ビルドコマンドや出力先を自分で設定する必要はほぼ無い。逆に手で触ると壊すことがあるので『触らなくてよい』ことを確認しておく。</div><div class="r-where">Vercel公式 https://vercel.com/docs/frameworks/nextjs 。ローカルでのビルド挙動は node_modules/next/dist/docs/01-app/02-guides/ 配下のビルド/環境変数ガイド。</div></li><li><div class="r-topic">本番ブランチ(Production Branch)の設定</div><div class="r-why">どのブランチへのマージが本番URLを更新するかを決める設定。これが main になっていないと、mainにマージしても本番が変わらない/別ブランチで意図せず公開される。</div><div class="r-where">Vercel ダッシュボード → 対象プロジェクト → Settings → Git の Production Branch。説明は https://vercel.com/docs/git 。</div></li><li><div class="r-topic">デプロイ失敗時のログの見方</div><div class="r-why">ビルドは赤字エラーで止まることがある。ログの読み方を知らないと『なぜ失敗したか』が分からず止まってしまう。だいたいは環境変数の名前ミスか、ローカルでビルドが通っていないかのどちらか。</div><div class="r-where">Vercel ダッシュボード → 対象プロジェクト → Deployments → 失敗したデプロイを開く → Build Logs。エラー行を上から読む。ローカルで <code>npm run build</code> を再実行して同じエラーが出るかも切り分けに使う。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <table><tr><th>症状</th><th>ありがちな原因</th><th>対処</th></tr><tr><td>公開URLは開けるがデータが出ない／真っ白</td><td>環境変数を登録したが Production にチェックが入っていない、または Key 名が違う</td><td>Settings → Environment Variables で2つの Key 名が <code>NEXT_PUBLIC_SUPABASE_URL</code> / <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> と完全一致か、適用先に Production が含まれるかを確認</td></tr><tr><td>環境変数を直したのに本番に反映されない</td><td>env変更はビルド時に埋め込まれるため、変更後に再ビルドしないと効かない</td><td>Deployments タブから対象を Redeploy する（これだけで十分。再デプロイのためにmainへ直pushはしない）</td></tr><tr><td>Import一覧にリポジトリが出てこない</td><td>リポジトリがOrganization所有、または連携時にアクセス許可していない</td><td>GitHub連携のアクセス許可で moving-bookshelf-app を含める。それでも出なければ所有者・権限をPMに確認</td></tr><tr><td>ビルドが赤字で失敗する</td><td>ローカルでも <code>npm run build</code> が通っていない（型エラー等）</td><td>先にローカルで <code>npm run build</code> を通す。同じエラーが出るはず。Vercelの Build Logs と突き合わせる</td></tr><tr><td>どのキーを貼るか分からない</td><td>Supabaseに新旧のキーが並んでいて取り違える</td><td>環境構築ガイド.html ステップ4の2行と同じものを貼る。キーは <code>sb_publishable_</code> で始まる文字列</td></tr></table>
+  <div class="callout danger"><span class="label">service_role キーは絶対にVercelの NEXT_PUBLIC_ に入れない</span><p>Supabaseには全権限を持つ service_role キーが別に存在する。これを <code>NEXT_PUBLIC_</code> で登録するとブラウザに丸見えになり、誰でもDBを好き放題できてしまう。アプリが使うのは publishable key（sb_publishable_...）だけ。NEXT_PUBLIC_ に入れてよいのは publishable key と URL の2つだけ。</p></div>
+  <div class="callout warn"><span class="label">本番のmainマージは勝手にやらない</span><p>main にマージすると本番URLが即更新される。開発フロー（main直push禁止／feature/◯◯ → PR → PM承認後Squash）に従い、本番を動かすマージはPM承認の上で。自動デプロイの仕組み確認だけならPRのPreview URLで十分。</p></div>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p>『公開URLが開ける』だけでなく『環境変数が効いてデータが出る』まで見るのがこのIssueのゴール。確認は端末を分けると分かりやすい。</p>
+  <ol><li>自分のPC以外（スマホや別の人のPC）で公開URLを開く → ローカル環境に依存せず本当に公開されているかを確認（見た目チェック）</li><li>アプリが表示され、本の一覧などSupabaseのデータが出る → 環境変数が Production で効いている証拠</li><li>自分のPCのブラウザでも公開URLを開き、F12 → Console で赤いエラーが無いか確認（Supabase接続エラーが出ていないか）</li><li>Vercel ダッシュボード → Settings → Environment Variables で2つの変数が Production に入っているか確認</li><li>feature ブランチで小さな変更のPRを立て、VercelがそのPRの Preview URL を自動生成するか確認（自動デプロイの仕組みのチェック）。本番反映を伴う main マージはPMと行う</li></ol>
+  <p><strong>最終OK判定:</strong> 別端末から開いた公開URLでアプリが動き、データが表示され、Productionに2つの環境変数が入っていて、PRでPreview URLが自動生成されること（=Doneのチェックが全部埋まる）。</p>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AIには手順の答えを丸ごと書かせず、つまずいた所の切り分けと『次にどこを見るか』の相棒として使う。下をコピペして使う。</p>
+  <pre><code>あなたはコーチです。答えそのもの（クリック手順の丸写しや設定値）を書かず、私が自分で原因にたどり着けるよう、質問と確認すべき場所で導いてください。
+
+状況: 学生プロジェクトの『移動本棚ロボ アプリ』(Next.js 16 + Supabase)をVercelに本番デプロイしています。GitHub連携でImportし、環境変数は NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY の2つを登録する想定です。main マージで自動デプロイ、確認はPRのPreview URLでやり、本番更新はPM承認の上で行います。
+
+今こうなっています: （←ここに自分の状況を書く。例『公開URLは開けるがデータが出ない』『Importの一覧にリポジトリが出ない』『ビルドが赤字で止まる』）
+
+お願い:
+1) この症状で最初に確認すべき場所を、Vercelのどの画面/設定かを質問の形で挙げてください（答えの値は書かない）。
+2) 環境変数まわりが原因かを切り分けるために、私が自分で確認すべきチェック項目を問いかけてください。
+3) ビルドログを読むときに注目すべき行の見つけ方を教えてください。
+まず、私の今の状況のどこを最初に確認すべきか、質問から始めてください。</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>デプロイ</td><td>書いたコードをサーバーに置いて、誰でもアクセスできる公開状態にすること</td></tr><tr><td>Vercel</td><td>Next.jsを一番ラクに公開できるホスティングサービス。GitHubとつなぐと自動でビルド・公開してくれる</td></tr><tr><td>Import（取り込み）</td><td>VercelにGitHubリポジトリを登録して、プロジェクトとして扱えるようにする操作</td></tr><tr><td>環境変数</td><td>URLやキーなど、コードに直接書かず外から渡す設定値。Vercel側に登録する</td></tr><tr><td>NEXT_PUBLIC_</td><td>この接頭辞が付いた環境変数だけがブラウザ側コードに埋め込まれる（公開してよい値だけに付ける）</td></tr><tr><td>Production / Preview</td><td>本番(公開URL)環境 / PRごとに作られるお試し確認用環境</td></tr><tr><td>Production Branch</td><td>マージされると本番URLが更新されるブランチ（このプロジェクトは main）</td></tr><tr><td>ビルド</td><td>書いたコードを、ブラウザで動く形に変換・パッケージする工程。npm run build で行う</td></tr><tr><td>Redeploy</td><td>コードを変えずに、もう一度デプロイし直すこと（環境変数変更後の反映に使う）</td></tr><tr><td>publishable key</td><td>ブラウザに送ってよい種類のSupabaseキー。sb_publishable_ で始まる</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>環境変数の正しい値: 同フォルダ <strong>環境構築ガイド.html のステップ4</strong>（NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY の実際の2行が載っている。Vercelにもこれと同じ値を貼る）</li><li>開発フロー: main直push禁止 → feature/◯◯ ブランチ → PR → PM承認後Squashマージ（AGENTS.md / CLAUDE.md に記載。本番を動かすmainマージはPMと行う）</li><li>Vercel × Next.js: https://vercel.com/docs/frameworks/nextjs ／ 環境変数: https://vercel.com/docs/environment-variables ／ 環境の違い: https://vercel.com/docs/deployments/environments ／ Git連携: https://vercel.com/docs/git</li><li>Next.js同梱docs（現行16系の挙動）: node_modules/next/dist/docs/01-app/02-guides/environment-variables.md（NEXT_PUBLIC_ とenv変更後のRedeploy）</li><li>コードが読む環境変数名: lib/supabaseClient.ts（NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。この名前と完全一致が必須）</li><li>関連Issue（タスク名）: 『本一覧/呼び出し画面の実装』（先にローカルでデータ表示できる状態にしておく前提）／『受入テスト（ゼミ生が実際に使う）』（このデプロイで出た公開URLを使う後段）</li></ul>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

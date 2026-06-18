@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RLS・セキュリティ最終確認｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero integ">
+    <h1>RLS・セキュリティ最終確認</h1>
+    <p>公開前に RLS とキーの扱いを最終点検し、全削除・キー漏洩などの事故を防ぐ。</p>
+    <div class="badges">
+      <span class="badge">担当：PM（水谷）</span>
+      <span class="badge">W12</span>
+      <span class="badge">優先 ★★☆</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill role">担当：PM（水谷）</span>
+    <span class="pill sprint">W12</span>
+    <span class="pill prio">優先 ★★☆</span>
+    <span class="pill lang">Supabase</span>
+    <span class="pill lang">RLS</span>
+    <span class="pill lang">セキュリティ</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p><strong>公開（本番デプロイ）の直前に、DB の安全装置と秘密情報の扱いを最終チェックする</strong>タスク。コードを書くより「現状を点検して、危ない穴がないか確認する」のが主目的。</p>
+  <p>なぜ必要か。このアプリは誰でもアクセスできる Web に出る。もし RLS（行レベルセキュリティ＝テーブルごとに誰が何をできるか決める仕組み）が緩いと、知らない人にデータを全削除されたり書き換えられたりする。逆にキツすぎると正規の操作が動かない。また <code>service_role</code>（管理者キー）が外に漏れると RLS を無視して何でもできてしまう。<strong>公開前に一度きちんと棚卸しする</strong>のがこのIssue。</p>
+  <div class="callout study"><span class="label">前提の整理</span><p>RLS の方針はすでに <code>supabase/schema.sql</code> に書かれている（select/insert/update は許可・delete はポリシー無しで全員不可）。このタスクは「新しく作る」のではなく「設計どおりに効いているか・漏れがないか確認する」点検作業です。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li><code>pg_policies</code> を見て、各テーブルのポリシーが下の「期待ポリシー早見表」と一致している（足りない・余分が無い）</li><li>delete 系ポリシーがどのテーブルにも1件も無いことを確認した</li><li>代表として <code>books</code> と <code>robot_calls</code> の2テーブルで、publishable キー側から delete しても行が消えないことを確認した</li><li>アプリが実際に行う操作（books の追加/更新・robot_calls の insert・robot_status の購読）が今まで通り動く</li><li><code>service_role</code> キーがソース・ドキュメント・コミット履歴のどこにも露出していない</li><li><code>.env.local</code> が git に追跡されていない（<code>git ls-files</code> に出ない）</li><li><code>.gitignore</code> の <code>!.env.local.example</code> 行を削除し、<code>.env*</code> が確実に全部無視される状態にした</li><li>（任意）<code>scripts/check-supabase.mjs</code> の旧キー名 <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> を正キー名に直した</li></ul>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <div class="callout warn"><span class="label">大事な前提</span><p>「全テーブルに select/insert/update が揃っているはず」という思い込みは間違い。この設計は意図的にテーブルごとに権限を絞っている。まず下の早見表を頭に入れてから点検すること。</p></div>
+  <table><tr><th>テーブル</th><th>select</th><th>insert</th><th>update</th><th>delete</th></tr><tr><td>books</td><td>○ あるのが正</td><td>○ あるのが正</td><td>○ あるのが正</td><td>✗ 無いのが正</td></tr><tr><td>loans</td><td>○ あるのが正</td><td>○ あるのが正</td><td>○ あるのが正</td><td>✗ 無いのが正</td></tr><tr><td>robot_calls</td><td>○ あるのが正</td><td>○ あるのが正</td><td>○ あるのが正</td><td>✗ 無いのが正</td></tr><tr><td>robot_status</td><td>○ あるのが正</td><td>✗ 無いのが正</td><td>○ あるのが正</td><td>✗ 無いのが正</td></tr><tr><td>stop_points</td><td>○ あるのが正</td><td>✗ 無いのが正</td><td>✗ 無いのが正</td><td>✗ 無いのが正</td></tr><tr><td>users</td><td>✗ 無いのが正(現状)</td><td>✗ 無いのが正(現状)</td><td>✗ 無いのが正(現状)</td><td>✗ 無いのが正</td></tr></table>
+  <div class="callout tip"><span class="label">早見表の読み方</span><p>○=この操作のポリシーがあるべき／✗=無いのが正しい。users はポリシーが1つも無い（RLS有効だが誰も読み書きできない）のが現状の設計。stop_points と robot_status に insert ポリシーが無いのは AGENTS.md の『アプリからは robot_status/stop_points に insert 不可』と整合しています。</p></div>
+  <ol class="steps"><li><span class="st-title">1. schema.sql で設計の意図を読む</span><div class="st-detail"><code>supabase/schema.sql</code> の <code>RLS</code> 以降を上から読み、どのテーブルに sel_/ins_/upd_ ポリシーが書かれているかを上の早見表と突き合わせる。delete のポリシーが1つも書かれていないことも確認。</div></li><li><span class="st-title">2. 本番DBの pg_policies で実状を一覧する</span><div class="st-detail">Supabase の SQL Editor を開き、<code>pg_policies</code> から全ポリシーを一覧表示して、schema.sql どおりに本番にも反映されているか照合する（クエリは下のcodeブロック参照）。schema.sql を一度も流していなければここで差が出る。</div></li><li><span class="st-title">3. delete が本当に効かないか試す（代表2テーブル）</span><div class="st-detail">アプリと同じ立場＝publishable キー側から delete を投げて、行が消えないことを確認する。具体手段は『動作確認のしかた』に。代表として books と robot_calls で試せば十分（全テーブル同方針のため）。</div></li><li><span class="st-title">4. 普段の操作が動くか確認する</span><div class="st-detail">アプリが実際に行う操作（books 追加=insert／タグ更新=books update／ロボ呼出=robot_calls insert／robot_status は購読=select）が成功するか確認。stop_points・robot_status への insert は失敗するのが正常なので、混同しないこと。</div></li><li><span class="st-title">5. service_role キーの露出を調べる</span><div class="st-detail">作業ツリーとコミット履歴の両方を全文検索して、管理者キーが紛れ込んでいないか確認する（調べ方は『進めながら調べる・学ぶこと』）。</div></li><li><span class="st-title">6. .env と .gitignore を点検する</span><div class="st-detail"><code>.env.local</code> が git に追跡されていないことを確認し、<code>.gitignore</code> の <code>!.env.local.example</code> 行（廃止済みファイルの例外指定）を削除する。</div></li><li><span class="st-title">7. （任意）旧キー名の残骸を直す</span><div class="st-detail"><code>scripts/check-supabase.mjs</code> は今も旧名 <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> を参照している。正キー名 <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> に直すと、キー名の最終統一が完了する。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <ul class="research"><li><div class="r-topic">pg_policies でポリシー一覧を出す方法</div><div class="r-why">本番DBに実際どんなRLSポリシーが効いているかは、コードを見るだけでは分からない。本番で <code>select * from pg_policies</code> 相当を実行し、早見表と照合するのが点検の核心。</div><div class="r-where">Supabase 管理画面の SQL Editor。RLSの考え方は https://supabase.com/docs/guides/database/postgres/row-level-security 、PostgreSQL公式の <code>pg_policies</code> ビューは https://www.postgresql.org/docs/current/view-pg-policies.html</div></li><li><div class="r-topic">publishable キーと service_role キーの違い</div><div class="r-why">publishable（旧anon）はブラウザに置いてよい『RLSに従うキー』、service_role はRLSを無視できる『管理者キー＝絶対に公開してはいけない』。この違いを理解しないと事故の重大度が判断できない。</div><div class="r-where">Supabase の API Keys 解説 https://supabase.com/docs/guides/api/api-keys 。本プロジェクトの正キー名は <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>（AGENTS.md 参照）。</div></li><li><div class="r-topic">管理画面 SQL Editor とアプリで権限が違う理由（ロール）</div><div class="r-why">SQL Editor からは delete できるのにアプリからはできない。これはロール（role＝DB上の権限の種類）が違うため。SQL Editor は管理者ロール、アプリは anon/authenticated ロールで動く。この仕組みを知らないと『SQL Editorで消せた＝RLSが壊れている』と誤解する。</div><div class="r-where">RLSとロールの関係 https://supabase.com/docs/guides/database/postgres/row-level-security 。PostgreSQLのロール https://www.postgresql.org/docs/current/user-manag.html</div></li><li><div class="r-topic">RLS違反時に delete がどう返るか</div><div class="r-why">DELETEポリシーが無いテーブルへ delete を投げても、多くの場合エラーは出ず『0行削除（=何も消えない）』になる。『エラーが出ない＝許可されている』ではない点を知らないと検証結果を誤読する。</div><div class="r-where">Supabase JS の delete 仕様 https://supabase.com/docs/reference/javascript/delete 。返り値（data/error/count）の見方を確認する。</div></li><li><div class="r-topic">service_role キーをコミット履歴から探す方法</div><div class="r-why">今のファイルに無くても、過去に一度コミットして後で消したケースがある。その場合 GitHub 上に履歴として残り続けるので、作業ツリーだけでなく履歴も調べる必要がある。</div><div class="r-where">作業ツリーは <code>git grep</code>（node_modules を自動除外）、履歴は <code>git log -p -S</code> で文字列が出入りしたコミットを追える。Git公式 https://git-scm.com/docs/git-log と https://git-scm.com/docs/git-grep</div></li><li><div class="r-topic">.gitignore の否定パターン（!）の意味</div><div class="r-why"><code>!.env.local.example</code> は『この1ファイルだけは無視しない（=コミット対象に戻す）』という例外指定。例外ファイルは廃止済みなので、この行が残ると意図がぼやける。否定パターンの挙動を理解して安全に消す。</div><div class="r-where">Git公式 gitignore 仕様 https://git-scm.com/docs/gitignore （Patterns / <code>!</code> prefix の節）</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <div class="callout warn"><span class="label">「ポリシーが足りない＝壊れている」ではない</span><p>users にポリシーが1つも無い、stop_points/robot_status に insert ポリシーが無いのは設計どおり。pg_policies を見て早見表と一致していればOK。揃っていないこと自体は異常ではありません。</p></div>
+  <div class="callout danger"><span class="label">SQL Editor では delete できてしまう</span><p>Supabase の SQL Editor は管理者ロールで動くため、RLS を無視して delete できます。これは正常。『SQL Editor で消せた＝RLSが壊れている』は誤解。RLS の検証は必ず publishable キー側（アプリと同じ立場）から行うこと。</p></div>
+  <div class="callout tip"><span class="label">insert が通らない＝壊れた、ではない</span><p>robot_status・stop_points への insert はポリシーが無いので publishable キーからは失敗します。これが正常。むしろこれらに insert できてしまったら逆に危険なので、その場合は余分なポリシーが入っていないか疑うこと。</p></div>
+  <div class="callout warn"><span class="label">delete してもエラーが出ないことがある</span><p>DELETEポリシーが無いテーブルへ delete を投げると、多くの場合エラー無しで『0行削除』になります。エラーが出ないこと＝許可されている、ではありません。判定は『行が実際に消えていないか』で行うこと。</p></div>
+  <div class="callout tip"><span class="label">.gitignore の !.env.local.example は現に残っている</span><p>現ブランチでは <code>.env.local.example</code> ファイル自体は削除済みですが、<code>.gitignore</code> の <code>!.env.local.example</code> 行（35行目あたり）は今も残存しています。この最終点検でこの1行を削除し、<code>.env*</code> を確実に全部無視させてください。</p></div>
+  <div class="callout tip"><span class="label">git grep と通常 grep で node_modules の扱いが違う</span><p><code>git grep</code> は追跡対象ファイルだけ見るので node_modules を自動で除外します。一方ふつうの grep / Select-String は node_modules まで舐めて誤検知だらけになりがち。キー検索は git grep を使うのが楽です。</p></div>
+  <div class="callout warn"><span class="label">消せないテーブルの後始末</span><p>検証用にダミー行を入れると、delete できない仕様なので消せません。books なら status を 'available' に戻す、robot_calls なら status を 'canceled' にするなど、無害な状態に戻して放置する運用にしてください。</p></div>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p><strong>① ポリシー一覧の照合（pg_policies）。</strong> Supabase の SQL Editor で次を実行し、結果を上の早見表と突き合わせる。</p>
+  <pre><code>select tablename, cmd, policyname
+from pg_policies
+where schemaname = 'public'
+order by tablename, cmd;</code></pre>
+  <ul><li>books/loans/robot_calls に <code>SELECT</code>・<code>INSERT</code>・<code>UPDATE</code> の3つがある</li><li>robot_status は <code>SELECT</code>・<code>UPDATE</code> のみ（INSERT が無いのが正）</li><li>stop_points は <code>SELECT</code> のみ（INSERT・UPDATE が無いのが正）</li><li>users は1行も出てこない（ポリシー無しが現状）</li><li><code>DELETE</code>（cmd が <code>d</code>）の行がどのテーブルにも無い</li></ul>
+  <p><strong>② delete が効かないことの確認（代表2テーブル）。</strong> publishable キー側から delete を投げる。一番手軽なのはブラウザの devtools コンソール。本番サイトを開き、コンソールで supabase クライアントを使って <code>supabase.from('books').delete().eq('id', 'ダミーID').select()</code> 相当を実行する（クライアントの呼び方は <code>lib/supabaseClient.ts</code> の <code>supabase</code> を import する設計。調べ方は Supabase JS の delete ドキュメント）。</p>
+  <ul><li>返り値の data が空配列（消えた行が0）／または error が返る → どちらでも『消えていない』ならOK</li><li>実行後にそのIDの行を select し直して、まだ存在することを確認する</li><li>books と robot_calls の2つで試して、両方とも消えなければ全テーブルOKとみなす（全テーブル同方針のため）</li></ul>
+  <p><strong>③ 普段の操作が動く確認。</strong> アプリが実際に行う操作だけを対象にする（users/stop_points への書き込みは対象外＝アプリは書かない設計）。</p>
+  <table><tr><th>操作</th><th>対象テーブル</th><th>期待結果</th></tr><tr><td>本を追加</td><td>books（insert）</td><td>成功する</td></tr><tr><td>タグを更新</td><td>books（update）</td><td>成功する</td></tr><tr><td>ロボを呼ぶ</td><td>robot_calls（insert）</td><td>成功する</td></tr><tr><td>ロボ状態を見る</td><td>robot_status（select/購読）</td><td>成功する（insert はしない）</td></tr><tr><td>停車点を追加</td><td>stop_points（insert）</td><td>失敗するのが正常（アプリからは入れない）</td></tr></table>
+  <p><strong>④ キー・env の確認。</strong> 下のコマンドで service_role キーと .env の追跡状況を点検する。</p>
+  <pre><code># 作業ツリーに管理者キーが紛れていないか（node_modules は自動除外）
+git grep -i service_role
+git grep -i NEXT_PUBLIC_SUPABASE_ANON_KEY
+
+# 履歴に過去混入していないか（文字列の出入りを追う）
+git log -p -S service_role
+
+# .env.local が追跡されていないこと（何も出なければOK）
+git ls-files | grep -i env</code></pre>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <div class="callout study"><span class="label">コーチとして使う</span><p>AIに「答え」や「最終コマンド」を書かせず、点検の観点・調べ場所・自分の判断が合っているかの確認に使うのがコツ。</p></div>
+  <pre><code>私は移動本棚ロボアプリの公開前セキュリティ点検をしています。
+答えのSQLやコマンドを丸ごと書かず、考え方と調べ場所を示して導いてください。
+
+状況: Supabase の RLS は select/insert/update を許可・delete はポリシー無しで全員不可、
+という方針です。テーブルごとに権限が異なります
+(books/loans/robot_calls=sel/ins/upd、robot_status=sel/upd、stop_points=sel のみ、users=ポリシー無し)。
+
+聞きたいこと:
+1. pg_policies で本番の実状を一覧して上の方針と照合するとき、どの列(cmd等)を見ればよい？
+2. publishable キー側から delete を試して『効いていない』と判定する基準は?
+   (返り値が空配列かエラーか、どちらでもよい理由も)
+3. service_role キーが過去コミットに混入していないか調べるには、
+   作業ツリー検索と履歴検索で何が違う?
+
+私の理解が間違っていたら指摘してください。最終的な判断は自分で下したいです。</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>RLS</td><td>行レベルセキュリティ。テーブルごとに『誰が・何を(select/insert/update/delete)できるか』を決める安全装置。</td></tr><tr><td>ポリシー(policy)</td><td>RLSの中の1つ1つのルール。例『books は誰でも select してよい』。</td></tr><tr><td>pg_policies</td><td>今どんなポリシーが効いているかを一覧できる、PostgreSQL の確認用ビュー。</td></tr><tr><td>publishable キー</td><td>ブラウザに置いてよいキー(旧 anon)。RLSに必ず従う。本プロジェクトの正式名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。</td></tr><tr><td>service_role キー</td><td>RLSを無視して何でもできる管理者キー。絶対に公開・コミットしてはいけない。</td></tr><tr><td>ロール / role</td><td>DB上の権限の種類。anon=未ログイン相当、postgres=管理者。SQL Editor は管理者、アプリは anon で動く。</td></tr><tr><td>anon</td><td>未ログインの匿名ユーザーに相当するロール。publishable キーはこのロールで動く。</td></tr><tr><td>REST</td><td>APIを URL で叩く仕組み。Supabase はテーブル操作を REST でも提供している。</td></tr><tr><td>.gitignore の ! </td><td>否定パターン。『このファイルだけは無視しない』という例外指定。</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>RLSの設計の出どころ: <code>supabase/schema.sql</code>（RLS の節）と基本設計の DBスキーマ</li><li>キー名・env の正しい扱い: 同フォルダ <strong>環境構築ガイド.html</strong>（正キー名 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY、.env.local は各自手作り）</li><li>接続確認スクリプト: <code>scripts/check-supabase.mjs</code>（※旧キー名 ANON_KEY が残っているので合わせて点検）</li><li>関連タスク: 『Supabase 接続セットアップ』『環境変数の設定』など基盤系Issue</li></ul>
+  <div class="callout ok"><span class="label">このタスクのゴール再確認</span><p>RLSが早見表どおり・delete不可・service_roleキー非露出・.env.local非追跡・.gitignoreの例外行削除。この5点が確認できれば公開してよい状態です。</p></div>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

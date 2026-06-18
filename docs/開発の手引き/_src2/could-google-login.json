@@ -1,0 +1,279 @@
+{
+  "id": "could-google-login",
+  "group": "COULD（余力で）",
+  "order": 5,
+  "taskName": "Googleログイン有効化",
+  "screen": "S-6",
+  "role": "PM＋アプリ",
+  "sprint": "余力で",
+  "priority": "★☆☆",
+  "status": "",
+  "category": "COULD",
+  "stack": [
+    "Supabase Auth",
+    "Google Cloud",
+    "Next.js"
+  ],
+  "oneLineGoal": "Google アカウントでログインできるようにし、貸出に user_id を残せる土台を作る（MVP後の拡張）。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "Google アカウントで本アプリにログインできるようにする拡張タスクです。Supabase の Auth 機能と Google Cloud の OAuth を連携させ、アプリ側では `supabase.auth.signInWithOAuth({ provider: 'google' })` を呼んでログインボタンを動かします。要件 **F-03**(誰が借りたかを残す)につながります。"
+        },
+        {
+          "type": "p",
+          "text": "**なぜ必要か**: MVP はゲスト名入力で動きますが、それだと「誰が借りたか」が名前の文字列でしか残りません。Google ログインを入れると、ログインしたユーザーを `loans.user_id`(本当のユーザーID)で記録でき、貸出履歴がきちんと人に紐づきます。MVP の後の余力タスク(COULD)なので、急ぎではありませんが、`user_id` を本気で使う段になると避けられない作業です。"
+        },
+        {
+          "type": "p",
+          "text": "**役割分担**: 前半(Google Cloud 設定・Supabase で Google を有効化)は **PM** が担当。後半(ログインボタンの実装)は **アプリ** 担当。前半が終わっていないと後半は動かないので、PM の設定完了を待ってから実装に入ってください。"
+        },
+        {
+          "type": "callout",
+          "variant": "study",
+          "label": "設計の前提（読んでおく）",
+          "text": "アプリとロボは Supabase のテーブル越しに疎結合でつながります。このタスク自体はロボとは無関係で、アプリ⇔Supabase Auth の話です。セッション(ログイン状態)は lib/supabaseClient.ts の素の createClient がブラウザ側(localStorage)で保持します。サーバーコンポーネント側で確実にログインユーザーを読みたくなったら別途 @supabase/ssr の導入が必要になりますが、このCOULDタスクはクライアント側で完結する前提です。"
+        }
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {
+          "type": "checklist",
+          "items": [
+            "【PM】Google Cloud Console で OAuth クライアントID／シークレットを発行した",
+            "【PM】Google 側の「承認済みリダイレクトURI」に Supabase のコールバックURL(…/auth/v1/callback)を登録した",
+            "【PM】Supabase の Authentication → Providers → Google を有効化し、クライアントID／シークレットを設定した",
+            "【PM】Supabase の Authentication → URL Configuration の Redirect URLs に、アプリの戻り先URL(ローカル http://localhost:3000 と Vercel 本番ドメインの両方)を登録した",
+            "【アプリ】ログインボタンから `supabase.auth.signInWithOAuth({ provider: 'google' })` でログインできる",
+            "【アプリ】ログイン後にユーザー情報(メール等)が取得でき、画面に反映できる",
+            "【アプリ】ゲスト利用(名前入力)も従来どおり使えることを確認した（両立）",
+            "（紐付けを実装した場合）ログイン状態で1冊借りると、loans に borrower_type=user と user_id が入ることを確認した"
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {
+          "type": "steps",
+          "items": [
+            {
+              "title": "【PM】Google Cloud で OAuth クライアントを作る",
+              "detail": "Google Cloud Console でプロジェクトを作り、OAuth 同意画面を設定 → 「認証情報」で OAuth クライアントID(種類: ウェブアプリケーション)を発行する。クライアントID とシークレットを控える。"
+            },
+            {
+              "title": "【PM】Google にコールバックURLを登録する",
+              "detail": "Google のクライアント設定「承認済みのリダイレクトURI」に、Supabase が用意するコールバックURL(あなたのプロジェクトの …/auth/v1/callback。Supabase の Providers 画面に表示される)を貼る。これは『Google → Supabase』の戻り先で、後述のアプリ用Redirect URLとは別物。"
+            },
+            {
+              "title": "【PM】Supabase で Google を有効化",
+              "detail": "Supabase ダッシュボード → Authentication → Providers → Google を ON にし、上で発行したクライアントID／シークレットを入力して保存。"
+            },
+            {
+              "title": "【PM】Supabase に Redirect URLs を登録",
+              "detail": "Authentication → URL Configuration の Redirect URLs に、ログイン後にユーザーが戻ってくる『自分のアプリのURL』を登録する。ローカル開発用(例 http://localhost:3000 や /login)と、Vercel 本番ドメインの両方を登録しないと、本番だけ弾かれる事故になる。Vercel デプロイ後に本番ドメインを追加するのを忘れない。"
+            },
+            {
+              "title": "【アプリ】ログインボタンを置く場所を決める",
+              "detail": "S-6 は既に app/login/page.tsx(中身は実装待ちのスタブ)が存在する。ここに置く。ただし現状はサーバーコンポーネントなので、onClick を持つボタンをそのまま書くとエラーになる。page.tsx 自体を use client にするか、ボタン部分だけを components 配下の use client な小コンポーネントに切り出して読み込むかを選ぶ(次ステップにつながる)。"
+            },
+            {
+              "title": "【アプリ】ボタンをクライアント側にする(use client)",
+              "detail": "クリック(onClick)やブラウザのリダイレクトを扱うので、ボタンはクライアントコンポーネントである必要がある。ファイル先頭に use client ディレクティブを付ける書き方を docs で確認する。"
+            },
+            {
+              "title": "【アプリ】signInWithOAuth を呼ぶ",
+              "detail": "ボタンの onClick で supabase.auth.signInWithOAuth を呼ぶ。provider は google。戻り先は options.redirectTo で指定する。redirectTo に渡すURL(例 http://localhost:3000/login)は、ステップ4で Supabase の Redirect URLs に登録しておいた値と一致している必要がある(未登録だと戻ってきた時に拒否される)。具体的な引数の書き方は Supabase docs で確認。"
+            },
+            {
+              "title": "【アプリ】ログイン後のユーザー情報を表示",
+              "detail": "戻ってきたらセッションが張られる。supabase.auth.getUser() でユーザー情報を取り、ログイン中の表示(メールやログアウトボタン)を出す。状態の変化を拾うなら onAuthStateChange も調べる。"
+            },
+            {
+              "title": "【PM＋アプリ】users テーブルとの紐付けを決める(user_id を使うなら必須)",
+              "detail": "loans.user_id に値を入れるには users テーブルに行が必要。だが users は現状クライアントから insert できない(下のつまずき＆研究を必ず読む)。DBトリガで自動作成する方針(推奨)を採るなら schema.sql 変更＝PM承認が要る。最小実装で user_id を後回しにするなら、この段階では入れず後続タスク扱いと割り切る。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {
+          "type": "research",
+          "items": [
+            {
+              "topic": "Google Cloud Console で OAuth クライアントを作る／リダイレクトURIを登録する",
+              "why": "Supabase が Google にユーザーを送って認証してもらうための土台。クライアントID/シークレットと、Google側の承認済みリダイレクトURI(=Supabaseのcallback)が無いと一切動かない。",
+              "where": "Supabase Auth(Google): https://supabase.com/docs/guides/auth/social-login/auth-google ／ Google Cloud Console: https://console.cloud.google.com"
+            },
+            {
+              "topic": "Supabase の Providers で Google を有効化＆ Redirect URLs の設定",
+              "why": "プロバイダ有効化に加え、URL Configuration の Redirect URLs にアプリ側の戻り先(ローカルと本番の両方)を登録しないと、ログイン後に戻ってきた瞬間に弾かれる。初心者が『ローカルでは動くが本番で動かない』で詰まる定番ポイント。",
+              "where": "Supabase Auth(Google) の Configuration 節: https://supabase.com/docs/guides/auth/social-login/auth-google ／ Redirect URLs の考え方: https://supabase.com/docs/guides/auth/redirect-urls"
+            },
+            {
+              "topic": "signInWithOAuth の流れ(リダイレクト→セッション)と redirectTo",
+              "why": "ボタンを押す→Google にフルリダイレクト→戻ってくる→セッションが張られる、という一連の流れと、戻り先を決める options.redirectTo の役割を理解しないと『戻ってきたのにログイン状態にならない』が解決できない。",
+              "where": "Supabase JS リファレンス signInWithOAuth: https://supabase.com/docs/reference/javascript/auth-signinwithoauth"
+            },
+            {
+              "topic": "OAuth コールバックを App Router でどう処理するか(PKCE / クライアント完結か /auth/callback の Route Handler が要るか)",
+              "why": "supabase-js が戻り後のコードをどこで処理するかで実装が分岐する。本プロジェクトは素の createClient(localStorageセッション)なのでクライアント側 getUser/onAuthStateChange で完結できるが、サーバー側でセッションを読む構成にするなら別途 Route Handler や @supabase/ssr が必要。どちらの設計かを最初に決める。",
+              "where": "Supabase: Next.js App Router での Auth(Server-Side Auth): https://supabase.com/docs/guides/auth/server-side/nextjs ／ Supabase Auth 概要: https://supabase.com/docs/guides/auth"
+            },
+            {
+              "topic": "ログインユーザーを users テーブルに作る方法(auth.users への on insert トリガ＋security definer 関数)",
+              "why": "【最重要】users テーブルは RLS 有効だがポリシーが一切無く、アプリ(publishableキー)からの直接 insert/select は必ず失敗する。手動 insert は不可。loans.user_id を使うには、auth.users に新規ユーザーができた時に users 行を自動作成する DBトリガ(security definer 関数)を schema に足すのが定石。schema.sql 変更＝PM承認が必要。",
+              "where": "Supabase: ユーザーデータの管理(トリガでprofile作成の例): https://supabase.com/docs/guides/auth/managing-user-data ／ 変更対象ファイル: supabase/schema.sql"
+            },
+            {
+              "topic": "Next.js(16系)で use client / サーバーとクライアントの境界",
+              "why": "onClick やブラウザのリダイレクトはクライアントコンポーネントでしか扱えない。なぜボタンを use client にするのかの一般原則を押さえる。",
+              "where": "サーバー＆クライアント: node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md ／ use client: node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md ／ 参考(認証一般): node_modules/next/dist/docs/01-app/02-guides/authentication.md ※ただしこのガイドはパスワード認証/Server Actions 前提の例なので、use client・境界の一般原則の確認用に留め、ログインの実体は Supabase docs に従う(コード例はそのまま使わない)。"
+            },
+            {
+              "topic": "ゲスト利用とログイン利用の両立",
+              "why": "ログインを入れてもゲスト(名前入力)を残す設計。借りる時に user(user_id)か guest(guest_name)かを borrower_type で振り分ける考え方を整理する。",
+              "where": "本リポジトリの supabase/schema.sql(loans.borrower_type / user_id / guest_name)。データ系テーブル(books/loans/robot_calls)は select/insert/update が全員可だが、users は別(ポリシー無し)である点に注意。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {
+          "type": "callout",
+          "variant": "danger",
+          "label": "users テーブルには行を直接 insert できない",
+          "text": "supabase/schema.sql を見ると users は RLS が有効なのに select/insert/update のポリシーが1つも作られていない(books/loans/robot_calls には ins_*/upd_* があるが users には皆無)。RLS有効＋ポリシー無し＝アプリ(publishableキー)からは SELECT も INSERT も全拒否。よって『ログインユーザーを users に手動 insert』は絶対に成功しない。AGENTS の『select/insert/update は全員OK』はデータ3テーブルの話で、users には当てはまらない。"
+        },
+        {
+          "type": "p",
+          "text": "**対処は2択**(どちらも schema.sql 変更を伴い PM承認が必要): **(A) 推奨** auth.users 作成時に users 行を自動作成する DBトリガ(security definer 関数)を schema に追加する。**(B)** users 用の insert/select ポリシーを追加する(その上で別途 insert する)。手動insert単独は誤りなので選ばない。"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "label": "2種類のURLを混同しない",
+          "text": "登場するURLは2種類。(1) コールバックURL(Supabase)＝Google に登録する …/auth/v1/callback。Google→Supabase の戻り先。(2) Redirect URL(アプリ)＝Supabase の URL Configuration に登録する『自分のアプリの戻り先』。redirectTo に渡す値はこちら。『リダイレクトURIが一致しない』エラーが出たら、どっちのURLの話かを必ず切り分ける。"
+        },
+        {
+          "type": "ul",
+          "items": [
+            "**戻ってきたのにログイン状態にならない**: redirectTo に渡したURLが Supabase の Redirect URLs に未登録、または値が食い違っている。Authentication → URL Configuration を確認。",
+            "**ローカルは動くが本番で動かない**: Vercel 本番ドメインを Supabase の Redirect URLs(と必要なら Google 側)に追加し忘れている。デプロイ後に追加する。",
+            "**page.tsx でボタンを書いたらエラー**: app/login/page.tsx はサーバーコンポーネント。onClick を持つボタンは use client が必要。ボタンだけ別コンポーネントに切り出すのが安全。",
+            "**Google 同意画面で弾かれる/未公開警告**: OAuth 同意画面のテストユーザーや公開ステータスの設定を確認(PM作業)。"
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {
+          "type": "ol",
+          "items": [
+            "ログインボタンを押すと Google のログイン画面に飛ぶ。",
+            "Google でログインすると、アプリの戻り先URLに戻ってくる。",
+            "戻った後、supabase.auth.getUser() でユーザー情報(メール等)が取れ、画面に『ログイン中』表示やメールが出る。",
+            "ログアウト(signOut)するとログイン前の表示に戻る。",
+            "ゲスト(名前入力)の経路も従来どおり使えることを確認(両立)。",
+            "（紐付けを実装した場合）ログイン状態で本を1冊借り、Supabase の loans テーブルで該当行が borrower_type=user かつ user_id に値が入っていることを確認する。これがこのタスク本来の目的(F-03)。"
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "label": "最小実装で紐付けを省く場合",
+          "text": "DBトリガを入れずログインだけ動かす段階では loans.user_id は入りません(users行が無いため)。その場合は『user_id 記録は後続タスク扱い』と明記して期待値のズレを防いでください。『ボタンは動くが目的(user_id記録)は未達』で終わらせないこと。"
+        }
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "AIには答えのコードを書かせず、調べ方・考え方を導いてもらいます。次のプロンプトをコピペして使ってください。"
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "あなたは私のコーチです。答えのコードは書かず、調べ方・考え方・つまずき所だけ教えてください。\n\n私は学生プロジェクトで、Next.js(16系・App Router) + Supabase のアプリに Google ログインを足しています。\n前提:\n- Supabase クライアントは lib/supabaseClient.ts の素の createClient(localStorageセッション)。\n- ログインボタンは app/login/page.tsx に置く想定。supabase.auth.signInWithOAuth({provider:'google'}) を使う。\n- users テーブルは RLS有効だがポリシーが無く、クライアントから直接 insert できない(これは確定事実)。\n\n質問:\n1) signInWithOAuth の redirectTo と、Supabase の Redirect URLs / Google の承認済みリダイレクトURI の関係を、混同しないように整理して。どれがどっちの戻り先か。\n2) ログイン後に users 行を作って loans.user_id を残すには、なぜ手動insertではダメで、DBトリガ(security definer)が定石なのか。考え方と、Supabase docs のどこを読むべきかだけ示して(コードは不要)。\n3) onClick を持つボタンを Next.js のどのコンポーネント(server/client)に置くべきか、その理由。\n\n各回答で『どの公式docs/ファイルを自分で開いて確認すべきか』を必ず添えてください。"
+        }
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {
+          "type": "table",
+          "headers": [
+            "言葉",
+            "かんたんな意味"
+          ],
+          "rows": [
+            [
+              "OAuth",
+              "別サービス(Google)のアカウントで本人確認させる仕組み。パスワードを自分のアプリに渡さずに済む。"
+            ],
+            [
+              "プロバイダ(Provider)",
+              "Supabase Auth で言う『どのサービスでログインさせるか』。今回は Google。"
+            ],
+            [
+              "コールバックURL(Supabase)",
+              "Google に登録する Supabase の戻り先 …/auth/v1/callback。『Google→Supabase』の戻り口。"
+            ],
+            [
+              "Redirect URL(アプリ)",
+              "Supabase の URL Configuration に登録する『自分のアプリの戻り先』。redirectTo に渡す値。ローカルと本番の両方を登録する。"
+            ],
+            [
+              "セッション",
+              "ログイン状態を保持する仕組み。本プロジェクトはブラウザ側(localStorage)で保持。"
+            ],
+            [
+              "RLS",
+              "行レベルセキュリティ。テーブルごとに誰が読めるか書けるかをポリシーで決める。ポリシーが無いと(usersのように)全拒否。"
+            ],
+            [
+              "security definer 関数",
+              "関数の作成者の権限で動くDB関数。RLSを越えて users 行を作るトリガで使う(=普通のクライアント権限では入れられない処理を安全に行う)。"
+            ],
+            [
+              "use client",
+              "Next.js でそのコンポーネントをクライアント側で動かす宣言。onClick やリダイレクトを扱うボタンに必要。"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {
+          "type": "ul",
+          "items": [
+            "要件: **F-03**(誰が借りたかを残す＝ loans.user_id)。基本設計の loans / users スキーマ(supabase/schema.sql)を確認。",
+            "関連タスク: 貸出/返却まわり(loans に書き込む画面)、ゲスト名入力の経路。user_id と guest_name の振り分けはそちらと整合させる。",
+            "環境変数キーは NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正(古い ANON_KEY は誤り)。.env.local は各自手作り。詳細は同フォルダ 環境構築ガイド.html。",
+            "schema.sql を変更する作業(usersのトリガ/ポリシー追加)は必ず PM レビュー→承認後にマージ。main 直 push 禁止、feature ブランチ＋PR。",
+            "Vercel デプロイ後は本番ドメインを Supabase Redirect URLs と Google 承認済みURIに追加するのを忘れない。"
+          ]
+        }
+      ]
+    }
+  ]
+}
