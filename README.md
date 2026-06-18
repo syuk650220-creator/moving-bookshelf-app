@@ -3,6 +3,8 @@
 研究室の本を、自走する「移動本棚ロボ」と Web アプリで一元管理するシステムです。
 利用者はアプリで本を探し、自席までロボに本棚ごと呼び出せます。ものづくりゼミ 2026 / 9人・3ヶ月。
 
+> 🚀 **はじめての人・困ったときは、まず [開発の手引き（docs/開発の手引き/index.html）](docs/開発の手引き/index.html) を開いてください。** 環境構築から各Issueの進め方・調べ方まで、初心者向けにまとまっています。
+
 ## 技術スタック
 
 - **フロント**: Next.js (App Router) + TypeScript + Tailwind CSS + shadcn/ui
@@ -14,9 +16,11 @@
 
 ```bash
 npm install
-cp .env.local.example .env.local   # 値は Supabase の Settings > API からコピー
+# プロジェクト直下に .env.local を手作り（手順は「開発の手引き」の環境構築ガイド参照）
 npm run dev                        # http://localhost:3000
 ```
+
+詳しい環境構築手順は [開発の手引き / 環境構築ガイド](docs/開発の手引き/環境構築ガイド.html) を参照。
 
 `.env.local` は `.gitignore` 済みでコミットされません。サービスロールキー（service_role）は絶対に共有しないこと。
 
@@ -40,7 +44,7 @@ robot/          # ロボ側コード（別管理・プレースホルダ）
 
 ## ドキュメント
 
-設計・運用の資料は [docs/](docs/) を参照。Git・PR のルールは [CONTRIBUTING.md](CONTRIBUTING.md) を参照。
+まずは [開発の手引き](docs/開発の手引き/index.html)（環境構築・各Issueの進め方）。設計・運用の資料は [docs/](docs/)、Git・PR のルールは [CONTRIBUTING.md](CONTRIBUTING.md) を参照。
 
 ## データベース
 
