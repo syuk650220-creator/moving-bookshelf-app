@@ -1,0 +1,141 @@
+{
+  "id": "hw-mapping",
+  "group": "ハードウェア設計",
+  "order": 6,
+  "taskName": "実機マッピング（SLAMで地図作成→席座標採取）",
+  "screen": "",
+  "role": "ハ設＋ハ制",
+  "sprint": "Sprint 2",
+  "priority": "★★☆",
+  "status": "",
+  "category": "ハード",
+  "stack": ["Python", "ROS2", "SLAM(slam_toolbox)", "LiDAR", "RViz"],
+  "oneLineGoal": "SLAMで部屋の地図を作って保存し、席3つの座標(x,y,theta)を実機から採取して stop_points テーブルに入れる。これが後でロボが席まで自走するための「地図」と「目的地リスト」になる。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {"type": "p", "text": "ゴールは2つ。**(1) SLAM で部屋の地図を作って保存する**、**(2) 各席の座標 (x, y, theta) を採って `stop_points` テーブルに入れる**。これができると、後のIssueでロボが Nav2 を使って「3番の席まで行って」と指示されたとき、地図上の座標をめがけて自走できるようになる。"},
+        {"type": "p", "text": "SLAM(スラム)＝Simultaneous Localization And Mapping。ロボがLiDAR(レーザーで周囲の距離を測るセンサ)で周りを見ながら走り回り、**地図を作る**のと**自分が地図のどこにいるか**を同時に推定する技術。今回は ROS2 の `slam_toolbox` を使う。"},
+        {"type": "callout", "variant": "study", "label": "このIssueの立ち位置（準備系）", "text": "これは「ロボが自走する(Nav2)」の**前準備**。地図と席座標が無いとNav2は目的地を持てない。逆に言うと、本Issue完了時点ではまだNav2で実際に走らせる必要はない（座標の最終的な正しさはNav2導入後に確定する）。Sprint2の走行・Nav2系Issueと並走する位置づけ。"},
+        {"type": "callout", "variant": "warn", "label": "前提Issueにぶら下がっている", "text": "本Issueは「走行系(/cmd_vel に値を流すと実機が動く)」「LiDARセットアップ(型番確定・ros2で点群が出る)」が**先に完了している**ことが前提。これらが未完了だと本Issueは進められない。揃っていなければ先にそちらへ戻る（下のステップ1で確認）。"}
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {"type": "checklist", "items": [
+          "SLAM(slam_toolbox)を起動し、ロボを走らせて部屋の地図ができる（RVizで部屋の形が見える）",
+          "地図が**ファイルに保存できる**（Nav2で使う形式なら `.pgm`(画像)+`.yaml`(設定)の2点が残る。slam_toolbox独自保存だと `.posegraph` 等別形式になる場合もある）",
+          "保存した地図が実際の部屋とおおむね合っている（合格目安：主要な壁2面と本棚の位置が判別できる／白い未探索の大穴が無い）",
+          "席3つの座標 (x, y, theta) が実機から採れている（TFまたは推定姿勢から数値を読み取れた）",
+          "採った3つの座標が `stop_points` テーブルに入っている（SQL Editorで insert 済み、`select` で3行見える）"
+        ]},
+        {"type": "callout", "variant": "tip", "label": "「実機で席へ行かせる」検証はこのIssueでは任意", "text": "座標が本当に正しいか（行かせて確かめる）は **Nav2が動く別Issue完了後**の追検証。本Issue段階でNav2未導入ならスキップ可。ここで行かせ方が分からなくても自分の失敗ではない。"}
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {"type": "steps", "items": [
+          {"title": "ステップ0：ROS2ワークスペースの基本（最初に押さえる）", "detail": "`apt` で入れたパッケージ（slam_toolbox等）はそのまま `ros2 run/launch` で動くが、自分でgit cloneした/自作したノードは `colcon build` → `source install/setup.bash` をしないと使えない。**「コマンドが見つからない(command not found / package not found)」ときは、まず source し忘れを疑う**。新しいターミナルを開くたびに `source /opt/ros/humble/setup.bash`（と必要なら自分のワークスペースの setup.bash）が要る。詳しくはresearch『ROS2の起動準備』。"},
+          {"title": "ステップ1：前提を確認する", "detail": "(a) **走行できるか**＝別Issue(走行系)で『/cmd_vel に値を流すと実機が動く』が達成済みか。`ros2 topic info /cmd_vel` で購読ノード(モーター制御)がいるか確認。(b) **LiDARが点群を出すか**＝LiDARセットアップIssueで型番が確定し、`ros2 topic echo /scan`（または使用ドライバのトピック）でデータが流れるか確認。**使用LiDARの型番が分からなければ、まずPM(水谷)・ハ設に聞く／前提Issueを確認する**（型番が決まらないとドライバも調べられない）。揃っていなければ本Issueは保留して前提Issueへ戻る。"},
+          {"title": "ステップ2：slam_toolbox を起動する", "detail": "`slam_toolbox` を apt で入れ、オンライン(逐次)マッピング用の launch を起動する。起動の正確なコマンド名/launchファイル名は research『slam_toolboxの起動』で公式READMEを見て確認する（答えは書かない）。起動できると、地図作成モードが立ち上がる。"},
+          {"title": "ステップ3：RVizを開いて地図を見られるようにする", "detail": "別ターミナルで RViz を起動し、`Map` 表示と LiDAR の `LaserScan` 表示を追加して、地図が育っていく様子を見られるようにする。最初は自分の周りだけ地図ができている。フレームは `map` を基準にする。"},
+          {"title": "ステップ4：teleop（キーボード操作）でロボを動かす準備", "detail": "ロボを動かすのは**teleop(キーボード遠隔操作)で行う**。`teleop_twist_keyboard` パッケージを使い、押したキーが `/cmd_vel`(速度指令トピック)に流れ、それをモーター制御ノードが受けて実機が動く、という経路。まず `ros2 topic info /cmd_vel` でモーター側がそのトピックを購読しているか確認してから teleop を起動する。起動方法と操作キーは research『teleopの起動と確認』を参照。"},
+          {"title": "ステップ5：ゆっくり走らせて地図を作る", "detail": "teleopで**ゆっくり**部屋を一周する。急加速・急旋回はLiDARが追従できず地図がズレる。壁ぎわや本棚の前を通って、RViz上で地図が部屋全体に広がるまで走る。白い未探索の穴が埋まり、壁が一本につながればよい。"},
+          {"title": "ステップ6：地図を保存する", "detail": "Nav2が後で読む地図(`.pgm`+`.yaml`)を作るなら **`ros2 run nav2_map_server map_saver_cli`**（=Nav2側のツール。パッケージ名込みで覚える）を使う。**注意**：slam_toolbox には独自の保存(serialize → `.posegraph`/`.data`、RVizのSlamToolboxプラグインのパネルからも保存可)もある。**Nav2で使うなら map_saver で `.pgm`/`.yaml` を出す**。どちらを採るかは research で確認。"},
+          {"title": "ステップ7：席の座標を採る（x, y, theta）", "detail": "**ロボを採りたい席の位置・向きに実際に置く**。そのうえで地図座標系での自己位置を数値で読む。第一候補は **`ros2 run tf2_ros tf2_echo map base_link`**（=map から base_link への変換＝ロボの位置と向き）。ここに出る x, y が席の座標。向きはクォータニオン(x,y,z,w の4値)で出るので、theta(yaw, ラジアン)へ変換が要る（research参照）。slam_toolbox使用中で AMCL を使っていない場合は tf2_echo か slam_toolbox の推定位置を使うのが現実的（AMCLを使う構成なら `ros2 topic echo /amcl_pose` でも読める）。3席ぶん繰り返す。"},
+          {"title": "ステップ8：stop_points に座標を入れる（SQL Editor）", "detail": "Supabase の **SQL Editor** から `stop_points` に `insert`。列は `id, label, x, y, theta`（`created_at` はdefaultありなので省略可）。**`id` は自動採番ではない手動採番の int**。席ごとに 1, 2, 3 など**重複しない番号を自分で決めて**入れる。この `id` が後で `robot_calls.seat_id` の参照先（＝アプリの席選択で使う番号）になるので、番号の割り当ては**アプリ担当と取り決めて**おく。SQLは下のコードブロック参照。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {"type": "research", "items": [
+          {"topic": "SLAM の考え方（slam_toolbox / Cartographer の違い）", "why": "「地図を作る」と「自分の位置を知る」を同時にやるのがSLAM。仕組みのイメージが無いと、なぜゆっくり走るのか・なぜオドメトリが要るのかが腑に落ちず、ズレた地図をそのまま使ってしまう。", "where": "slam_toolbox 公式README: https://github.com/SteveMacenski/slam_toolbox （online/offline モードの違い）。比較対象として Cartographer の概念も。ROS2 Humble docs: https://docs.ros.org/en/humble/ 。"},
+          {"topic": "ROS2の起動準備（source / colcon build）", "why": "「コマンド/パッケージが見つからない」の最頻原因が source 忘れ。新しいターミナルごとに環境を読み込む必要があり、自作ノードは build も要る。ここを知らないと最初の一歩で詰まる。", "where": "ROS2 Humble: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Configuring-ROS2-Environment.html および Colcon ビルドのチュートリアル（同サイト内 Beginner: Client libraries）。"},
+          {"topic": "LiDARのセットアップ（型番確定→ros2ドライバ）", "why": "LiDARが点群(/scan)を出さないとSLAMは何もできない。製品ごとにドライバ(ros2パッケージ)が違うため、まず**使用LiDARの型番を確定**させてから『型番 + ros2 driver』で探す必要がある。", "where": "**まず本プロジェクトの前提Issue(LiDARセットアップ)で型番を確認／不明ならPM・ハ設に聞く**（型番は本資料・robot/READMEに未記載）。型番確定後に『(型番) ros2 driver』で公式リポジトリを検索。レーザークラスは製品仕様書で確認（多くの屋内2D LiDARはClass1=目に安全だが要確認）。"},
+          {"topic": "teleopの起動と確認（/cmd_vel への経路）", "why": "ロボを動かせないとマッピングできない。**手押しはオドメトリが取れず地図が必ずズレるので原則NG**。teleopでキー入力を /cmd_vel に流し、モーター制御ノードがそれを受けて動く、という経路を理解・確認する必要がある。", "where": "まず `ros2 topic info /cmd_vel` で購読ノード(モーター制御)がいるか確認 → `ros2 run teleop_twist_keyboard teleop_twist_keyboard` の操作キー。teleop_twist_keyboard: https://github.com/ros-teleop/teleop_twist_keyboard 。Nav2 Getting Started: https://docs.nav2.org/getting_started/index.html 。"},
+          {"topic": "地図の保存（map_server / slam_toolbox serialize の2系統）", "why": "保存手段が2つあり、出力形式も違う。Nav2で使うなら nav2_map_server の map_saver で `.pgm`/`.yaml`、slam_toolbox独自なら `.posegraph` 等。混同すると「コマンド/サービスが無い」で迷う。", "where": "Nav2 map_server: https://docs.nav2.org/ （Map Server / map_saver_cli）。slam_toolbox の serialize/save 機能: https://github.com/SteveMacenski/slam_toolbox の README（Saving/serialization の節）。"},
+          {"topic": "席座標 (x, y, theta) を正しく読む手段（TF / 推定姿勢）", "why": "**RVizの『2D Pose Estimate』は座標を読むツールではなく、自己位置をクリックで“与える”入力ツール**（/initialpose にpublish）。これで座標を読もうとすると確実に詰まる。正しくは TF か推定姿勢から数値を取る。", "where": "TF/tf2_echo: ROS2 Humble TF2 チュートリアル https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Tf2-Main.html （`ros2 run tf2_ros tf2_echo map base_link`）。AMCL構成なら Nav2 docs の `/amcl_pose`。x,yの当たりだけなら RViz の『Publish Point』（数値はターミナルログに出る／向きthetaは出ない）。"},
+          {"topic": "クォータニオン → yaw(theta) 変換と座標系の向き", "why": "ROSの向きは内部で**クォータニオン(x,y,z,w の4値)**で持つ。tf2_echoや/amcl_poseもクォータニオンで出る。stop_points.theta に入れる**1つの角度(yaw, ラジアン)**へは変換が必要。『thetaが無い』と混乱しがちな所。基準は地図の+x方向、反時計回りが正。", "where": "REP-103(座標系・単位の標準): https://www.ros.org/reps/rep-0103.html 。tf2の変換: https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Tf2-Main.html 。yaw換算の考え方(euler_from_quaternion 等)を確認（コードは書かず考え方として）。"},
+          {"topic": "stop_points へ SQL Editor で入れる理由とid採番", "why": "「insertポリシーが無い＝誰も入れられないのでは？」と矛盾に見えて不安になる。**SQL Editorは管理者権限(service role)で動くためRLSをバイパスして入れられる**。一方アプリのブラウザ(匿名/publishableキー)はポリシーが無いので弾かれる、という非対称が仕様。id採番ルールも要確認。", "where": "Supabase RLS / service role: https://supabase.com/docs/guides/database/postgres/row-level-security （bypass / service_role の節）。schema.sql(`supabase/schema.sql`)で `stop_points` に select ポリシーのみ・insertポリシー無し・`id` が手動採番int であることを実物で確認。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {"type": "table", "headers": ["症状・勘違い", "原因・対処"], "rows": [
+          ["コマンド/パッケージが見つからない", "source忘れが最頻。新ターミナルごとに `source /opt/ros/humble/setup.bash`（自作ノードなら自分のワークスペースの `install/setup.bash` も）。自作ノードは先に `colcon build`。"],
+          ["地図が大きくズレる・二重に見える", "走るのが速すぎ、または**手押しでオドメトリが無い**のが原因。手押しは原則NG。teleopで /cmd_vel 経由＝オドメトリのある駆動でゆっくり走らせる。手押ししかできない段階なら走行系の前提Issueが未完了なので戻る。"],
+          ["『2D Pose Estimate』をクリックしても座標が出ない", "それは座標を“読む”ツールではなく自己位置を“与える”入力ツール。座標は `ros2 run tf2_ros tf2_echo map base_link` や `/amcl_pose` から読む（ステップ7）。"],
+          ["thetaが見当たらない（x,y,z,wの4値が出る）", "向きはクォータニオンで出る。stop_points.theta には yaw(ラジアン)へ変換した1つの角度を入れる。変換はtf2 docs/REP-103参照。"],
+          ["map_saver でコマンド/サービスが無いと言われる", "map_saver_cli は **Nav2(nav2_map_server)** のツール。`ros2 run nav2_map_server map_saver_cli`。slam_toolbox独自保存(serialize)とは別系統なので混同しない。"],
+          ["RVizが映らない/重い（別PCで見たい）", "別PCで見るときは**両方のターミナルで `export ROS_DOMAIN_ID=同じ数字` を実行**（`.bashrc`に書くと毎回不要で楽）。同一Wi-Fi/LAN(同一サブネット)であること。繋がらないときはまずDOMAIN_IDの不一致、次にファイアウォールを疑う。"],
+          ["SQL Editorで入れていいのか不安（insertポリシー無し）", "SQL Editorは管理者権限(service role)でRLSをバイパスするので入る。アプリの匿名キーは弾かれる、という非対称が仕様。schema.sqlの通りで正しい。"],
+          ["stop_points.id をどう決める？", "自動採番ではない手動採番のint。1,2,3 など重複しない番号を自分で決める。robot_calls.seat_id とアプリの席選択UIの番号と整合させるため、アプリ担当と取り決める。"]
+        ]},
+        {"type": "callout", "variant": "danger", "label": "安全注意（実機を動かす作業）", "text": "実機を動かす際は **転倒・挟み込み・人やモノへの突進**に注意。teleopは低速から。**緊急停止の手段**（電源スイッチの位置・キー操作での停止）を動かす前に必ず確認しておく。床の段差・ケーブルの巻き込みにも注意。LiDARのレーザーは使用製品のレーザークラスを仕様書で確認（多くはClass1=目に安全だが要確認）。"}
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {"type": "ol", "items": [
+          "RVizで地図を見ながら一周し、**白い未探索の大穴が無く、壁が一本につながり、本棚の位置が分かる**こと（地図が部屋とおおむね一致）。",
+          "地図を保存 → ファイルが残ること（Nav2用なら `.pgm`+`.yaml` の2点が生成される）。保存した画像を開いて部屋の形に見えればOK。",
+          "ロボを各席に置いて `tf2_echo`（または `/amcl_pose`）で x,y を読み、向きを yaw に変換して theta を得る。3席ぶん数値がメモできていること。",
+          "Supabase SQL Editor で `select * from stop_points;` を実行し、入れた**3行(席1/2/3)が x,y,theta 付きで見える**こと。idが1,2,3など重複なく振られていること。",
+          "【任意・後日】Nav2が動く別Issue完了後に、1席だけ実機で行かせて座標が妥当か追検証。本Issue段階でNav2未導入ならスキップ可（座標の最終確定はNav2導入後）。"
+        ]}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {"type": "p", "text": "AIには**答えのコード/設定ファイルを書かせない**。手順・考え方・調べ先・つまずきの切り分けを引き出すコーチとして使う。下をコピペして使ってよい。"},
+        {"type": "code", "lang": "text", "code": "私はROS2 Humble・slam_toolbox・LiDARの初心者です。\nRaspberry Pi 5 + 2D LiDAR の移動ロボで、(1)SLAMで部屋の地図を作って保存し、\n(2)席3つの座標(x,y,theta)を採ってDB(stop_points)に入れたいです。\n\nお願い：\n- 完成コードやlaunch/設定の中身は書かないでください。手順・考え方・調べる場所(公式docs名/URL)だけ。\n- まず私に質問して、前提(走行/cmd_velが動くか、LiDARが/scanを出すか、source/colconの理解)を確かめてから進めて。\n- 次の順で整理して: (1)slam_toolboxのonline起動の調べ方 (2)RVizでmap/scanを見る\n  (3)teleop_twist_keyboardで/cmd_vel経由でゆっくり動かす(手押しがNGな理由も) (4)地図保存はnav2のmap_saverかslam_toolbox serializeかの選び方\n  (5)席座標をtf2_echo map base_link で読む方法 (6)クォータニオンからyaw(theta)への変換の考え方。\n- 「2D Pose Estimateは座標を読むツールではない」点を私が誤解していたら正してください。\n- 公式docsの該当ページ名/URLを示し、私自身に読ませてください。\n\n今つまずいているのは：（ここに状況を書く。例：tf2_echoでx,y,z,wが出るがthetaの出し方が分からない）"}
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["SLAM", "走りながら地図を作り、同時に自分の位置も推定する技術。"],
+          ["slam_toolbox", "ROS2でSLAMを行う代表的パッケージ。今回これを使う。"],
+          ["LiDAR(ライダー)", "レーザーで周囲の距離を測るセンサ。地図と自己位置の元データ(点群/scan)を出す。"],
+          ["RViz", "ROSの可視化ツール。地図やセンサ値、ロボの位置を画面で見る。"],
+          ["teleop", "キーボード等での遠隔手動操作。teleop_twist_keyboardで/cmd_velに速度指令を流す。"],
+          ["/cmd_vel", "ロボへの速度指令トピック。teleopやNav2がここに値を流し、モーター制御が受け取る。"],
+          ["オドメトリ", "車輪の回転などから推定する『自分がどれだけ動いたか』。これが無い手押しは地図がズレる。"],
+          ["TF / tf2_echo", "座標系どうしの位置・向きの関係。tf2_echoでmap→base_linkの位置(x,y)と向きを読める。"],
+          ["map / base_link", "map=地図の基準座標系、base_link=ロボ本体の座標系。両者の関係＝地図上のロボの位置。"],
+          ["クォータニオン", "向きを4つの数(x,y,z,w)で表す方式。stop_pointsに入れるyaw(角度)に直して使う。"],
+          ["theta(yaw)", "地図上での向き。ラジアン、基準は+x方向で反時計回りが正。クォータニオンから変換して得る。"],
+          ["map_saver_cli", "Nav2(nav2_map_server)の地図保存ツール。.pgm(画像)+.yaml(設定)を出す。"],
+          [".pgm / .yaml", "Nav2が読む地図ファイル。.pgmが画像、.yamlが縮尺や原点などの設定。"],
+          ["ROS_DOMAIN_ID", "同じ番号同士のROS2機だけが通信できる仕分け番号。別PC連携時は両機で同じ値に揃える。"],
+          ["stop_points", "席(停車ポイント)の座標表。id,label,x,y,theta を持つ。idは手動採番。"],
+          ["service role / RLSバイパス", "管理者権限。SQL Editorはこれで動くのでRLSを無視して書き込める。アプリの匿名キーは弾かれる。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {"type": "ul", "items": [
+          "DB列名の正は schema.sql（`supabase/schema.sql`）。`stop_points`: `id`(手動採番int) / `label` / `x` / `y` / `theta` / `created_at`(defaultありinsert時省略可)。select は `sel_stops` で全員可、**insert/update/deleteポリシー無し＝アプリからは入れられない**（SQL Editorからのみ）。`robot_calls.seat_id` が `stop_points.id` を参照する。",
+          "疎結合の設計（アプリ⇄ロボはDB経由）：ロボは `robot_calls` を購読しNav2ゴールへ変換、`robot_status` を更新。本Issueで作る地図と席座標はその土台。robot/README参照。",
+          "関連Issue（タスク名）：「走行系(/cmd_velで実機が動く)」「LiDARセットアップ(型番確定・/scanが出る)」＝**本Issueの前提**。「ロボ自走(Nav2でstop_pointsへ移動)」＝本Issueの座標を使う側・座標の最終検証もそこで行う。アプリ側「本を呼び出す(robot_callsにinsert・seat選択)」＝stop_points.idの番号を共有する相手。",
+          "要件 F-08（席座標の採取と登録）。基本設計のロボ連携・座標系の項も参照。",
+          "確認事項（PM/チームへ）：①使用LiDARの型番（本資料・robot/README未記載）②teleopの正確な経路と走行系Issueの完了基準 ③stop_points.id の採番割り当て（アプリ担当と）④Nav2導入の進行順（実機検証の可否）。不明点はPM(水谷)へ。",
+          "環境変数キーは `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` が正。`.env.local` は各自手作り。詳しくは同フォルダ 環境構築ガイド.html。"
+        ]},
+        {"type": "code", "lang": "sql", "code": "-- Supabase の SQL Editor で実行（service role権限でRLSをバイパスして入る）\n-- id は手動採番。1,2,3 を重複しないよう自分で決める（アプリ担当と番号を取り決め）\n-- x,y,theta は実機から採った値に置き換える（theta は yaw・ラジアン）\ninsert into stop_points (id, label, x, y, theta) values\n  (1, '席1', 0.00, 0.00, 0.00),\n  (2, '席2', 0.00, 0.00, 0.00),\n  (3, '席3', 0.00, 0.00, 0.00);\n\n-- 確認\nselect * from stop_points order by id;"}
+      ]
+    }
+  ]
+}

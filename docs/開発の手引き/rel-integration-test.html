@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>アプリ⇔ロボ 結合テスト（一気通貫）｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero integ">
+    <h1>アプリ⇔ロボ 結合テスト（一気通貫）</h1>
+    <p>「本を選ぶ→席へ呼ぶ→ロボ自走→到着でLED→借りる→返す」を最初から最後まで通し、つなぎ目（Supabase の各テーブル）が全部つながることを全員で確認する。</p>
+    <div class="badges">
+      <span class="badge">担当：全員</span>
+      <span class="badge">Sprint 3</span>
+      <span class="badge">優先 ★★★</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill role">担当：全員</span>
+    <span class="pill sprint">Sprint 3</span>
+    <span class="pill prio">優先 ★★★</span>
+    <span class="pill lang">アプリ</span>
+    <span class="pill lang">ロボ</span>
+    <span class="pill lang">Supabase</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p><strong>ゴール</strong>：アプリとロボを実際につなぎ、<code>本を選ぶ → 席へ呼ぶ → ロボが自走 → 到着で LED → 借りる → 返す</code> の一連の流れ（フルフロー）を最初から最後まで一気に通す。これが結合テスト（=部品が単体で動くだけでなく、つなぎ目まで含めて全体が動くかを見るテスト）です。</p>
+  <p><strong>なぜ必要か</strong>：このプロジェクトではアプリとロボは直接通信せず、Supabase のテーブル（<code>robot_calls</code> / <code>robot_status</code>）を介して <strong>疎結合（=お互いを直接知らず、間にあるデータだけで連携する）</strong> でつながります。各班がバラバラに作ったものを最後に合流させるので、テーブルというつなぎ目で値が正しく受け渡されるかは、通してみないと分かりません。ここが本プロジェクトの山場で、全員参加です。</p>
+  <div class="callout warn"><span class="label">境界（テストで一番見る場所）</span><p>アプリとロボの境界はちょうど Supabase のテーブルです。だから不具合の切り分けも『アプリが robot_calls に正しく書けたか』『ブリッジがそれを読んで robot_status を正しく更新したか』をテーブルの中身を見て判断します。テーブルが共通言語です。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li>前提Issue（ブリッジ・LED制御・席座標→Nav2ゴール変換）が全て完了し、ロボ側が起動できる状態であることを確認した</li><li>開始状態がそろっている：books に available の本、stop_points に席が1件以上、robot_status は id=1 が state=idle</li><li>アプリで本を選んで席へ呼ぶと robot_calls に1行 insert される（status=queued）</li><li>ブリッジがそれを拾い、robot_calls.status が moving に、robot_status.state が moving に進む</li><li>ロボが該当の席まで自走して止まる</li><li>到着で robot_calls.status=arrived、robot_status.state=arrived になり、LED が点灯する</li><li>アプリで借りる→books.status=on_loan、loans に1行（借りた人＝user か guest の区別つき）</li><li>アプリで返す→books.status=available、loans の returned_at と returned_by が入る</li><li>一連の終了で robot_calls.status が done に、robot_status.state が idle に戻る（誰がいつ更新するかを確認済み）</li><li>通している間に見つけた不具合・気づきを GitHub Issue に起票した</li></ul>
+  <div class="callout warn"><span class="label">done の責務をはっきりさせる</span><p>robot_calls.status の queued→moving→arrived→done への前進は『アプリ』ではなく『ロボ側（ブリッジ）』が更新する想定です（RLS 上は誰でも update 可なので、決めておかないと曖昧になる）。正常系では到着・貸出処理が終わった後に done へ落ちます。もし本フローで done を使わず arrived のまま終わらせる設計にするなら、それを Step0 でチームで決めて1行メモし、Done の最後の項目を『その決定どおりに終端状態になっている』に読み替えてください。enum（5値）と実運用がズレたまま進めないことが大事です。</p></div>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">Step0：前提が揃っているかゲート確認（ここを通らなければ着手しない）</span><div class="st-detail">本Issueは『各部品が出来てから』の最終合流です。(1) ブリッジ（robot_calls を Realtime 購読→Nav2 ゴール変換）、(2) LED 制御、(3) 席座標→Nav2 ゴール変換、(4) アプリの呼出/貸出/返却 がそれぞれ完了していることを確認します。robot/ はまだプレースホルダなので、ブリッジの『起動コマンド・ログの見方』はハード制御班の手順書か該当Issueから入手してください（本書には載っていません）。あわせて『status を done まで進めるか arrived で止めるか』『誰が status を進めるか（ブリッジ）』をチームで一度決めてメモします。</div></li><li><span class="st-title">Step1：開始状態をそろえる（シード＆リセット）</span><div class="st-detail">テストは毎回同じスタート地点から始めないと再現できません。Supabase の SQL Editor（service_role 権限で動く）を使い、books に available の本を入れ、stop_points に席を1件以上入れ、robot_status の id=1 を state=idle に update します。stop_points / users / robot_status はアプリ（anon キー）からは insert できない（RLS に insert ポリシーが無い）ので、必ず SQL Editor で行います。books は insert 可。座標 x/y/theta は実機の地図に対応する実測値なので、ハード制御班・席座標Issュー担当に確認して埋めます。</div></li><li><span class="st-title">Step2：アプリ側だけで『呼ぶ』を確認</span><div class="st-detail">ブラウザでアプリを開き、本を選んで席へ呼びます。Supabase の Table Editor で robot_calls を開き、新しい行が status=queued / book_id・seat_id が正しい値で入っているかを目視します。ここで増えなければアプリ↔Supabase の段で詰まっています（切り分け早見表参照）。</div></li><li><span class="st-title">Step3：ブリッジが拾うかを確認（Realtime のつなぎ目）</span><div class="st-detail">ロボ側でブリッジを起動した端末の出力（ログ）を見ます。robot_calls の新規行を受信したログが出るか、robot_calls.status が moving に、robot_status.state が moving に変わるかを Table Editor で確認します。受信しない場合は Realtime がそのテーブルで有効化されているか（後述）を疑います。</div></li><li><span class="st-title">Step4：ロボが自走→到着→LED を確認（まず低速・短距離）</span><div class="st-detail">実機を動かします。最初は速度を落とし、短い距離で席まで行けるか個別に確認します。到着したら robot_calls.status=arrived・robot_status.state=arrived・LED 点灯がそろうかを見ます。実機を動かす前に必ず安全確認（下の callout）を読みます。</div></li><li><span class="st-title">Step5：借りる→返すを確認</span><div class="st-detail">到着後、アプリで『借りる』を実行。借りる人を user（ログイン利用者）か guest（その場の名前入力）で出し分け、books.status=on_loan、loans に borrower_type と user_id または guest_name が入るかを見ます。次に『返す』を実行し、books.status=available、loans.returned_at・returned_by が入るかを確認します。</div></li><li><span class="st-title">Step6：本番距離で一気通貫</span><div class="st-detail">Step2〜5 を低速・短距離で個別に通せたことを確認してから、最後に本番の距離・配置で Step1（リセット）→2→3→4→5 を止めずに通します。終了時に robot_calls.status と robot_status.state が決めた終端状態（done / idle 等）になっているかを最終確認します。</div></li><li><span class="st-title">Step7：異常系を1〜2本だけ通す</span><div class="st-detail">つなぎ目の弱さは異常系で出ます。例『存在しない席IDで呼ぶ（FK違反になるか）』『到着前にもう一度呼ぶ（2件目が queued で積まれるか／弾かれるか）』を試し、期待どおりかをメモします。期待値はキュー設計（後述 research）から読み解きます。</div></li><li><span class="st-title">Step8：見つけた不具合を Issue 化</span><div class="st-detail">再現手順・どの段で・どのテーブルの何がおかしかったか・期待と実際を1件ずつ Issue にします。番号はまだ振られていないので、画面名（S-◯）や要件、テーブル名で具体的に書きます。</div></li></ol>
+  <div class="callout danger"><span class="label">実機を動かす前の安全確認（Step4・Step6）</span><p>(1) 緊急停止の手段を全員が事前に把握する：この機体の主電源スイッチの位置、ソフト停止の方法（ros2 のトピック/サービス等）。具体の停止操作はハード制御班に確認し、ホワイトボード等に書き出してから開始。(2) 非常停止役を1人立て、その人は手を空けておく。(3) 初回は必ず低速・短距離。一気通貫は『個別通過を確認してから本番距離』の順で、いきなり全速・長距離はしない。(4) バッテリー残量を開始前に確認（最低ライン・確認手段はハード制御班に確認）。残量不足のまま自走させない。(5) 走行経路に人や物を置かない。</p></div>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <ul class="research"><li><div class="r-topic">結合テストの観点（境界＝Supabase の各テーブル）</div><div class="r-why">単体では動く部品も、つなぎ目で値が欠ける・型が違う・タイミングがズレることで落ちる。どこを見れば『つながった』と言えるかを理解するため。</div><div class="r-where">状態遷移と enum の唯一の原典は supabase/schema.sql（基本設計書.md・要件定義書.md は現状プレースホルダで中身が無いため、整備されるまでは schema.sql を見る）。schema.sql の CHECK 制約 status in (queued,moving,arrived,done,canceled) と state in (idle,moving,arrived,returning) から遷移を読み取る。robot/README.md でつなぎ目（疎結合）の考え方を確認。</div></li><li><div class="r-topic">各段階での確認方法（robot_calls / robot_status を見る）</div><div class="r-why">テーブルの中身が各段のゴール判定そのもの。目視で『今どの段か』を読めると切り分けが速い。</div><div class="r-where">Supabase ダッシュボードの Table Editor で robot_calls / robot_status / books / loans の行を直接見るのが主手段。クエリで確認したいときは SQL Editor。注意：リポジトリの scripts/check-supabase.mjs は『手早い疎通確認』に使えそうだが、現状そのままでは動かない（下のつまずきポイント参照）。まずは Table Editor を主に使う。</div></li><li><div class="r-topic">Realtime が該当テーブルで有効化されているか</div><div class="r-why">ブリッジは robot_calls を Realtime 購読する設計。Supabase 側で publication にテーブルが追加されていないと、insert しても通知が飛ばず Step3 で必ず落ちる。</div><div class="r-where">Supabase の Realtime の考え方は https://supabase.com/docs/guides/realtime 。このプロジェクトで robot_calls / robot_status が Realtime 有効か（どこで確認・有効化するか）はダッシュボードの Database → Replication / Publications を確認し、未有効なら PM に相談。</div></li><li><div class="r-topic">不具合の切り分け（アプリ / ブリッジ / ロボ のどこか）</div><div class="r-why">全体が動かないとき、原因を3つの層のどこかに絞れると修正が速い。境界のテーブルを見れば層が特定できる。</div><div class="r-where">下の『切り分け早見表』。アプリ層はブラウザ F12 の Console / Network、ブリッジ層はロボ側で起動した端末のログ（起動コマンドはハード制御班の手順書）、ロボ層は ROS2 / Nav2 のログ（https://docs.nav2.org/）。</div></li><li><div class="r-topic">ログの見方（ブラウザ Console / Network）</div><div class="r-why">insert が失敗したとき、原因はネットワークのレスポンスに出ている。どのリクエストを見るかを知らないと大量のログに埋もれる。</div><div class="r-where">ブラウザ F12 → Network タブで robot_calls への POST（/rest/v1/robot_calls）を探し、ステータスコード（201=成功 / 4xx=失敗）とレスポンス本文のエラーメッセージを読む。Console タブに supabase の error が出ていないかも見る。Supabase JS の挙動は https://supabase.com/docs/reference/javascript/select 等。</div></li><li><div class="r-topic">借りる人の出し分け（user / guest）と返却者の記録</div><div class="r-why">結合フローの『借りる→返す』では loans に誰が借り・誰が返したかを正しく入れる必要があり、これも結合テストの確認項目。</div><div class="r-where">schema.sql の loans 定義：borrower_type in (user,guest)、user_id（user のとき）、guest_name（guest のとき）、returned_at / returned_by。出し分けの確認はアプリの貸出/返却画面と Table Editor の loans 行を突き合わせる。</div></li><li><div class="r-topic">シードに必要な最小データ（特に stop_points の座標）</div><div class="r-why">robot_calls.seat_id は stop_points.id への外部キー。席が無いと呼出 insert が FK 違反で落ち、Nav2 ゴールも作れない。座標は実機の地図に対応する実測値が要る。</div><div class="r-where">schema.sql の stop_points（id, label, x, y, theta）と robot_calls の references。座標値と『誰が用意するか』は席座標→Nav2ゴール変換Issue の担当・ハード制御班に確認（依存関係あり）。</div></li><li><div class="r-topic">同時に2回呼んだときの期待挙動（キュー設計）</div><div class="r-why">異常系（Step7）の期待値を実装の勘でなく設計から決めるため。robot_status は1行固定で current_call_id は1件しか指せない。</div><div class="r-where">schema.sql の idx_calls_queue（create index ... where status='queued'）は queued の複数行を想定＝FIFO キュー設計。robot_status は id=1 固定の1行。これらから『2件目は queued で積まれて待つのが自然』と読み取り、実際の挙動と突き合わせる。最終的にどう振る舞うかはブリッジ実装次第なので観測してメモ。</div></li><li><div class="r-topic">テストシナリオの作り方</div><div class="r-why">場当たりに触ると再現できない。前提→操作→期待結果を1本ずつ書くと、誰が見ても同じ判定ができる。</div><div class="r-where">正常系1本＋異常系1〜2本を表にする（下の段階表が正常系の雛形）。各行に『前提状態 / 操作 / 期待するテーブルの値』を書く。原典は schema.sql の enum と FK。</div></li><li><div class="r-topic">見つけた不具合の Issue 化</div><div class="r-why">通しながら出た問題を口頭で流すと消える。再現手順付きで残すと担当が直せる。</div><div class="r-where">GitHub Issues。テンプレ（.github）に沿って、再現手順・どの段・どのテーブルの何がおかしいか・期待と実際を書く。番号は未付与なので画面名(S-◯)・タスク名・テーブル名で示す。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <div class="callout danger"><span class="label">scripts/check-supabase.mjs は現状そのままでは動かない</span><p>このスクリプトは疎通確認に便利そうだが、中身が古いキー名 NEXT_PUBLIC_SUPABASE_ANON_KEY を読んでいる（15行目 const key = env.NEXT_PUBLIC_SUPABASE_ANON_KEY）。実際の .env.local は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY しか持たない（ANON_KEY は誤り＝AGENTS.md の大原則）。そのまま実行すると『KEY:(なし)』で exit 1 となり、テーブル行数の表示まで到達しない。使うなら先にこのファイルのキー名を PUBLISHABLE_KEY に直す（別タスクとして起票推奨）。当面の疎通確認は Supabase の Table Editor で行数を見るのを主手段にする。</p></div>
+  <div class="callout warn"><span class="label">設計書を開いても中身が無い</span><p>docs/基本設計書.md と docs/要件定義書.md は現状『後で貼る』のプレースホルダで状態遷移も要件も書かれていない。状態遷移・enum を確認したいときは supabase/schema.sql の CHECK 制約を見る（整備後は設計書を参照）。</p></div>
+  <div class="callout warn"><span class="label">毎回スタート状態が違うと再現できない／削除できない仕様</span><p>RLS に DELETE ポリシーが無く誰も削除できない（全削除事故防止の仕様）。だからリセットは『消す』ではなく『update で戻す』。具体：robot_status は insert 不可・id=1 の1行固定なので、その行を state=idle に update（新しく insert しようとすると失敗する）。books はテストで on_loan になった行を status=available に update。loans はテストで作った行の returned_at を update で戻す（または無視して新しいテストとして進める）。これらは SQL Editor で行う。</p></div>
+  <div class="callout warn"><span class="label">stop_points / users / robot_status はアプリから insert できない</span><p>schema.sql 上、stop_points・robot_status・users には insert ポリシーが無い（select / 一部 update のみ）。さらに users は auth.users への外部キー。つまり『席を入れる』『利用者を入れる』はアプリ（anon キー）からは不可で、Supabase の SQL Editor（service_role）で行う必要がある。席が入れられない＝壊れた、ではなく仕様。robot_calls と books と loans は insert 可。</p></div>
+  <div class="callout tip"><span class="label">ブリッジのログがどこか分からない</span><p>robot/ はまだプレースホルダ。ブリッジの起動コマンドとログの出る場所はハード制御班の手順書／該当Issueにある。本書には載せていないので、ブリッジ担当に聞いて Step3 の確認場所を事前に押さえておく。</p></div>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p>各段で『何のテーブルがどう変わればOKか』を表で持っておくと、止まった瞬間にどの段かが分かります。これが正常系シナリオの雛形にもなります。</p>
+  <table><tr><th>段</th><th>操作</th><th>OKの判定（テーブルの値）</th><th>更新する側</th></tr><tr><td>1 リセット</td><td>SQL Editor でシード/リセット</td><td>books に available の本・stop_points に席1件以上・robot_status.id=1 が state=idle</td><td>人（SQL Editor）</td></tr><tr><td>2 呼ぶ</td><td>アプリで本を選び席へ呼ぶ</td><td>robot_calls に1行 status=queued / book_id・seat_id が正しい</td><td>アプリ</td></tr><tr><td>3 拾う</td><td>ブリッジが受信</td><td>robot_calls.status=moving / robot_status.state=moving</td><td>ブリッジ</td></tr><tr><td>4 自走・到着・LED</td><td>ロボが席まで走り停止</td><td>robot_calls.status=arrived / robot_status.state=arrived / LED 点灯</td><td>ブリッジ・ロボ</td></tr><tr><td>5 借りる</td><td>アプリで借りる</td><td>books.status=on_loan / loans に1行（user なら user_id、guest なら guest_name）</td><td>アプリ</td></tr><tr><td>5 返す</td><td>アプリで返す</td><td>books.status=available / loans.returned_at・returned_by が入る</td><td>アプリ</td></tr><tr><td>6 終端</td><td>一連の終了</td><td>robot_calls.status=done / robot_status.state=idle（done を使わない設計ならその終端状態）</td><td>ブリッジ</td></tr></table>
+  <p><strong>切り分け早見表</strong>（止まったらここで層を絞る）：</p>
+  <table><tr><th>症状</th><th>疑う場所</th><th>見る所</th></tr><tr><td>呼んでも robot_calls の行が増えない</td><td>アプリ↔Supabase の段</td><td>F12 Network で /rest/v1/robot_calls への POST を探し、201 か 4xx か・レスポンス本文のエラーを見る。よくある原因＝接続情報のキー名（PUBLISHABLE_KEY）誤り・外部キー違反（seat_id が stop_points に無い／book_id が books に無い）・必須列欠落（seat_id・book_id は not null）。robot_calls は insert 許可（ins_calls）なので RLS で弾かれるのは稀。Console の supabase error も確認</td></tr><tr><td>robot_calls は queued のまま進まない</td><td>ブリッジ（Realtime 購読）</td><td>ブリッジを起動した端末のログ（受信できているか）。Realtime がそのテーブルで有効か（Database→Publications）</td></tr><tr><td>status は moving だがロボが動かない/止まらない</td><td>ロボ（Nav2）</td><td>ロボ側 ROS2 / Nav2 のログ。席座標（stop_points の x/y/theta）が地図と合っているか</td></tr><tr><td>到着したが LED が点かない</td><td>LED 制御</td><td>arrived への遷移が起きているか（robot_calls/robot_status）を先に確認→点いていなければ LED 制御側</td></tr><tr><td>借りても books.status が変わらない</td><td>アプリ（貸出処理）</td><td>F12 Network で books の update / loans の POST を確認</td></tr></table>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AI には『答えのコードを書かせる』のでなく『どこを見て切り分けるか』を一緒に考えさせます。古い列名・キー名（ANON_KEY 等）を出してくることがあるので、必ず schema.sql と環境構築ガイドの実物で裏取りしてください。</p>
+  <pre><code>あなたは私の結合テストのコーチです。答えのコードや完成形は書かず、考え方と切り分けの順番だけ教えてください。
+
+状況：移動本棚ロボの結合テストをしています。アプリとロボは Supabase の robot_calls / robot_status テーブル経由でつながる疎結合の設計です。フローは『本を選ぶ→席へ呼ぶ→ロボ自走→到着でLED→借りる→返す』。
+
+今こうなっています：（例：アプリで呼んだが robot_calls の行が増えない）
+
+質問：
+1) この症状はアプリ/ブリッジ/ロボのどの層を最初に疑うべき？理由も。
+2) それを確かめるために、ブラウザの Network/Console や Supabase の Table Editor で具体的に何を見ればいい？
+3) 次に試す一手は？
+
+注意：列名や enum、キー名は私が supabase/schema.sql と環境構築ガイドで確認するので、あなたは断定せず『schema.sql で◯◯を確認して』という促し方をしてください。NEXT_PUBLIC_SUPABASE_ANON_KEY は誤りで PUBLISHABLE_KEY が正です。</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>結合テスト</td><td>部品をつないで、つなぎ目まで含め全体が動くか見るテスト</td></tr><tr><td>疎結合</td><td>アプリとロボが直接話さず、間のテーブルだけで連携する設計</td></tr><tr><td>robot_calls</td><td>ロボ呼出キュー。status は queued→moving→arrived→done（中止は canceled）。本フローではブリッジが status を前進させる</td></tr><tr><td>robot_status</td><td>ロボの現在状態。id=1 の1行固定。state は idle/moving/arrived/returning。insert 不可で update で戻す</td></tr><tr><td>seat_id</td><td>robot_calls の席。stop_points.id への外部キー（存在しない席IDだと insert が落ちる）</td></tr><tr><td>Realtime</td><td>テーブルの変化を購読側に即通知する Supabase の仕組み。ブリッジが robot_calls を購読する</td></tr><tr><td>RLS</td><td>行レベルセキュリティ。本プロジェクトは DELETE ポリシー無し＝誰も削除不可</td></tr><tr><td>シード</td><td>テストの開始状態を作る初期データ投入。ここでは SQL Editor で行う</td></tr><tr><td>ブリッジ</td><td>robot_calls を購読して Nav2 ゴールに変換し、robot_status を更新するロボ側の橋渡しプログラム</td></tr><tr><td>service_role</td><td>Supabase の SQL Editor が使う強い権限。RLS を越えて insert/update できる</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>状態遷移・enum・FK・RLS の唯一の原典：supabase/schema.sql（基本設計書.md / 要件定義書.md は現状プレースホルダ。整備後はそちらも参照）</li><li>つなぎ目（疎結合）の考え方とロボ側の持ち場：robot/README.md</li><li>環境変数のキー名（NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正）と .env.local の作り方：同フォルダの 環境構築ガイド.html</li><li>疎通確認：まず Supabase ダッシュボードの Table Editor で行数を見る。scripts/check-supabase.mjs を使うなら先にキー名を PUBLISHABLE_KEY に直す（別タスクで起票推奨）</li><li>Realtime 有効化：https://supabase.com/docs/guides/realtime ／ ダッシュボードの Database→Publications</li><li>Nav2 / ROS2 のログとナビゲーション：https://docs.nav2.org/ ／ https://docs.ros.org/en/humble/</li><li>関連Issue（前提・先に完了が必要）：ブリッジ実装、LED制御、席座標→Nav2ゴール変換、アプリの呼出/貸出/返却画面。ブリッジの起動コマンド・ログの場所はハード制御班の手順書へ</li></ul>
+  <div class="callout study"><span class="label">進め方の哲学</span><p>詰まったら答えを聞くのでなく『どのテーブルのどの値を見れば層を絞れるか』を考える。境界（テーブル）を見る癖がつけば、3ヶ月後に問題が出ても自分で切り分けられます。</p></div>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

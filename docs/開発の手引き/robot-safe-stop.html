@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ネット切断時の安全停止→ホーム帰還｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero robot">
+    <h1>ネット切断時の安全停止→ホーム帰還</h1>
+    <p>通信が切れたら暴走させず、まず『その場で安全停止』。一定時間（暫定30秒）復帰しなければホーム帰還を試みる。Sprint3の必達は (1)切断検知 (2)停止 まで。ホーム帰還は座標とマップがそろってからの後続。</p>
+    <div class="badges">
+      <span class="badge">担当：ハード制御</span>
+      <span class="badge">Sprint 3</span>
+      <span class="badge">優先 ★☆☆</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill role">担当：ハード制御</span>
+    <span class="pill sprint">Sprint 3</span>
+    <span class="pill prio">優先 ★☆☆</span>
+    <span class="pill lang">Python</span>
+    <span class="pill lang">rclpy</span>
+    <span class="pill lang">Nav2</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p>ゴールは<strong>フェイルセーフ</strong>（fail-safe＝何かが壊れても危なくない側に倒れる設計）。ロボが Supabase との通信を失ったとき、命令が来ない/状態が送れない状態のまま走り続けると、人や物にぶつかる危険がある。だから<strong>通信が切れたら、まずその場で安全に止まる</strong>。そして一定時間（この資料の暫定値で例：30秒）たっても復帰しなければ、<strong>ホーム位置への帰還を試みる</strong>。</p>
+  <div class="callout danger"><span class="label">このIssueの一番大事なこと（安全第一）</span><p>目的は『賢く動かす』ことではなく『<strong>危なくないこと</strong>』。迷ったら動かさない＝止める方を選ぶ。検知が遅れても、止まりさえすれば人や物にはぶつからない。逆に『止まらずに帰還を試みる』実装は最悪。必ず「止まる」を先に確実にする。</p></div>
+  <div class="callout warn"><span class="label">前提：仕様（D5）はまだ確定していない</span><p>古い資料に『設計判断 D5（切断時の振る舞い）を読んで方針を合わせる』とあるが、<code>docs/基本設計書.md</code> は現在4行のプレースホルダで <strong>D5 という記述は実在しない</strong>（姉妹Issue #8 と同じ注意）。正典は <code>robot/README.md</code> と <code>supabase/schema.sql</code>。<strong>待ち時間（例30秒）・帰還方針・ホーム位置はこの資料が暫定で置く初期値</strong>であり、正式化はPM（水谷）に確認／設計確定待ち。下の値は『仮置き、後で差し替え』前提で読むこと。</p></div>
+  <div class="callout study"><span class="label">このIssueが動く“前提Issue”（依存関係）</span><p>『ゴールをキャンセルして帰還ゴールを出す』はNav2の自律走行とマップが<strong>すでに動いていて初めて意味を持つ</strong>。順番は #8 ブリッジ（robot_calls購読→ゴール変換）→ #9 座標→ゴール変換 → Nav2 自走 が立ち上がる、その後にこのIssueの『キャンセル/帰還』が効く。#9 の通り<strong>実座標は W5（実機マッピング）まで存在しない</strong>。それ以前でも『<strong>検知＋停止（速度ゼロ／ゴール発行を抑制）</strong>』だけで十分価値があるので、ここを先に確実に作る。</p></div>
+  <p><strong>スコープの切り分け（重要）</strong>：Sprint3 の必達は <strong>(1)切断の検知</strong> と <strong>(2)その場で停止</strong> まで。<strong>(3)ホーム帰還は、ホーム座標とマップがそろってから（W5以降）の後続作業</strong>に格下げする。今は『帰還の方針メモ』と『帰還処理を書く関数の置き場（中身は後で）』を用意するだけでよい。</p>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <div class="callout tip"><span class="label">Doneは段階分け（今やる必達／環境が揃ってからの任意）</span><p>前提（Nav2自走・マップ・シミュレータ環境）が今は無いので、実走行を止める確認は今すぐには満たせない。下のように『最小Done（今できる）』と『拡張Done（後続）』に分ける。最小Doneが満たせれば、このIssueは前進として合格。</p></div>
+  <ul class="checklist"><li>【最小・必達】Supabaseへ届くか定期的に確かめる<strong>接続監視</strong>（最後に通信できた時刻からの経過で判定）が動き、切断したら<strong>検知ログ</strong>が出る</li><li>【最小・必達】切断を検知したら、<strong>停止指示</strong>（Nav2のゴールキャンセル、または速度ゼロの発行）を<strong>コード上で発行できる</strong>ことをログ/出力で確認できる</li><li>【最小・必達】復帰（再び通信できる）を検知でき、検知ログが出る。復帰時の状態の戻し方を方針メモに書いてある</li><li>【最小・必達】ホーム帰還処理は『関数の置き場＋方針メモ（座標未確定のため中身は後で）』として用意。<strong>ホーム座標・待ち時間（例30秒）はPM確認待ちのTODO</strong>として明記してある</li><li>【拡張・任意（環境が揃ってから）】わざとネットを切るテストで、実機（または Gazebo シミュレータ）で<strong>走り続けず止まる</strong>ことを確認</li><li>【拡張・任意（W5以降）】復帰しないまま規定時間が過ぎたら、ホーム帰還ゴールを出して実際にホームへ戻る</li></ul>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">前提の確認（依存Issueと未確定事項の棚卸し）</span><div class="st-detail">まず #8（ブリッジ）/ #9（座標変換）が動いているか、Nav2 自走とマップがあるかを確認。無ければ『検知＋停止』だけのスコープで進める。あわせて <strong>待ち時間・ホーム座標・robot_status の更新主体・ロボ側が使うSupabaseキー</strong> が未確定であることをPM（水谷）に確認・共有する（理由は『困ったら・参照』）。</div></li><li><span class="st-title">ロボ→Supabase の“生存確認（heartbeat）”を設計する</span><div class="st-detail">『今ネットにつながっているか』を知る一番素直な方法は、<strong>定期的に軽いクエリを投げて成功するか見る</strong>こと。例：<code>stop_points</code> を1行だけ select する等の軽い読み取りを一定間隔で実行し、<strong>最後に成功した時刻</strong>を覚えておく。成功するたびに時刻を更新する。heartbeat＝心拍のように一定リズムで生存確認する仕組み。</div></li><li><span class="st-title">rclpy のタイマーで監視ループを回す</span><div class="st-detail">ROS2 ノードの中で <code>node.create_timer(周期, コールバック)</code> を使い、一定周期で『最後に成功した時刻からどれだけ経ったか』を判定するコールバックを回す。ここで spin（ノードを動かし続ける処理）との関係を docs で確認する（研究『rclpy タイマー』）。判定で『一定時間（仮：数秒）成功していない＝切断』とみなす。</div></li><li><span class="st-title">切断を検知したら“まず止める”を実装する（最優先）</span><div class="st-detail">検知したら最初にやるのは<strong>停止</strong>。Nav2 を使っている場合は、<strong>走行中のゴールをキャンセル</strong>するのが第一手段（研究『Nav2 の停止』）。補助として速度ゼロ（cmd_vel に 0 を発行）も考えられるが、Nav2 の controller と競合しうるので<strong>最終手段</strong>（つまずきポイント参照）。この段階ではまず『キャンセル指示を発行できた』ことをログで確認できれば最小Done達成。</div></li><li><span class="st-title">復帰の検知と、復帰後の状態の戻し方を決める</span><div class="st-detail">監視ループが再び成功し始めたら『復帰』とみなしてログを出す。復帰したら本来は <code>robot_status</code> を idle 相当へ戻したいが、<strong>更新主体・タイミングは設計未確定（#8参照）</strong>。確定するまでは<strong>ローカルログで代替</strong>し、『復帰時に state を idle へ戻す“想定”』を方針メモに書いておく（実際の更新は設計確定後）。</div></li><li><span class="st-title">（後続）ホーム帰還処理の“置き場と方針メモ”を用意する</span><div class="st-detail">復帰しないまま規定時間（仮：30秒）が過ぎたらホームへ帰す——という処理の<strong>関数の枠だけ</strong>作り、中身は『<strong>ホーム座標が未定義（#9のW5まで実座標なし）なので後で実装</strong>』とTODOコメントを残す。帰還の出し方（Nav2 にホーム座標のゴールを出す）は、自走とマップがそろってから埋める。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <ul class="research"><li><div class="r-topic">接続監視（heartbeat / タイムアウト検知）の考え方</div><div class="r-why">『切れた』をどう判断するかが本Issueの起点。常時つなぎっぱなしを監視するより、<strong>一定間隔で軽い通信を試し、最後に成功した時刻からの経過時間</strong>で『切断』を判定する方式が単純で堅い。何秒で切断とみなすか（しきい値）の置き方も学ぶ。</div><div class="r-where">supabase-py（ロボ側クライアント）: https://github.com/supabase/supabase-py で select の呼び方と例外（失敗時に何が起きるか）を確認。heartbeat用の“軽いクエリ”は例として <code>stop_points</code> を1行 select（schema.sql の列: id,label,x,y,theta）。一般的なタイムアウト/再接続の設計は『heartbeat timeout failsafe』で検索。</div></li><li><div class="r-topic">rclpy のタイマーで監視ループを回す（create_timer と spin の関係）</div><div class="r-why">監視は『定期的に』判定する必要がある。<code>while True</code> のベタなループはROSのスピンと衝突しがち。rclpy では <strong><code>node.create_timer(period, callback)</code></strong> で周期コールバックを登録し、<code>rclpy.spin(node)</code> の中で回すのが定石。spin が回ってはじめてタイマーやコールバックが動く関係を理解する。</div><div class="r-where">ROS2 Humble: https://docs.ros.org/en/humble/ のチュートリアル内検索で <strong>『Using timers』『rclpy create_timer』</strong> を探す。あわせて『Writing a simple publisher (Python)』のタイマー例、<code>rclpy.spin</code> の説明を確認。</div></li><li><div class="r-topic">Nav2 のゴールキャンセル/停止（止め方の第一手段）</div><div class="r-why">『止める』の正解は、走行中のNav2のゴールを<strong>キャンセル</strong>すること。手段の名前を知らないとdocsで探せない。</div><div class="r-where">Nav2: https://docs.nav2.org/ のドキュメント内検索で <strong>Simple Commander API の <code>cancelTask</code></strong>、および <strong><code>NavigateToPose</code> アクションの cancel</strong> を探す（ページ名: 『Simple Commander API』『Navigating』）。低レベルでは rclpy の <strong><code>ActionClient</code> の <code>cancel_goal_async</code></strong> を https://docs.ros.org/en/humble/ で『rclpy ActionClient cancel』で検索。<code>cmd_vel</code> への速度ゼロ発行は補助／最終手段（次項）。</div></li><li><div class="r-topic">速度ゼロ発行は最終手段（Nav2 controller との競合に注意）</div><div class="r-why">『手っ取り早く止めるなら cmd_vel に 0 を出せばいい』と思いがちだが、Nav2 の controller が同時に cmd_vel を出していると<strong>取り合い</strong>になり、かえって不安定になる。優先順位を間違えないため。</div><div class="r-where">Nav2: https://docs.nav2.org/ で <strong>controller / <code>cmd_vel</code></strong> の章を確認し、誰が cmd_vel を出しているかを把握。考え方として『まずゴールキャンセルを正、cmd_vel直送は controller を止めた上での最終手段』。</div></li><li><div class="r-topic">復帰の検知と、状態の戻し方（robot_status の扱いは未確定）</div><div class="r-why">切断と同じ仕組み（監視ループの成功）で『復帰』も判定できる。ただし復帰後に <code>robot_status</code> をどう更新するかは設計未確定。</div><div class="r-where">schema.sql（<code>supabase/schema.sql</code>）で <code>robot_status</code> は <strong>常に1行を update する設計</strong>（id=1固定、insert ポリシー無し＝行追加はしない）。<strong>誰が・いつ・どのキーで更新するかは未確定（#8参照、PM確認）</strong>。supabase-py の update の書き方は https://github.com/supabase/supabase-py 。確定するまではローカルログで代替する方針。</div></li><li><div class="r-topic">ホーム位置への帰還（ホーム座標がまだ無い）</div><div class="r-why">『ホームへ帰る』には帰還先の座標が要る。だが現状ホームは存在しない。</div><div class="r-where">schema.sql の <code>stop_points</code>（id,label,x,y,theta）に <strong>home を表す行も label 規約も無い</strong>。さらに #9 によれば<strong>実座標は W5（実機マッピング）まで存在しない</strong>。ホームをどこにするか（<code>stop_points</code> に home 行を1つ用意する／地図（map frame）の原点を使う）は <strong>PM／設計で決める</strong>。Nav2 で座標をゴール化する基礎は #9（座標→ゴール変換）と https://docs.nav2.org/ を参照。</div></li><li><div class="r-topic">フェイルセーフ設計の考え方（安全第一）</div><div class="r-why">本Issueの背骨。『壊れたら危ない側に倒れない』ための原則（止まる方に倒す、検知漏れより誤検知で止める方がマシ、復帰は慎重に）を言語化しておくと実装判断がぶれない。</div><div class="r-where">一般原則は『fail-safe robot design』『emergency stop ROS2』で検索。ROS2 のライフサイクル/非常停止の考え方は https://docs.ros.org/en/humble/ で『lifecycle』『safety』を参照。実装より“判断基準”を持ち帰るのが目的。</div></li><li><div class="r-topic">シミュレータ（Gazebo）／実機での確認環境</div><div class="r-why">拡張Done（実走行を止める確認）には走行環境が要る。環境が無い段階で実走テストを試すと空回りする。</div><div class="r-where">Nav2 Getting Started: https://docs.nav2.org/getting_started/index.html を確認。<strong>Gazebo Classic / Ignition(gz) で手順が異なる版差</strong>があるので、自分の環境に合う版を選ぶ（#9 同様の注意）。Gazebo が無い場合は『ログだけで検知→停止指示の発行を確認する』を先にやる。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <div class="callout danger"><span class="label">安全上の注意（実機を動かす前に）</span><p>実機テストは必ず<strong>広い場所・低速</strong>で、すぐ電源を切れる/物理的に止められる体制で行う。最初は車輪を浮かせる（地面から離す）か、人がいない安全な場所で。『止まるはず』を過信せず、手元に物理的な非常停止手段（電源/スイッチ）を用意してから通信を切るテストをする。</p></div>
+  <table><tr><th>症状・勘違い</th><th>原因・対処</th></tr><tr><td>『止まらずに帰還を試みる』を先に作ってしまう</td><td>順序が逆。<strong>まず確実に止まる</strong>を作るのが最優先。帰還は止まれることが確認できてから（しかも座標がそろってから）。</td></tr><tr><td>切断中に robot_status を更新しようとして失敗する</td><td>切断中は<strong>そもそもネットが無いので DB に書けない</strong>（物理的事実）。これは正常。書けたら復帰、と割り切る。RLS が理由ではない点に注意（下の行）。</td></tr><tr><td>『RLSのせいでロボが書けない』と誤解する</td><td>schema.sql の insert ポリシー無しは<strong>アプリ(publishable/anonキー)向け</strong>の話。<code>robot_status</code> はそもそも insert ではなく <strong>1行を update</strong> する設計。ロボがどのキー（service_role か publishable か）で書くかは別Issue/設計で確認（#8）。書けない理由は『ネット断』であって RLS ではない。</td></tr><tr><td>ホームの stop_points が見つからず詰まる</td><td>現状 <code>stop_points</code> に home 行は<strong>無い</strong>のが正しい。実座標は W5 まで無い（#9）。帰還は後続スコープ。今は関数の枠とTODOだけでよい。</td></tr><tr><td>速度ゼロ(cmd_vel=0)を出しても止まらない/暴れる</td><td>Nav2 の controller が同時に cmd_vel を出していて競合している可能性。<strong>ゴールキャンセルが第一手段</strong>。cmd_vel 直送は controller を止めた上での最終手段。</td></tr><tr><td>監視ループをどこに置けばいいか分からない</td><td><code>while True</code> で自前ループを回さず、<strong>rclpy の <code>create_timer</code></strong> で周期コールバックにする。<code>rclpy.spin</code> が回ってはじめてタイマーが動く（研究『rclpy タイマー』）。</td></tr><tr><td>検知が遅くて不安</td><td>数秒のしきい値で十分。<strong>検知が多少遅れても、止まりさえすれば安全</strong>。むしろしきい値を短くしすぎると、一瞬の通信ゆらぎで誤検知して頻繁に止まる。少し余裕を持たせる。</td></tr><tr><td>Gazebo が無くて確認できない</td><td>実走確認は拡張Done。まずは<strong>ログだけで『検知→停止指示の発行』を確認</strong>すれば最小Done。Gazebo は Nav2 Getting Started を見て後で。版差に注意。</td></tr></table>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p>前提（Nav2自走・マップ・シミュレータ）が無くても確認できる<strong>最小確認</strong>から始める。実走確認は環境が揃ってからの拡張。</p>
+  <ol><li>【最小】ノードを起動し、監視ループ（heartbeat）が一定周期で動いていることをログで確認する（成功のたびに『最後に成功した時刻』が更新される）。</li><li>【最小】わざと通信を止める（Wi-Fiを切る／Supabaseのキーを一時的に無効にする等）と、しきい値経過後に『<strong>切断を検知</strong>』のログが出ることを確認。</li><li>【最小】切断検知の直後に『<strong>停止指示を発行</strong>（ゴールキャンセル or 速度ゼロ）』のログ/出力が出ることを確認。実際の走行が無くても“発行できた”ことが見えればOK。</li><li>【最小】通信を戻すと『<strong>復帰を検知</strong>』のログが出ることを確認。復帰時の state 戻し（idle相当）は当面ローカルログで代替（#8で更新主体が確定するまで）。</li><li>【拡張・任意】Gazebo（Nav2 Getting Started: https://docs.nav2.org/getting_started/index.html）または実機で、走行中に通信を切ると<strong>走り続けず止まる</strong>ことを確認（実機は広い場所・低速・非常停止手段ありで）。</li><li>【拡張・任意・W5以降】ホーム座標が決まったら、復帰しないまま規定時間（仮30秒）経過でホーム帰還ゴールが出て、実際に戻ることを確認。</li></ol>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AIには<strong>答えのコードを書かせない</strong>。安全に関わるIssueなので、なおさら『自分で理解して書く』ことが大事。下のプロンプトをコピペして、考え方と調べ先を引き出すコーチとして使う。</p>
+  <pre><code>私はROS2 Humble + rclpy + Nav2 と Supabase(supabase-py) の初心者です。
+移動ロボ向けに「Supabaseとの通信が切れたら、まずその場で安全停止し、
+一定時間(暫定30秒)復帰しなければホーム帰還を試みる」フェイルセーフを自分で書いて学びたいです。
+
+前提（私の状況）：
+- 仕様D5は未確定、ホーム座標も未定義(実座標はW5まで無い)。
+- 今のスコープは (1)切断検知 (2)その場で停止 まで。帰還は後続。
+- robot_statusの更新主体やロボ側が使うキーも未確定。
+
+お願い：
+- 完成コードは書かないでください。考え方・手順・調べる場所(docsのページ名/URL)だけ教えてください。
+- まず私に質問して理解度を確かめながら進めてください。
+- 次の観点を順に整理して: (1)heartbeatで切断をどう判定するか(最後に成功した時刻方式)
+  (2)rclpyのcreate_timerとspinの関係で監視ループをどう回すか
+  (3)止める手段の優先順位(Nav2ゴールキャンセルが第一、cmd_vel=0は最終手段でcontrollerと競合しうる)
+  (4)復帰の検知 (5)安全第一の判断基準(迷ったら止める)。
+- 該当docsのページ名/URLを示して、私自身に読ませてください。
+- 安全上の注意（実機テストの進め方）も一緒に確認させてください。
+
+今つまずいているのは：（ここに状況を書く。例：監視ループをどこに置けばいいか分からない）</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>フェイルセーフ</td><td>何かが壊れても“危なくない側”に倒れる設計。ここでは『迷ったら止める』。</td></tr><tr><td>heartbeat（ハートビート）</td><td>心拍のように一定間隔で生存確認すること。軽いクエリを定期的に投げて通信できているか確かめる。</td></tr><tr><td>タイムアウト検知</td><td>『最後に成功してから一定時間たった＝切れた』とみなす判定方法。</td></tr><tr><td>rclpy</td><td>ROS2 を Python で書くためのライブラリ。</td></tr><tr><td>create_timer</td><td>rclpy で一定周期のコールバックを回す仕組み。監視ループに使う。</td></tr><tr><td>spin</td><td>ROS2 ノードを動かし続ける処理。これが回ってタイマーやコールバックが実行される。</td></tr><tr><td>Nav2</td><td>ROS2 の自律走行（ナビゲーション）フレームワーク。ゴールを与えて目的地まで動かす。</td></tr><tr><td>ゴールキャンセル</td><td>Nav2 に出した目的地（ゴール）を取り消すこと。本Issueでの第一の“止め方”。</td></tr><tr><td>cmd_vel</td><td>ロボの速度指令トピック。ここに0を出すと止まる（が controller と競合しうるので最終手段）。</td></tr><tr><td>ホーム位置</td><td>復帰しないとき帰る場所。<strong>現状DBに未定義</strong>。stop_pointsにhome行を作るか地図原点にするかはPM/設計で決める（W5以降）。</td></tr><tr><td>robot_status（DB）</td><td>ロボの状態を持つテーブル。常に1行(id=1)を update する設計。更新主体は未確定。</td></tr><tr><td>疎結合</td><td>アプリとロボが直接つながらず、Supabaseのテーブル経由で間接的につながる設計。</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <div class="callout warn"><span class="label">PMに確認すべき未確定事項（着手前に共有）</span><p>次は現時点で未確定。探し回らずPM(水谷)に確認する。①待ち時間(例30秒)・帰還方針＝D5として正式化（基本設計書.mdは現状プレースホルダ）②ホーム座標の所在(stop_pointsにhome行か／map frame原点か・実座標はW5以降）③robot_statusの更新主体・タイミング・ロボ側が使うキー(service_role/publishable)(#8参照）④『PCで書いてpush→Piでgit pull』運用の正典の所在(現状未明文化・#9指摘／必要なら robot/README.md に追記）。</p></div>
+  <ul><li>正典は <code>robot/README.md</code>（疎結合の原則・持ち場）と <code>supabase/schema.sql</code>（列名・RLS）。<code>docs/基本設計書.md</code> は<strong>プレースホルダなので仕様の出どころにしない</strong>（#8と同じ注意）。</li><li>DB列名の正は schema.sql。<code>robot_status</code>: id(=1固定)/state(idle|moving|arrived|returning)/current_call_id/updated_at。<strong>1行をupdateする設計</strong>（insertポリシー無し）。<code>stop_points</code>: id,label,x,y,theta（<strong>home行は無い</strong>）。</li><li>依存・関連Issue：#8『ブリッジ（robot_calls購読→Nav2ゴール変換）』→ #9『座標→ゴール変換（実座標はW5まで無い）』→ Nav2自走、の順で立ち上がって初めて本Issueの『キャンセル/帰還』が効く。robot_statusを画面に映す側は『ロボの現在地・状態を表示』Issue。</li><li>ロボ側の開発運用（PCで書いてpush→Piでgit pull→実行）は<strong>現状どの公式文書にも明文化されていない</strong>（#9指摘・CONTRIBUTING.mdはアプリ向け／robot/README.mdは疎結合原則のみ）。PMに確認し、必要なら robot/README.md に追記。Pi側のROS2/Nav2セットアップを誰が用意済みかも一言確認する。</li><li>Nav2 公式: https://docs.nav2.org/ ／ Getting Started（シミュレータ）: https://docs.nav2.org/getting_started/index.html （Gazebo Classic/Ignitionの版差に注意）。ROS2 Humble: https://docs.ros.org/en/humble/ 。supabase-py: https://github.com/supabase/supabase-py 。</li><li>環境変数キーは <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> が正（アプリ側）。詳しくは同フォルダ 環境構築ガイド.html。</li></ul>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

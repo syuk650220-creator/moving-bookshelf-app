@@ -1,0 +1,140 @@
+{
+  "id": "robot-bridge-full",
+  "group": "ロボ側ソフト",
+  "order": 1,
+  "taskName": "ブリッジ完全版（状態遷移＋robot_status更新）",
+  "screen": "",
+  "role": "ハード制御",
+  "sprint": "Sprint 2",
+  "priority": "★★☆",
+  "status": "",
+  "category": "ロボ",
+  "stack": ["Python", "supabase-py"],
+  "oneLineGoal": "robot_calls の queued を取り出し、moving→arrived→done と状態を進めながら robot_status も整合させ、1件の呼出を最後まで処理しきる。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {"type": "p", "text": "ゴール: **1件の呼出を最後まで処理できるブリッジ** を作る。ロボ側プログラム(Python)が Supabase の `robot_calls` から `queued`(処理待ち)の呼出を1件取り出し、**`moving`→`arrived`→`done`** と状態を進める。同時にロボの現在地ともいえる `robot_status` も更新して『今ロボが何をしているか』を常に正しく表す。"},
+        {"type": "p", "text": "なぜ必要か: アプリとロボは **直接通信しない**(疎結合)。アプリは `robot_calls` に呼出を insert し `robot_status` を購読するだけ。ロボ側は `robot_calls` を見て動き、`robot_status` を更新する。この『テーブルを介した橋渡し』の本体がこのブリッジ。ここが動かないとアプリの呼出ボタンを押してもロボは一切反応しない。"},
+        {"type": "callout", "variant": "study", "label": "前提タスク（番号は仮）", "text": "本Issueは『ブリッジ最小実装』(前提タスク。GitHub番号は未採番なのでタスク名で呼ぶ)を発展させるもの。最小実装の成果物は『robot/ 配下に Supabase へ接続して `queued` を1件取得するコード』。**ただし現状 robot/ には README.md のプレースホルダしか無く、接続コードはまだ存在しない。** 最小実装がまだ無い/別ブランチなら、まず『接続して queued を1件 select できる』ところを自分で作るのが最初の一歩(下のステップ2)。"}
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {"type": "checklist", "items": [
+          "Supabase に接続し、`robot_calls` の `queued` を **古い順に1件** 取得できる",
+          "取得した呼出を `moving`→`arrived`→`done` と順に update できる(対象の `id` で絞り込んで更新している)",
+          "状態を進めるたびに `robot_calls.updated_at = now()` を **自分で** セットしている(自動更新されないため)",
+          "`robot_status` を整合して更新できる: 処理中は `state='moving'`/`'arrived'`、`current_call_id=その呼出のid`。完了時は `state='idle'`、`current_call_id=null` に戻す",
+          "`robot_calls.status` と `robot_status.state` で **使える値が違う** ことを理解して使い分けている(下の対応表)",
+          "Nav2(自走)・LED(点灯)は仮の関数で挟んであり、後で本物に差し替えられる形になっている",
+          "異常時(途中で止まった等)でも `robot_status` を `idle`・`current_call_id=null` に戻す後始末が入っている",
+          "1件の呼出を insert して走らせると、最終的に `robot_calls.status='done'`・`robot_status.state='idle'` になることを確認できた"
+        ]}
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {"type": "steps", "items": [
+          {"title": "1. 状態の流れを紙に描く", "detail": "queued(待ち) → moving(移動中) → arrived(到着) → done(完了) の4段を矢印で。各段で『robot_calls をどう更新するか』と『robot_status をどうするか』を並べて書く。ここで2つのテーブルの値が違うことに気づくのが狙い。"},
+          {"title": "2. 接続して1件取得を確認(最小実装の続き)", "detail": "robot/ にまだ接続コードが無ければ、まず supabase-py で接続し `robot_calls` の `queued` を古い順に1件 select できるかをPC上で確認。これが動いて初めて状態遷移に進める。接続情報(URL と key)は下のつまずきポイント参照。"},
+          {"title": "3. moving に進める update を書く", "detail": "取得した1件の `id` を取り出し、その `id` で絞り込んで status を moving に update。**update は必ず対象の id で絞り込む(絞り込み忘れ＝全行更新事故)。** RLS は『update 全員OK』なので、絞り込みを忘れると robot_calls 全件を moving にしてしまう。同時に updated_at=now() も入れる。"},
+          {"title": "4. robot_status も moving に合わせる", "detail": "robot_status(常に id=1 の1行)を state='moving'、current_call_id=その呼出のid、updated_at=now() に update。current_call_id には robot_calls に実在する id しか入れられない(外部キー)。"},
+          {"title": "5. Nav2 呼び出しを仮の関数で挟む", "detail": "go_to(...) のような仮関数を1個用意して『ここでロボが動く』場所を作る。今は print やスリープでよい。注意: 呼出が持つのは `seat_id`(=stop_points.id、ただの整数)で **座標ではない**。本物の Nav2 に渡すのは x,y,theta なので、将来は seat_id から stop_points を引いて座標化する橋渡しが要る。仮関数の引数も『将来 stop_points を引く前提』で設計しておく。"},
+          {"title": "6. arrived に進める", "detail": "Nav2(仮)が到着を返したら、robot_calls を arrived に、robot_status を state='arrived' に update(両方 updated_at=now())。到着の判定方法は本物では同期的に1行で返るとは限らない(下の研究セクション参照)ので、仮関数段階では『戻ってきたら到着とみなす』で進めてよい。"},
+          {"title": "7. LED 点灯を仮関数で挟む→done に進める", "detail": "led_on(...) のような仮関数で『着いたら光る』場所を作る。その後 robot_calls を **done** に update。"},
+          {"title": "8. 後始末で robot_status を idle に戻す", "detail": "done になったら robot_status を **state='idle'、current_call_id=null**、updated_at=now() に戻す。これを忘れると『次の呼出が来ても処理中扱いのまま』になる。**robot_calls=done と robot_status=idle はセット。**"},
+          {"title": "9. 異常系を1つだけ入れる", "detail": "途中で例外/タイムアウトが起きたケースを1つ拾い、チームで『リトライ or canceled にする』を決める。重要: どちらを選んでも **robot_status は必ず idle・current_call_id=null に戻す**(成功時と同じ後始末)。canceled にしたのに robot_status を戻し忘れると次が永久に動かない。robot_calls=canceled と robot_status=idle もセット。"},
+          {"title": "10. ループ化して連続処理", "detail": "1件処理し終えたら次の queued を取りにいくループにする。最初は『3秒ごとに1件だけ』のポーリングで十分(下の研究: ポーリング推奨)。"},
+          {"title": "11. PC で書いて push → Pi で pull", "detail": "コードは PC で書いて push し、Pi 側で git pull して実行(開発フローの原則)。main 直 push は禁止、feature/ ブランチで PR。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {"type": "research", "items": [
+          {"topic": "状態機械(queued→moving→arrived→done)の設計", "why": "『今どの段にいるか』を1つの変数で管理すると、二重処理や飛び越しを防げる。完全版の背骨。各段でやること(DB更新・ハード呼び出し)を1段ずつ整理できると初心者でも見通せる。", "where": "『有限状態機械(state machine)』で概念を1本。値の正しい一覧は必ず supabase/schema.sql の robot_calls / robot_status の check 制約を一次情報として確認(下の対応表の根拠)。"},
+          {"topic": "robot_calls と robot_status を整合して更新する(current_call_id)", "why": "2テーブルを別々に更新するので、片方だけ進んでズレると『status は done なのに robot_status は moving のまま』が起きる。current_call_id で『今どの呼出を処理中か』を結ぶ。", "where": "supabase/schema.sql の robot_status 定義(current_call_id は robot_calls(id) への外部キー=他テーブルの実在行を指す参照)。supabase-py の update: https://github.com/supabase/supabase-py と https://supabase.com/docs/reference/javascript/update (考え方は共通)。"},
+          {"topic": "supabase-py で『対象を id で絞って』update する書き方", "why": "絞り込みを忘れると RLS が update 全員OKのため robot_calls 全件を書き換える事故になる。update に『どの行か』を必ず添える書き方を知る必要がある。", "where": "https://github.com/supabase/supabase-py の README(update の例)。考え方は Supabase JS の https://supabase.com/docs/reference/javascript/update も同じ(filter で対象を限定→update)。**更新対象を id で限定する書き方** を必ず確認。実バージョンは Pi 上のものに合わせ、現行 README を見る。"},
+          {"topic": "Realtime 購読 vs ポーリング(まずポーリング推奨)", "why": "queued の検知方法。Realtime は便利だが supabase-py ではバージョン差・WebSocket 安定性で初心者にはハードルが高い。最小実装の延長ならポーリングが堅実。", "where": "**初心者はまずポーリング**(例: 3秒ごとに、schema にある idx_calls_queue を活かして created_at 古い順に queued を1件取得)から始めるのを推奨。動いてから Realtime に差し替える: https://supabase.com/docs/guides/realtime"},
+          {"topic": "Nav2(自走)を疎結合に呼ぶ連携点の設計", "why": "ブリッジの状態遷移とロボの自走を分けておくと、Nav2 がまだでもブリッジを完成・テストできる。仮関数→本物への差し替えが楽になる。", "where": "Nav2: https://docs.nav2.org/ 。呼び出しは nav2_simple_commander(BasicNavigator) が候補だが、到着判定は同期的に1行で返るとは限らず goToPose 後に完了をポーリング確認する形が一般的。実際の到着判定方法は docs.nav2.org で裏取りすること。seat_id→stop_points を引いて x,y,theta に変換してから渡す点も合わせて確認。"},
+          {"topic": "LED(NeoPixel)を疎結合に呼ぶ連携点", "why": "『着いたら光る』を状態遷移から切り離しておくと、LED 担当と並行作業でき、配線前でも仮関数で進められる。", "where": "NeoPixel: https://learn.adafruit.com/neopixels-on-raspberry-pi 。今は led_on() の仮関数を置く場所だけ決めればよい。"},
+          {"topic": "失敗時のリトライ/異常系とログの出し方", "why": "moving のまま固まると次の呼出が永久に処理されない。例外時に何が起きたかログで追えること、そして robot_status を必ず戻すことが復旧の鍵。", "where": "Python 標準の logging モジュール(print より時刻・レベル付きで残せる)。設計方針(リトライ回数 or canceled)は PM と相談して決める。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {"type": "callout", "variant": "danger", "label": "最重要: 2つのテーブルで使える値が違う", "text": "robot_calls.status と robot_status.state は **別物**。使える値が違う。robot_status.state に done/queued/canceled は **入れられない**(check 制約違反でエラー)。『robot_calls を done にしたから robot_status も done に』と素直に書くと必ず詰まる。done のときは robot_status.state は **idle** にする。"},
+        {"type": "table", "headers": ["呼出の段階", "robot_calls.status", "robot_status.state", "current_call_id"], "rows": [
+          ["待機中", "queued", "idle", "null"],
+          ["移動中", "moving", "moving", "その呼出のid"],
+          ["到着", "arrived", "arrived", "その呼出のid"],
+          ["完了", "done", "idle", "null"],
+          ["異常終了", "canceled", "idle", "null"]
+        ]},
+        {"type": "callout", "variant": "warn", "label": "updated_at は自動で変わらない", "text": "schema には updated_at を自動更新するトリガーが無い(default now() は INSERT 時だけ)。**update のたびに自分で updated_at=now() をセット** しないと、status は変わったのに updated_at は初期値のまま=『壊れてる?』と誤解する。動作確認は updated_at でなく status / state を見るのが安全。"},
+        {"type": "callout", "variant": "danger", "label": "update の絞り込み忘れ＝全行更新事故", "text": "RLS は update 全員OK。対象の id で絞り込まずに update すると robot_calls 全件を書き換える。update には必ず『どの id か』を添える。"},
+        {"type": "callout", "variant": "warn", "label": "ロボ側の接続キー名(NEXT_PUBLIC_ の誤解)", "text": "アプリ側の正しいキーは値として NEXT_PUBLIC_SUPABASE_URL と NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY(古い ANON_KEY は誤り)。ただし **NEXT_PUBLIC_ は Next.js(フロント)用の接頭辞** で、Python(supabase-py)側では技術的意味は無い。ロボ側の .env では接頭辞なしの自由な変数名でよく、PM と決めた名前を使う(.env.local とは別ファイル)。本質は『入れる値がフロントと同じ publishable key であること』。**URL と key の2つが要る** 点に注意。"},
+        {"type": "callout", "variant": "tip", "label": "current_call_id は実在の id だけ", "text": "current_call_id は robot_calls(id) への外部キー(=他テーブルの行を指す参照)。手動テストで適当な uuid を入れると外部キー違反で失敗する。必ず robot_calls に実在する行の id を入れる。"},
+        {"type": "callout", "variant": "tip", "label": "異常系の後始末を忘れない", "text": "異常終了で canceled にしたのに robot_status を idle/null に戻し忘れると、次の呼出が永久に動かない。canceled でも done でも『robot_status を idle・current_call_id=null に戻す』後始末はセット。"},
+        {"type": "callout", "variant": "study", "label": "returning は今回未使用でOK", "text": "robot_status.state には returning(帰還/原点復帰用)もあるが、今回の流れ(idle→moving→arrived→idle)では使わない。『帰還フローを作るときに使う状態。今回は触れなくてよい』と覚えておけば十分。使うかどうかは PM の設計判断。"}
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {"type": "p", "text": "Supabase の SQL Editor を使って『呼出を1件入れる→ブリッジを走らせる→値の変化を見る』で確認する。**updated_at ではなく status / state を見る**(updated_at は自動で進まないため)。"},
+        {"type": "steps", "items": [
+          {"title": "1. stop_points が空でないか先に確認", "detail": "seat_id は stop_points(id) への外部キー。stop_points にデータが無いと、次の insert が外部キー違反で失敗する。まず1行でも登録済みか確認する。"},
+          {"title": "2. queued の呼出を1件 insert", "detail": "下の SQL を、book_id と seat_id を実在の値に置き換えて実行。"},
+          {"title": "3. ブリッジを実行", "detail": "PC か Pi でブリッジを起動。ログに moving→arrived→done と進むのが見えるはず。"},
+          {"title": "4. テーブルの最終状態を確認", "detail": "robot_calls の status が done、robot_status の state が idle・current_call_id が null になっていれば成功。"}
+        ]},
+        {"type": "code", "lang": "sql", "code": "-- 確認用: queued の呼出を1件入れる\n-- book_id も seat_id も実在する値に置き換える\n--   book_id : books に実在する uuid\n--   seat_id : stop_points に登録済みの id（無いと外部キー違反）\ninsert into robot_calls (book_id, seat_id, requested_by)\nvalues ('REPLACE_WITH_REAL_BOOK_UUID', 1, 'test');\n\n-- 進行を確認（status / state を見る。updated_at は自動更新されない点に注意）\nselect id, status from robot_calls order by created_at desc limit 3;\nselect id, state, current_call_id from robot_status;  -- 常に id=1 の1行"}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {"type": "p", "text": "AIには **答えのコードを書かせない**。考え方・調べ場所・つまずき所を引き出すコーチとして使う。下をコピペして使う。"},
+        {"type": "code", "lang": "text", "code": "あなたは私のコーチです。答えのコードは書かず、考え方・調べ方・つまずき所を質問で引き出してください。\n\n状況: 移動本棚ロボのブリッジ完全版を Python + supabase-py で作っています。\nやりたいこと: robot_calls の queued を1件取得し、moving→arrived→done と更新し、robot_status も整合して更新する。\n大事な制約:\n- robot_calls.status は queued/moving/arrived/done/canceled、robot_status.state は idle/moving/arrived/returning で値が違う(done のとき state は idle)。\n- updated_at は自動更新されないので update のたびに自分で now() を入れる。\n- update は対象の id で必ず絞り込む(全行更新事故を防ぐ)。\n- current_call_id は robot_calls の実在 id のみ(外部キー)。\n\n私の今の詰まり: 〔ここに具体的に書く〕\nまず『私が何を確認すべきか』を質問で返してください。コードの完成形は出さないでください。"}
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["状態機械(state machine)", "『今どの段か』を1つの値で表し、決まった順にだけ進める仕組み。"],
+          ["robot_calls.status", "1件1件の呼出の進み具合。値は queued/moving/arrived/done/canceled。"],
+          ["robot_status.state", "ロボ全体の今の様子(1行だけ)。値は idle/moving/arrived/returning。robot_calls とは値が違い、done/queued/canceled は入れられない。"],
+          ["current_call_id", "今ロボが処理中の呼出の id。robot_calls に実在する行を指す外部キー。完了したら null に戻す。"],
+          ["外部キー(FK)", "他テーブルの実在する行を指す参照。実在しない値を入れると違反でエラーになる。"],
+          ["returning", "robot_status の状態の一つ。帰還/原点復帰用。今回は未使用でOK。"],
+          ["ポーリング", "一定間隔(例: 3秒ごと)で『queued は来た?』と見にいく方式。Realtime より単純で初心者向け。"],
+          ["疎結合", "アプリとロボが直接話さず、テーブル(robot_calls/robot_status)越しにつながる設計。"],
+          ["seat_id", "席=stop_points の id(整数)。座標ではないので、Nav2 に渡すときは stop_points から x,y,theta を引く。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {"type": "ul", "items": [
+          "要件: **F-09**(呼出を最後まで処理し状態を反映)。",
+          "前提タスク: 『ブリッジ最小実装』(番号は仮。Supabase 接続＋queued 1件取得まで)。現状 robot/ は README.md のプレースホルダのみなので、接続コードが無ければ本Issueでステップ2から作る。",
+          "関連: アプリ側『呼出』画面(robot_calls に insert する側)、LED 制御タスク、Nav2 ナビゲーションタスク。",
+          "DBスキーマの一次情報: supabase/schema.sql(robot_calls / robot_status の check 制約・外部キーがここに書いてある)。",
+          "接続情報・キーの考え方: 同フォルダ **環境構築ガイド.html**(値はフロントと同じ publishable key、ロボ側の変数名は PM と決める)。",
+          "外部docs: supabase-py https://github.com/supabase/supabase-py / Nav2 https://docs.nav2.org/ / NeoPixel https://learn.adafruit.com/neopixels-on-raspberry-pi",
+          "開発フロー: main 直 push 禁止→feature/ ブランチで PR→PM 承認後 Squash マージ。ロボ側は PC で書いて push→Pi で git pull。"
+        ]}
+      ]
+    }
+  ]
+}

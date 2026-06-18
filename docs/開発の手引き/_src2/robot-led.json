@@ -1,0 +1,141 @@
+{
+  "id": "robot-led",
+  "group": "ロボ側ソフト",
+  "order": 3,
+  "taskName": "LED点灯（到着時に該当段を光らせる）",
+  "screen": "",
+  "role": "ハード制御",
+  "sprint": "Sprint 2",
+  "priority": "★★☆",
+  "status": "",
+  "category": "ロボ",
+  "stack": ["Python", "NeoPixel(WS2812 / Pi 5対応ライブラリは要調査)", "GPIO/SPI"],
+  "oneLineGoal": "ロボが到着(arrived)したら books.shelf_level に対応する段の NeoPixel を点灯し、その呼出が done になったら消灯する。LED は Pi 実機(GPIO/SPI直結)でしか動かない。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {"type": "p", "text": "ゴールは、**ロボが目的の席に到着したら、呼ばれた本がある段を光らせて『この段の本ですよ』と人に知らせる**こと。利用者が本を取って貸出手続きが終わったら、その光を消す。光る対象の段は `books.shelf_level`（1〜5の整数）で決まる。"},
+        {"type": "p", "text": "点灯のきっかけは『到着』、消灯のきっかけは『貸出完了（呼出が `done`）』。これらの状態は Supabase のテーブルから読む。アプリともロボの移動制御とも**直接はつながらず**、テーブル（`robot_status` / `robot_calls`）を介して間接的に受け取る（疎結合）。このIssueはあくまで『状態を読んで LED を光らせる/消す』側。"},
+        {"type": "callout", "variant": "danger", "label": "最重要の前提：Pi 5 では定番の光らせ方が動かないことがある", "text": "このロボは **Raspberry Pi 5**。Pi 5 は Pi 4 までと GPIO の内部の仕組み（RP1 という新しいチップ経由）が変わったため、ネットでいちばん見かける定番の `rpi_ws281x`（GPIO18 の PWM/DMA で光らせる方式）が **そのままでは動かないことで有名**。GPIO18 に配線して定番手順をなぞっても『何をやっても光らない』に必ず突き当たる。**だから一番最初に『自分の Pi 5 で実際に光る方式は何か』を裏取りしてから配線・コードに入る**こと。Pi 5 では SPI を使う方式（`Adafruit_CircuitPython_NeoPixel_SPI` など）や、Pi 5 対応をうたう新しいライブラリ/外部マイコンへの委譲が選択肢になる。詳しくは下の『調べる・学ぶこと』の最初の項目。"},
+        {"type": "callout", "variant": "warn", "label": "消灯の引き金は『誰かが呼出を done にする』ことが前提", "text": "このIssueは **`done` を受け取って LED を消す側**。`robot_calls.status` を `done` に**する**処理は別物（貸出処理側 or ブリッジの責務）で、まだ設計が固まっていない可能性がある。『誰が・いつ done を立てるのか』を PM/関連Issueで先に確認しないと、消灯が一生発火しない事故になる。詳細は『困ったら・参照』。"},
+        {"type": "p", "text": "**置き場所（最初の一歩）**: ロボ側コードは `robot/` 配下で別管理。LED 制御は小さな Python スクリプト/モジュールとして作る。PC で書いて push → Pi で `git pull` して実機実行、が基本フロー（LED は Pi 実機でしか光らない）。要件は **F-10**。"}
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {"type": "checklist", "items": [
+          "【前提確認】自分の Pi 5 で NeoPixel が実際に光る方式（ライブラリ/配線ピン）を一次情報で裏取りし、最小プログラムで1個でも光らせられた",
+          "ロボが到着したとき（`robot_status.state` が `arrived`、または対象 `robot_calls.status` が `arrived`）、その呼出の本の `books.shelf_level` に対応する段の LED が点灯する",
+          "その呼出が `done`（`robot_calls.status='done'`）になったら、点いていた LED が消える",
+          "shelf_level(1〜5) と LED インデックスの対応表を、実物のテープを数えて自分たちで作り、5段すべてで正しい段が光ることを確認した",
+          "【連携】`done` を立てる側（貸出処理 or ブリッジ）の責務が誰かを確認でき、その操作で実際に消灯することを通しで確認した",
+          "電源構成が安全（LED の必要電流を見積もり、多い場合は Pi の5Vピンに頼らず外部5V電源＋GND共通）になっている"
+        ]}
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {"type": "steps", "items": [
+          {"title": "【最優先】Pi 5 で光る方式を裏取りする", "detail": "配線やコードの前に、まず『自分の Pi が Pi 5 なら、その光らせ方が Pi 5 で本当に動くか』を一次情報で確認する。定番の `rpi_ws281x`(GPIO18/PWM) は Pi 5 で動かない公算が高い。Pi 5 で動く方式（SPI経由の `neopixel_spi` など）を確定してから次に進む。research の『Pi 5 での制御方式』参照。"},
+          {"title": "ライブラリの入れ方と実行権限をセットで決める", "detail": "選んだライブラリの入れ方（pip か apt か、`venv` を使うか）を確認する。Pi では **`sudo` 実行するとユーザの venv に入れたパッケージが見えない**定番の落とし穴がある。『入れ方』と『どの権限で実行するか(sudo の要否)』はセットで決める。research の『インストールと権限』参照。"},
+          {"title": "LED 1個を光らせる最小プログラムを作る", "detail": "DB もロジックもまだ要らない。まず Pi 実機で『1個だけ好きな色で光る』を作って、配線とライブラリが正しいことを確かめる。ここが通れば土台はできている。"},
+          {"title": "shelf_level(1〜5) → LED インデックスの対応表を自分で作る", "detail": "対応表は既製品ではなく**自分たちで作るもの**。実物の LED テープを目で数えて、どの番号の LED がどの段かを表にする。雛形は『つまずきポイント』の下に例を載せた。まず全段を順番に光らせて、番号と物理位置のズレが無いか確認する。"},
+          {"title": "到着(arrived)を読んで該当段を点灯する", "detail": "`robot_status.state` が `arrived` になったこと（または対象 `robot_calls.status='arrived'`）を起点に、その呼出の `robot_calls.book_id` → `books.shelf_level` をたどって、対応する段の LED を点ける。状態の読み方（ポーリング or Realtime購読）は research 参照。どのテーブルのどの列かは用語ミニ辞典で必ず確認。"},
+          {"title": "貸出完了(done)を読んで消灯する", "detail": "その呼出の `robot_calls.status` が `done` になったら、点いていた段を消す。**done を立てるのは別の処理**（誰かは要確認）。このIssueは『done を受けて消す』だけ。"},
+          {"title": "PC↔Pi のフローで回す", "detail": "コードは PC で書いて `robot/` 配下に push → Pi で `git pull` → 実機で実行、を回す。LED は実機でしか光らないので、ロジック部分（対応表の変換など）は手元でも軽く確認しつつ、点灯は必ず Pi で見る。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {"type": "research", "items": [
+          {"topic": "Raspberry Pi 5 で NeoPixel(WS2812) を制御する現行の正しい方式", "why": "**このガイドの大前提が崩れるかどうかが、ここで決まる最重要項目**。定番の `rpi_ws281x`(jgarff) は Pi 5 の新I/O(RP1)では基本動かない。Pi 5 で実際に光る方式（SPI経由＝`Adafruit_CircuitPython_NeoPixel_SPI`、Pi5対応の新ライブラリ、外部マイコンへ委譲など）を最初に確定しないと、配線・コードが全部やり直しになる。", "where": "Adafruit NeoPixels on Raspberry Pi: https://learn.adafruit.com/neopixels-on-raspberry-pi （Pi 5 を前提にしていない版の可能性があるので Pi 5 記述の有無に注意）／ rpi_ws281x の GitHub Issue で『Pi 5』『RP1』を検索: https://github.com/jgarff/rpi_ws281x ／ SPI方式: https://github.com/adafruit/Adafruit_CircuitPython_NeoPixel_SPI 。3つを突き合わせて『Pi 5 で動く方式』を裏取りする。"},
+          {"topic": "Pi 5 の GPIO/SPI ピンと配線（SPI方式ならピンが変わる）", "why": "GPIO18(PWM) 前提の従来手順は Pi 5 では成立しないことが多い。SPI 方式を採るなら使うピンが変わる（SPI0 の MOSI=GPIO10 等）。どのピンにデータ線をつなぐかが方式で違うため、選んだ方式に合わせて配線を確認する必要がある。", "where": "Raspberry Pi 公式の Pi 5 / GPIO ドキュメント: https://www.raspberrypi.com/documentation/computers/raspberry-pi.html （Pi 5 は GPIO の内部実装が RP1 経由で従来と違うため、必ずライブラリの Pi 5 対応状況とセットで確認）。選んだライブラリのREADMEで指定ピンを確認。"},
+          {"topic": "ライブラリのインストールと実行権限（pip/apt・venv・sudo の落とし穴）", "why": "Pi で『入れたのに動かない』の定番が、`venv` に入れたのに `sudo` で実行してパッケージが見えない、というズレ。入れ方（pip か apt か、venv を使うか）と、どの権限で実行するか(sudo の要否)を**セットで**決めないとハマる。", "where": "選んだライブラリ（例: Adafruit Blinka / neopixel_spi）の公式インストール手順を参照。Adafruit のセットアップガイド内『Python Installation / venv』節と、ライブラリREADME の実行例（root 権限が要るか）を確認。"},
+          {"topic": "shelf_level(1〜5) → LED インデックスの対応設計", "why": "DB の `books.shelf_level`(1〜5) を、物理の LED テープの何番〜何番に光らせるかへ変換する必要がある。テープの貼り方・段の数え方で対応がズレるので、コードに埋める前に実物で表を作る。", "where": "本ガイドの『つまずきポイント』にある対応表の雛形（例: 1段=LED 0〜5, 2段=6〜11 …）を出発点に、実物のテープを数えて自分たちの表を作る。NeoPixel のインデックス指定方法は選んだライブラリのREADMEで確認。"},
+          {"topic": "電源と信号レベル（必要電流の見積もり・3.3V→5V・GND共通）", "why": "NeoPixel は **1個あたり最大約60mA**。使う総数×60mA で必要電流をおおよそ見積もる。段数×個数で簡単に数Aになり、**Pi の5Vピンから給電すると Pi が落ちる/壊れる**定番事故になる。多い場合は Pi の5Vから取らず**外部5V電源**を使い、**GND だけ共通**にする。Pi の信号は3.3V、NeoPixel は5V系なので信号レベルの扱いも確認が要る。", "where": "Adafruit NeoPixel Überguide の Powering NeoPixels / Best Practices: https://learn.adafruit.com/adafruit-neopixel-uberguide/powering-neopixels 。必要電流の目安と外部電源の使い方、3.3V→5V レベルの注意を確認。"},
+          {"topic": "NeoPixel の保護策（データ線の直列抵抗・電源端のコンデンサ）", "why": "Adafruit 推奨の故障防止策として、**データ線に直列抵抗(約330〜470Ω)**、**電源端に大容量コンデンサ(約1000µF)**、**初回通電前に Pi と LED電源の GND を共通に**、がある。これを省くと初回通電で1個目が壊れる等が起きやすい。", "where": "Adafruit NeoPixel Überguide の Best Practices: https://learn.adafruit.com/adafruit-neopixel-uberguide/best-practices 。抵抗値・コンデンサ容量の推奨値を一次情報で確認。"},
+          {"topic": "状態（arrived / done）をロボ側で受け取る方法（Realtime購読 or ポーリング）", "why": "点灯/消灯のトリガは DB の状態変化。ロボ側(Python)で `robot_status`/`robot_calls` の変化を受け取る。supabase-py での購読、または一定間隔で読みに行く方法を理解する。", "where": "supabase-py: https://github.com/supabase/supabase-py ／ Realtime の考え方: https://supabase.com/docs/guides/realtime 。`robot_status` の Realtime を有効化する必要がある点も確認（テーブルを Realtime 配信対象に追加）。"},
+          {"topic": "どのテーブルのどの列を見るか（arrived と done の所在）", "why": "`arrived` は `robot_status.state` と `robot_calls.status` の**両方**にあるが、`done` は **`robot_calls.status` だけ**（`robot_status.state` に done は無い）。これを取り違えると `robot_status.state='done'` を探して一生見つからず詰まる。", "where": "`supabase/schema.sql` の `robot_status`（state in idle/moving/arrived/returning）と `robot_calls`（status in queued/moving/arrived/done/canceled）の定義を直接読む。点灯=arrived、消灯=`robot_calls.status='done'`、と列名つきで覚える。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処（安全注意含む）",
+      "blocks": [
+        {"type": "table", "headers": ["症状・状況", "原因・対処"], "rows": [
+          ["定番手順どおりにしたのに何をやっても光らない", "**最有力＝Pi 5 非対応**。`rpi_ws281x`(GPIO18/PWM) は Pi 5(RP1) で基本動かない。ステップ1に戻り、Pi 5 で動く方式（SPI経由など）を裏取りして方式ごと切り替える。配線ミスを疑う前にまず方式を疑う。"],
+          ["ライブラリを入れたのに『無い』と言われる", "`venv` に入れたのに `sudo` で実行している（root には見えない）等のズレ。入れ方と実行権限をセットで見直す。research『インストールと権限』参照。"],
+          ["消灯が一生発火しない", "`robot_calls.status` を `done` にする処理が存在しない/別責務で、誰も done を立てていない。PM/関連Issueで『done を立てる側』を確認（『困ったら・参照』）。このIssueは done を受けて消すだけ。"],
+          ["robot_status.state='done' を探しても無い", "`robot_status.state` に `done` は無い（idle/moving/arrived/returning のみ）。`done` は `robot_calls.status` の値。消灯は robot_calls を見る。"],
+          ["光る段が1つズレる/逆順", "shelf_level→LEDインデックスの対応表が実物とズレている。テープを目で数えて表を作り直す。全段を順に光らせて物理位置と番号を突き合わせる。"],
+          ["色が変・チラつく・1個目が壊れた", "電源・保護不足。データ線の直列抵抗(約330〜470Ω)、電源端のコンデンサ(約1000µF)、GND共通を確認。電流不足でもチラつく（必要電流の見積もりへ）。"]
+        ]},
+        {"type": "p", "text": "**shelf_level → LED インデックス対応表の雛形（例。実物に合わせて自分で作る）**："},
+        {"type": "table", "headers": ["shelf_level", "光らせる LED 番号(例)"], "rows": [
+          ["1", "0 〜 5"],
+          ["2", "6 〜 11"],
+          ["3", "12 〜 17"],
+          ["4", "18 〜 23"],
+          ["5", "24 〜 29"]
+        ]},
+        {"type": "callout", "variant": "danger", "label": "安全注意（実機通電前に必ず）", "text": "・**Pi の5Vピンから多数の LED に給電しない**（Pi が落ちる/壊れる）。LED が多いなら外部5V電源を使い GND だけ共通にする。\n・+ と GND（プラスとマイナス）を逆につながない。逆接は一発で壊す。\n・データ線に直列抵抗(約330〜470Ω)、電源端に大容量コンデンサ(約1000µF)を入れ、通電前に Pi と LED電源の GND が共通か確認する。\n・配線を変えるときは必ず電源を切ってから。"}
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {"type": "ol", "items": [
+          "【単体】Pi 実機で最小プログラムを動かし、LED が1個でも狙った色で光ることを確認する（=方式と配線がOK）。",
+          "【対応表】全段を順番に光らせ、shelf_level 1〜5 と物理の段が一致していることを目視で確認する。",
+          "【点灯テスト】Supabase の SQL Editor で擬似的に到着を作る。`robot_status` は **id=1 の1行を update**（新規追加は不可）して `state='arrived'` にする。または対象 `robot_calls` を `update` で `status='arrived'` にする。→ その呼出の本の段が光ればOK。",
+          "【消灯テスト】同じ呼出の `robot_calls` を `update` で `status='done'` にする → 光が消えればOK。",
+          "【通し】呼出→移動→到着→点灯→（done を立てる側が動いて）消灯、の一連を実機で確認する。done を立てる側が未実装なら、上の手動 update で代用してよい。"
+        ]},
+        {"type": "callout", "variant": "tip", "label": "擬似テストの注意（insert ではなく update）", "text": "`robot_status` は **常に1行(id=1固定・insert 不可)**。新規行を作ろうとすると失敗するので、必ず id=1 の行を **update** する。`robot_calls` も既存行を update して status を変える。schema.sql 上 update ポリシーは全員OKなので publishable キーでも実行できる。"}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {"type": "p", "text": "AIには**答えのコードを書かせない**。考え方・調べ先・つまずきの切り分けを引き出すコーチとして使う。下のプロンプトをコピペしてよい。"},
+        {"type": "callout", "variant": "warn", "label": "AIに伝える注意", "text": "`rpi_ws281x` / Adafruit などのライブラリは**バージョンや Pi の世代で挙動・対応が大きく違う**ことがある。特に Pi 5 は要注意。AIの答えが古い Pi 前提でないか、自分で一次情報を確認する。"},
+        {"type": "code", "lang": "text", "code": "私はRaspberry Pi(実機はPi 5)とPython/NeoPixelの初心者です。\n「ロボが到着(arrived)したら books.shelf_level に対応する段のNeoPixelを点灯し、\nその呼出が done になったら消灯する」を自分で書いて学びたいです。\n状態は Supabase のテーブル(robot_status / robot_calls)から読みます。\n\nお願い：\n- 完成コードは書かないでください。考え方・手順・調べる場所だけ教えてください。\n- まず私に質問して、理解度を確かめながら進めてください。\n- 最初に必ず確認したいのは『Pi 5 で NeoPixel が実際に光る方式は何か』です。\n  rpi_ws281x(GPIO18/PWM)はPi 5で動かない可能性が高いと聞きました。\n  どの一次情報(Adafruitガイド / rpi_ws281xのGitHub Issue / SPI方式のライブラリ)を\n  どう突き合わせて裏取りすればよいか、調べ方を教えてください。\n- 次に: (1)ライブラリの入れ方とsudo/venvの落とし穴 (2)shelf_level→LEDインデックスの対応表の作り方\n  (3)必要電流の見積もりと外部電源の判断基準 (4)データ線抵抗/コンデンサ/GND共通の保護策\n  (5)arrivedとdoneがどのテーブルのどの列か(robot_status.stateにdoneは無い)\n  (6)状態をPython(supabase-py)で受け取る方法 を順に整理してください。\n- 注意: ライブラリはバージョン/Pi世代で挙動が違うことがあるので、公式docsのページ名/URLを示して\n  私自身に読ませてください。\n\n今つまずいているのは：（ここに状況を書く。例：配線したのに1個も光らない）"}
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["NeoPixel (WS2812)", "1本のデータ線で個別に色・明るさを制御できるLED。数珠つなぎにして使う。"],
+          ["arrived", "『到着』。**robot_status.state** と **robot_calls.status** の両方に存在する値。点灯の引き金。"],
+          ["done", "『貸出完了』。**robot_calls.status の値**（robot_status.state には done は無い）。消灯の引き金。"],
+          ["books.shelf_level", "本がどの段にあるか(1〜5の整数)。これに対応する段を光らせる。"],
+          ["robot_calls.book_id", "その呼出がどの本かを指す。book_id→books→shelf_level の順にたどる。"],
+          ["LEDインデックス", "テープ上の何番目のLEDか(0始まり)。shelf_levelをこの番号に変換して光らせる。"],
+          ["rpi_ws281x", "旧Pi(〜Pi 4)で定番のNeoPixelライブラリ。GPIO18のPWM/DMAを使う。**Pi 5では基本動かない**点に注意。"],
+          ["SPI方式", "Pi 5でNeoPixelを動かす代替手段の一つ。SPIピン(MOSI=GPIO10等)からデータを送る。"],
+          ["GND共通", "外部電源を使うとき、Pi側とLED電源側のマイナス(GND)を必ずつなぐこと。これが無いと信号が伝わらない/壊れる。"],
+          ["疎結合", "アプリ・ロボ移動制御とLED側が直接つながらず、DB(robot_status/robot_calls)を介して間接的につながる設計。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {"type": "ul", "items": [
+          "DB列名の正は `supabase/schema.sql`。`books.shelf_level`(1〜5)、`robot_calls`(book_id / status in queued/moving/arrived/**done**/canceled)、`robot_status`(state in idle/moving/arrived/returning ＝**done は無い**)。点灯=arrived、消灯=`robot_calls.status='done'`。",
+          "【消灯トリガの責務】貸出完了で `robot_calls.status` を `done` に**する**のは、貸出処理側かブリッジか、設計上どこの責務かを **PM/関連Issueで先に確認**する。このIssueは done を受けて消す側。done を立てる側が無いと消灯は発火しない。",
+          "関連Issue: 物理前提の「本棚＋NeoPixel 組込」（配線・電源仕様）、ロボ側の「ブリッジ（状態の橋渡し）」、「robot_status を更新する」側など。**これらはまだ着手前/起票前のことがある**ので、無ければ PM に状況を確認すること（既存物として探すと見つからず止まる）。",
+          "電源・保護・必要電流は Adafruit NeoPixel Überguide（Powering / Best Practices）を一次情報として確認。Pi 5 対応状況は rpi_ws281x の GitHub Issue と SPI 方式ライブラリも突き合わせる。",
+          "ロボ側コードは `robot/` 配下で別管理。PC で書いて push → Pi で `git pull` して実機実行。環境構築は同フォルダ 環境構築ガイド.html も参照。",
+          "要件は **F-10**（到着で該当段が光る／借りると消える）。LED は Pi 実機(GPIO/SPI直結)でしか動かない。"
+        ]}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Raspberry Pi 5 セットアップ（Ubuntu＋ROS2 Humble）｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero hw">
+    <h1>Raspberry Pi 5 セットアップ（Ubuntu＋ROS2 Humble）</h1>
+    <p>Pi 5 を起動して SSH で入れる状態にし、ROS2 のサンプル（talker/listener）が動くところまで持っていく。ロボ開発の土台づくり。</p>
+    <div class="badges">
+      <span class="badge">担当：ハ設/ハ制</span>
+      <span class="badge">Sprint 0（準備）</span>
+      <span class="badge">優先 ★★★</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill role">担当：ハ設/ハ制</span>
+    <span class="pill sprint">Sprint 0（準備）</span>
+    <span class="pill prio">優先 ★★★</span>
+    <span class="pill lang">Raspberry Pi 5</span>
+    <span class="pill lang">Ubuntu Server 24.04</span>
+    <span class="pill lang">ROS2 Humble</span>
+    <span class="pill lang">SSH</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p><strong>ゴール</strong>: Raspberry Pi 5（以下 Pi）に OS（Ubuntu）と ROS2 Humble を入れ、自分の PC から SSH で入って ROS2 のサンプルノード（<code>talker</code> と <code>listener</code>）が通信できる状態にする。</p>
+  <p><strong>なぜ必要か</strong>: ロボ側のソフト（Nav2 で自走、NeoPixel で光る、Supabase の <code>robot_calls</code> を購読して動く）は、すべてこの Pi の上で ROS2 を使って動きます。つまりこの Issue は <strong>ロボ開発すべての土台</strong>。ここが立ち上がらないと、後続のロボ系 Issue（地図づくり・自律走行・LED・アプリ⇔ロボのブリッジ）が一歩も進めません。</p>
+  <p><strong>この先のワークフロー</strong>: 以降ロボ側のコードは、各自の PC で書いて GitHub に push → Pi 側で <code>git pull</code> して実行、という流れになります。だから Pi には「SSH で入って操作できる」ことが何より大事。モニタとキーボードを常時つなぐ運用はしません（ヘッドレス＝画面なし運用）。</p>
+  <div class="callout study"><span class="label">前提のすり合わせ（PMに要確認）</span><p>stack は ROS2 <strong>Humble</strong> ですが、Humble が公式に対応する Ubuntu は <strong>22.04（Jammy）</strong> です。Ubuntu <strong>24.04</strong> に正式対応するのは ROS2 <strong>Jazzy</strong>。資料・後続Issueはすべて Humble 前提で書かれているので、『24.04＋Humble』『22.04＋Humble』『24.04＋Jazzy』のどれで行くかは着手前に PM と確定してください。詳しくは下の『進めながら調べる・学ぶこと』を参照。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li>OS を書き込んだ microSD で Pi が起動する</li><li>起動直後に <code>uname -m</code> が <code>aarch64</code> を返す（＝64bit OS で書き込めている確認）</li><li><code>vcgencmd get_throttled</code> が <code>throttled=0x0</code>（電源警告なし）になっている</li><li>自分の PC から <code>ssh ユーザー名@PiのIP</code> で Pi にログインできる</li><li>ROS2 Humble が apt で入っている（<code>ros2 --help</code> が動く）</li><li>ターミナル2枚で <code>talker</code> と <code>listener</code> を動かし、メッセージのやり取りが流れる</li><li>Pi の固定的なアクセス方法（IP もしくはホスト名）をチームで共有できている</li></ul>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">1. 必要な物をそろえる</span><div class="st-detail">Raspberry Pi 5 本体 / microSD（32GB 以上推奨・できれば高速なもの）/ microSD を書き込む PC とカードリーダー（USB のSDカードリーダー。PC内蔵スロットがあればそれでも可）/ 公式 USB-C PD 電源（純正『27W USB-C 電源（5.1V/5A）』が安全。型番例: Raspberry Pi 27W USB-C Power Supply）/ ヒートシンクまたは公式アクティブクーラー（Pi5は発熱が大きい）。初回トラブル対応用にモニタとキーボードもあると安心。</div></li><li><span class="st-title">2. モニタを使う場合の注意（買う前に確認）</span><div class="st-detail">Pi5 の映像出力は <strong>micro-HDMI</strong> で、普通の HDMI と形が違います。モニタにつなぐには『micro-HDMI → HDMI 変換ケーブル/アダプタ』が必要。普通の HDMI ケーブルを買って『映らない！』は定番のつまずき。ヘッドレス運用なら無くても進められますが、SSH が通らない時の最終手段として1本あると詰まりません。</div></li><li><span class="st-title">3. Raspberry Pi Imager を PC に入れる</span><div class="st-detail">公式サイトから Raspberry Pi Imager をダウンロードしてインストール。これが microSD に OS を書き込むアプリです。</div></li><li><span class="st-title">4. Imager で Ubuntu Server (64bit) を書き込む</span><div class="st-detail">デバイス＝Raspberry Pi 5、OS＝『Other general-purpose OS → Ubuntu → Ubuntu Server (64bit)』を選ぶ。<strong>32bit / Desktop 版を選ばない</strong>こと（後述）。どのバージョンを選ぶかは PM 確認事項（上のcalloutと『学ぶこと』参照）。</div></li><li><span class="st-title">5. 書き込み前に『ヘッドレス設定』を仕込む</span><div class="st-detail">Imager の設定（歯車 or 『次へ→設定を編集』）で、ホスト名・ユーザー名/パスワード・<strong>Wi-Fi の SSID とパスワード</strong>・<strong>SSH 有効化</strong>を事前に入れておく。これをやっておくと、画面をつながずに最初から SSH で入れます。最重要ステップ。</div></li><li><span class="st-title">6. SD を Pi に挿して電源 ON</span><div class="st-detail">書き込んだ microSD を Pi に挿し、ヒートシンク/クーラーを付けて、公式 PD 電源を接続。初回起動は少し時間がかかります。電源ランプの稲妻マークが点滅していないか（＝電源不足の警告）も見ておく。</div></li><li><span class="st-title">7. Pi の IP を調べて SSH ログイン</span><div class="st-detail">同じ Wi-Fi にいる PC のターミナルから <code>ssh 設定したユーザー名@ホスト名.local</code> を試す。<strong><code>.local</code> が引けないのは普通に起きます</strong>（次のステップ参照）。引けない場合はルーターの管理画面で Pi の IP を探すか、一度モニタをつないで <code>ip a</code> / <code>hostname -I</code> で実 IP を確認し、<code>ssh ユーザー名@実IP</code> で直打ちする。</div></li><li><span class="st-title">8. ログイン直後のチェック</span><div class="st-detail"><code>uname -m</code> で <code>aarch64</code>（＝64bit）か確認。<code>vcgencmd get_throttled</code> で電源警告が出ていないか確認（<code>0x0</code> ならOK）。<code>sudo apt update &amp;&amp; sudo apt upgrade</code> で OS を最新化（最初は時間がかかる）。</div></li><li><span class="st-title">9. ROS2 Humble を apt でインストール</span><div class="st-detail"><strong>公式のインストールページ（Ubuntu deb）を開き、そこに書いてある手順を上から順にそのまま実行</strong>します。リポジトリ（ソフトの配布元）の登録方法は近年更新されているので（後述）、古いブログのコピペではなく公式ページの最新コマンドを使うこと。パッケージは <strong><code>ros-humble-ros-base</code></strong> を入れる（理由は次ステップ）。</div></li><li><span class="st-title">10. ros-base を選ぶ（desktop ではない）</span><div class="st-detail">今回はヘッドレス（画面なしの Server）構成なので、GUI ツール（RViz 等）を含む <code>ros-humble-desktop</code> は不要で重いだけ。<strong>軽い <code>ros-humble-ros-base</code> を選ぶ</strong>。後で Nav2 の可視化などが必要になれば、その時に追加で入れられます（名前が『desktop＝全部入りで安心』に見えても、画面の無い Pi では逆に無駄になる）。</div></li><li><span class="st-title">11. 環境設定（source）を通す</span><div class="st-detail">ROS2 のコマンドを使うには、毎回のターミナルで環境設定ファイルを読み込む（source する）必要があります。まずは手で source して動作確認 → 通ったら毎回自動で読まれるようにする方法（<code>.bashrc</code> への追記）を調べて設定する。やり方は『学ぶこと』参照。</div></li><li><span class="st-title">12. talker / listener で動作確認</span><div class="st-detail">ターミナルを2枚開き、片方で talker、もう片方で listener を起動して、メッセージが流れることを確認する。具体的なコマンドは公式チュートリアル（Understanding nodes）で確認すること。これが本Issueの本命の合格確認です。</div></li><li><span class="st-title">13. アクセス方法をチームに共有</span><div class="st-detail">Pi の IP（または安定して引けるホスト名）と、SSH のユーザー名をチームの連絡手段で共有。これで誰でも同じ Pi に入れるようになります。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <div class="callout study"><p>答えのコマンドを丸暗記するのではなく、『なぜそれをやるのか』を理解しながら進めると、後続のロボ系 Issue で詰まったとき自分で直せるようになります。下の各テーマを『何を/なぜ/どこで』で押さえていきましょう。</p></div>
+  <ul class="research"><li><div class="r-topic">Raspberry Pi Imager での Ubuntu 書き込み＆ヘッドレス設定（Wi-Fi/SSH の事前仕込み）</div><div class="r-why">ここを書き込み前に設定しておくと、モニタ無しで最初から SSH で入れる。後で設定し直すのは面倒なので最初の一発勝負が大事。</div><div class="r-where">Raspberry Pi Imager 配布元 https://www.raspberrypi.com/software/ と、Imager の『設定を編集（歯車）』画面。OS書き込みとヘッドレス設定の公式手順は https://www.raspberrypi.com/documentation/computers/getting-started.html</div></li><li><div class="r-topic">ROS2 Humble の apt インストール手順（リポジトリ登録の現行方式）</div><div class="r-why">本Issue最重要の手順。<strong>現在の公式手順は <code>ros2-apt-source</code> パッケージを dpkg で入れる新方式</strong>に変わっており、手動で GPG 鍵を curl する古いブログをコピペすると <code>apt update</code> でエラーになって詰まる。リポジトリ（＝ソフトの配布元）と GPG 鍵（＝配布元が本物か確認する署名）の登録は、必ず公式ページの最新コマンドを一行ずつ使うこと。</div><div class="r-where">ROS2 Humble の deb インストール公式ページ（Humble は綴りが『Debians』）: https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html ／ 開けない/拒否ページが出るときは index.ros.org か GitHub https://github.com/ros2/ros2_documentation を見る。</div></li><li><div class="r-topic">ros-base と desktop の違い（どちらを入れるか）</div><div class="r-why">ヘッドレスの Pi では GUI ツール（RViz 等）入りの desktop は重く依存も増える。軽い ros-base を選ぶ判断の根拠を理解しておくと、後で必要なものだけ足せる。</div><div class="r-where">上記 Ubuntu-Install-Debians.html の『Install ROS 2 packages』節（ros-humble-desktop と ros-humble-ros-base の説明がある）。</div></li><li><div class="r-topic">ROS2 の環境設定 source と .bashrc 自動化</div><div class="r-why">source していないと <code>ros2</code> コマンドが『command not found』になる初心者あるある。毎回打つのは面倒なので <code>.bashrc</code> に追記して自動化する流れまで理解する。</div><div class="r-where">公式チュートリアル『Configuring environment』: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Configuring-ROS2-Environment.html</div></li><li><div class="r-topic">talker / listener（デモノード）の動かし方</div><div class="r-why">本Issueの本命の動作確認。<code>ros2 run demo_nodes_cpp talker</code> と <code>listener</code> でノード間のメッセージ通信を体験する＝ROS2 が正しく動いている証拠。ノード/トピックという ROS2 の基本概念もここで掴める。</div><div class="r-where">公式チュートリアル『Understanding nodes』（talker/listener＝demo_nodes_cpp を実際に扱う唯一の正参照）: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Understanding-ROS2-Nodes/Understanding-ROS2-Nodes.html ／ 一括起動したいだけなら talker_listener.launch.py の存在に触れる程度でOK。Turtlesim（亀の描画）は別概念なので混同しない。</div></li><li><div class="r-topic">ネットワーク / IP の確認と SSH 接続（.local が効かない問題）</div><div class="r-why">チームに Windows 利用者が多く、<code>ホスト名.local</code>（mDNS）は Windows では Bonjour 未導入だと引けず、学内 Wi-Fi で遮断されることもある。『SSH で入れない』の隠れ原因はこれが多い。実 IP を調べる手段を知っておく。</div><div class="r-where">Pi 側で <code>ip a</code> / <code>hostname -I</code>、ルーターの管理画面の端末一覧。Windows の SSH/.local については OpenSSH クライアントの導入と、必要なら Bonjour（Apple）導入を確認。SSH 一般は https://www.raspberrypi.com/documentation/computers/remote-access.html</div></li><li><div class="r-topic">Pi 5 の電源要件と under-voltage（throttled）確認</div><div class="r-why">Pi5 は電源不足だと不安定になり、原因が『電源』なのに『SSH/ROS が壊れた？』と誤診して時間を溶かす最頻出ハマり。<code>vcgencmd get_throttled</code> で機械的に切り分けられると速い。</div><div class="r-where">Raspberry Pi 公式 電源ドキュメント https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#power-supply 。コマンドは <code>vcgencmd get_throttled</code>（<code>0x0</code>＝正常）。</div></li><li><div class="r-topic">OS バージョンと ROS2 ディストロの対応（PM相談の材料）</div><div class="r-why">Humble の Tier1 対応 OS は Ubuntu 22.04、24.04 の Tier1 は Jazzy。もし『24.04＋Jazzy』に倒すなら後続Issue全部の Humble 記述が連鎖して変わる。また 24.04+Jazzy(arm64) には apt の依存問題（libzstd 絡み、ros2/ros2 #1789）が報告されており、ハマりどころも違う。事実を押さえて PM 相談すると判断が早い。</div><div class="r-where">ROS2 ディストロ一覧 https://docs.ros.org/en/rolling/Releases.html （各ディストロの対応 Ubuntu バージョン）／ Jazzy インストール https://docs.ros.org/en/jazzy/Installation.html</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <div class="callout danger"><span class="label">ハード・安全注意（電源）</span><p>必ず <strong>公式 USB-C PD 電源（5.1V/5A・27W）</strong> を使う。非PDのスマホ充電器などだと USB 給電が 600mA 程度に制限され、Pi5 が不安定になったり起動しない・稲妻マークが出る。原因不明の不安定はまず電源を疑うこと。書き込み済み SD の抜き差しは必ず電源を切ってから。</p></div>
+  <div class="callout danger"><span class="label">ハード・安全注意（発熱）</span><p>Pi5 は高負荷で熱くなる。ヒートシンクか公式アクティブクーラーを必ず付ける。長時間 apt upgrade などを回すと触れないほど熱くなることがあるので、放熱を確保した状態で作業する。</p></div>
+  <table><tr><th>症状</th><th>ありがちな原因</th><th>対処</th></tr><tr><td>SSH で入れない</td><td><code>.local</code>（mDNS）が引けない（Windows で多い）</td><td>ルーター管理画面か、モニタをつないで <code>ip a</code>/<code>hostname -I</code> で実 IP を調べ直打ち。DHCP（IP を自動割り振りする仕組み）で再起動するとIPが変わることがある点も注意</td></tr><tr><td><code>apt update</code> でエラー</td><td>古いブログの手動 GPG 鍵登録をコピペした</td><td>公式ページ（Debians.html）の最新の <code>ros2-apt-source</code> 方式で登録し直す</td></tr><tr><td><code>ros2: command not found</code></td><td>環境設定を source していない</td><td>ターミナルで source する → 通ったら <code>.bashrc</code> に追記して自動化</td></tr><tr><td>動作が不安定・突然落ちる</td><td>電源不足（under-voltage）</td><td>公式 27W PD 電源に替える。<code>vcgencmd get_throttled</code> で確認</td></tr><tr><td>32bit を選んでしまった</td><td>Imager で 64bit Server 以外を選んだ</td><td><code>uname -m</code> が <code>aarch64</code> でなければ書き込みからやり直し（ROS2 は 64bit 前提）</td></tr><tr><td>公式 docs が開けない/拒否ページ</td><td>docs.ros.org の bot 対策（Anubis）</td><td>ブラウザを変える・少し待つ・index.ros.org や GitHub(ros2_documentation) のミラーを見る</td></tr></table>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p>下の順に確認すれば、土台が正しく立ち上がったと判断できます。</p>
+  <ol><li>起動: Pi の電源を入れて、稲妻マーク（電源警告）が出ていないことを目視。</li><li>アーキ確認: <code>uname -m</code> が <strong><code>aarch64</code></strong>（64bit）と出る。</li><li>電源確認: <code>vcgencmd get_throttled</code> が <strong><code>throttled=0x0</code></strong>（under-voltage 警告なし）。<code>0x0</code> 以外なら電源を疑う。</li><li>SSH: 自分の PC から <code>ssh ユーザー名@PiのIP</code> でログインできる。</li><li>ROS2 導入: <code>ros2 --help</code> がヘルプを表示する（コマンドが認識されている）。</li><li>本命: ターミナル2枚で talker / listener を起動し、メッセージのやり取りが流れる（具体コマンドは公式 Understanding nodes 参照）。listener 側に talker からの文字列が連続表示されれば合格。</li></ol>
+  <pre><code># ログイン直後のチェック（確認系コマンドのみ）
+uname -m              # aarch64 と出れば 64bit でOK
+vcgencmd get_throttled # throttled=0x0 なら電源警告なし
+hostname -I           # この Pi の IP を確認（チーム共有用）
+
+# ROS2 を使う準備：まず手で source して動作確認 →
+# 通ったら .bashrc に追記して次回以降自動化（やり方は research の Configuring environment 参照）
+# source の対象ファイルや書式は公式チュートリアルどおりに。
+ros2 --help           # コマンドが認識されているか確認
+
+# talker / listener の実行コマンドは丸写しせず、
+# 公式『Understanding nodes』を見て自分で打ってみること（ここが最大の学びどころ）</code></pre>
+  <div class="callout ok"><p>listener 側に talker のメッセージが流れ続けたら、ROS2 のノード間通信が成立＝この Issue の Done 達成です。スクショを残してチームに共有しておくと後続Issueの担当が安心します。</p></div>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AI には『答えのコマンドを書かせる』のではなく、『どこを見ればいいか・なぜそうするか』を引き出すコーチとして使います。下のプロンプトをコピペして使ってください。</p>
+  <pre><code>あなたは ROS2 初心者の学習コーチです。私は Raspberry Pi 5 に Ubuntu Server と ROS2 Humble を入れ、SSH で入って talker/listener を動かそうとしています。
+
+お願い:
+- いきなり正解コマンドを全部書かないでください。まず「今やろうとしている目的」と「次に確認すべきこと」を質問してください。
+- 私が詰まったら、原因の切り分け方（何を確認すれば原因が分かるか）と、公式ドキュメントのどのページを見ればいいか（URL/章名）を教えてください。
+- ROS2 Humble の apt 手順は、手動でGPG鍵をcurlする古い方式ではなく、現行の公式ページ(ros2-apt-source方式)に沿っているか毎回確認してください。
+- talker/listener は demo_nodes_cpp のノードで、Turtlesim とは別物です。混同しないでください。
+
+今の状況: （ここに今やっていること・出たエラー・打ったコマンドを書く）</code></pre>
+  <div class="callout warn"><p>AI が古い手順（手動GPG鍵登録など）を出すことがあります。必ず公式ページ（Debians.html）の最新コマンドと突き合わせてから実行してください。docs.ros.org が拒否ページになる時はミラー（index.ros.org / GitHub の ros2_documentation）を案内するよう AI に頼むと良いです。</p></div>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>ヘッドレス</td><td>モニタ・キーボードをつながず、SSH 越しに操作する運用のこと</td></tr><tr><td>SSH</td><td>別の PC からネットワーク越しに Pi のターミナルを操作する仕組み</td></tr><tr><td>mDNS / .local</td><td><code>ホスト名.local</code> で機器を見つける仕組み。Windows では引けないことが多い</td></tr><tr><td>DHCP</td><td>IP を自動で割り振る仕組み。再起動で Pi の IP が変わる原因にもなる</td></tr><tr><td>apt</td><td>Ubuntu のソフトを入れる/更新する公式のパッケージ管理コマンド</td></tr><tr><td>リポジトリ</td><td>ソフトの配布元（apt が取りに行くサーバ）</td></tr><tr><td>GPG鍵</td><td>配布元が本物か確認するための署名。これが正しく登録されないと apt がエラーになる</td></tr><tr><td>source</td><td>ターミナルに環境設定を読み込ませる操作。これをしないと <code>ros2</code> コマンドが使えない</td></tr><tr><td>.bashrc</td><td>ターミナル起動時に毎回読まれる設定ファイル。source を自動化するために追記する</td></tr><tr><td>ノード</td><td>ROS2 で動く一つの処理プログラムの単位（talker や listener はノード）</td></tr><tr><td>トピック</td><td>ノード同士がメッセージをやり取りする『通り道』の名前</td></tr><tr><td>throttled</td><td>電源/温度が足りずに性能を絞られた状態。<code>vcgencmd get_throttled</code> で確認できる</td></tr><tr><td>aarch64</td><td>64bit ARM の CPU アーキ名。ROS2 は 64bit 前提なのでこれが出ればOK</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li><strong>環境構築ガイド.html</strong>（同フォルダ）: PC 側の開発環境やアプリ側のセットアップはこちら。</li><li>ROS2 Humble 公式 deb インストール: https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html （Humble は綴りが Debians）</li><li>ROS2 環境設定（Configuring environment）: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Configuring-ROS2-Environment.html</li><li>talker/listener（Understanding nodes）: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Understanding-ROS2-Nodes/Understanding-ROS2-Nodes.html</li><li>Raspberry Pi Imager: https://www.raspberrypi.com/software/ ／ リモートアクセス: https://www.raspberrypi.com/documentation/computers/remote-access.html</li><li>ROS2 ディストロと対応 OS（PM 相談用）: https://docs.ros.org/en/rolling/Releases.html</li></ul>
+  <div class="callout tip"><span class="label">公式 docs が開けないとき</span><p>docs.ros.org は bot 対策（Anubis）で『Access Denied』ページが返ることがあります。リンク切れや自分の環境のせいではありません。ブラウザを変える・少し時間を置く・index.ros.org や GitHub の ros2/ros2_documentation のミラーを見る、で回避できます。</p></div>
+  <div class="callout study"><span class="label">関連 Issue（タスク名で）</span><p>このIssueが終わると次へ進めます: 『ロボの地図づくり（SLAM）』『自律走行（Nav2）』『LED 表示（NeoPixel）』『アプリ⇔ロボのブリッジ（robot_calls 購読 / robot_status 更新）』。以降ロボ側コードは PC で書いて push → Pi で git pull して実行する運用です。</p></div>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

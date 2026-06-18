@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本棚部（5スロット）＋NeoPixel×5の組込｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero hw">
+    <h1>本棚部（5スロット）＋NeoPixel×5の組込</h1>
+    <p>5段の本棚部を作り、各段に NeoPixel を1個ずつ組み込んで「5段に本が入る／各段のLEDを個別に光らせられる」状態にする。要件 F-10（呼んだ段を光らせる）の物理的な土台づくり。</p>
+    <div class="badges">
+      <span class="badge">担当：ハ設</span>
+      <span class="badge">Sprint 2</span>
+      <span class="badge">優先 ★★☆</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill role">担当：ハ設</span>
+    <span class="pill sprint">Sprint 2</span>
+    <span class="pill prio">優先 ★★☆</span>
+    <span class="pill lang">機構</span>
+    <span class="pill lang">NeoPixel×5</span>
+    <span class="pill lang">配線</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処（安全注意つき）</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">回避ルート（Pi5で詰まったら）</a></li><li><a href="#sec-7">🤖 AIコーチの使い方</a></li><li><a href="#sec-8">用語ミニ辞典</a></li><li><a href="#sec-9">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p>ゴールは、<strong>5スロット（5段）の本棚部</strong>を作って、<strong>各段に NeoPixel を1個ずつ</strong>組み込み、「5段に本が入る」「各段のLEDを段ごとに別々に光らせられる」状態を作ること。これは要件 <strong>F-10（利用者が呼んだ本の段を光らせて教える）</strong> の物理的な土台になる。</p>
+  <p><strong>このIssueの守備範囲はハード（機構＋配線＋組込）まで</strong>。「アプリの呼出に連動して光らせる本番ロジック」は別Issue（ソフト側のLED点灯Issue）。ただし後述のとおり、<strong>動作確認のために『各段を順に光らせるだけの使い捨てスクリプト』は自分で用意してよい</strong>（製品ロジックではないので答えを写すのではなく、選んだライブラリのサンプルを参考に自作する）。</p>
+  <div class="callout danger"><span class="label">最初に必ず読む：Raspberry Pi 5 は『定番ライブラリがそのまま動かない』</span><p>本機の頭脳は Raspberry Pi 5。Pi 5 は新I/Oチップ（RP1）を採用したため、従来Piで定番だった rpi_ws281x / Adafruit_NeoPixel（PWM＋DMA方式）が <strong>そのままでは動かず</strong> <code>ws2811_init failed with code -3 (Hardware revision is not supported)</code> で失敗するのが2025年時点でも知られた既知問題。配線も対応表も正しいのにソフトで必ず壁にぶつかる。だから『まず Adafruit の旧チュートリアル通りに』進めると詰む。Pi5対応の手段（SPI経由のドライバ等）を最初に確認すること（→ 進め方ステップ／研究セクション）。</p></div>
+  <div class="callout study"><span class="label">設計の肝（疎結合 / ハード→ソフトの受け渡し）</span><p>「どの段（shelf_level 1〜5）が、どのLED番号（インデックス 0〜4）で、どのGPIO/データ線につながっているか」という<strong>対応表</strong>が、このハードIssueからソフト側へ渡す唯一の成果物。これがズレると『2段目を呼んだのに4段目が光る』事故になる。対応表は口頭でなく<strong>文書＋PR</strong>で残すのがこのIssueの肝。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li>5段（5スロット）の本棚部ができ、各段に研究室で使う想定の本が物理的に入る（段の高さ・奥行き・幅を実測した本サイズで決めた）</li><li>各段に NeoPixel を1個ずつ（計5個）固定して組み込んだ</li><li>5個を電源(+5V)・データ・GND の3線で数珠つなぎ（DOUT→次のDIN）に配線した</li><li>【電源】NeoPixel は Pi の5Vピンからではなく<strong>外部5V電源/バッテリーから給電</strong>し、GNDだけ Pi と共通にした。外部電源の容量がLED最大電流（5個ぶん：自分で計算）を<strong>上回っている</strong>ことを確認した</li><li>各段のLEDを <strong>1段ずつ個別に</strong>点灯できることを、確認用の使い捨てスクリプトで実機確認した（Pi5で光らせられない事情がある場合は『回避ルート』参照）</li><li>【受け渡し】<code>shelf_level(1〜5) → LEDインデックス(0〜4) → GPIO/データ線</code> の対応表を <code>robot/</code> 配下の固定ファイル（例 <code>robot/led_mapping.md</code>）に表で書き、<strong>PRに含めてPM（水谷）レビューを通した</strong></li><li>配線・LEDが走行や振動で外れないよう取り回しを固定した（線が機構や車輪に干渉しない）</li></ul>
+  <div class="callout tip"><span class="label">Doneの考え方</span><p>ハード（5段＋LED5個＋配線＋電源＋対応表）が揃えばこのIssueは完了。『アプリの呼出と連動』は別Issueなので、ここではできなくてOK。逆に対応表をPRで残すところまでがこのIssueの責任範囲。</p></div>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">本のサイズを実測して、1段の寸法を決める</span><div class="st-detail">ロボに載せる想定の本（研究室の本）の高さ・幅・厚みを何冊か実測し、最大級に合わせて1段の内寸（高さ・奥行き・幅）を決める。5冊ぶんで全体の高さ・重さがどれくらいになるかもメモ（移動ロボなので重心・重量が後で効く）。</div></li><li><span class="st-title">5段構造を仮組みする（接着の前に必ず仮）</span><div class="st-detail">段板や仕切りを仮で組んで、実際に本を5段それぞれ出し入れできるか確認する。本は<strong>出し入れする運用</strong>（接着しない）。LEDを入れる位置（各段のどこに付けると本に隠れず見えるか）もこの段階で目星をつける。</div></li><li><span class="st-title">【Pi5の壁を先に確認】NeoPixelをPi5でどう光らせるか調べて方式を決める</span><div class="st-detail">配線する前に、Pi 5でNeoPixelを光らせる<strong>現行手段</strong>を確定させる（→研究セクション）。定番のrpi_ws281x系はPi5で動かないことが多いので、SPI経由のドライバ等を選ぶ。ここを後回しにすると、組み上げたあとに『光らせられない』で全部やり直しになる。<strong>ソフト側Issueと並行で詰めるのが安全</strong>。</div></li><li><span class="st-title">【最重要・電源をどこから取るか決める】</span><div class="st-detail">NeoPixel は <strong>Piの5Vピンからではなく外部5V電源/バッテリーから給電</strong>し、<strong>GNDだけPiと共通</strong>にするのが基本（→用語『電流容量』）。理由：5個を全白点灯すると 1個あたり最大約60mA×5＝<strong>最大約300mA</strong>級のピーク電流が流れ、Piの5Vピンから取ると不足・不安定・最悪Pi破損の恐れ。本機はバッテリー駆動の移動ロボなので外部給電が前提。<strong>5個ぶんの最大電流を自分で計算し（1個あたり最大電流×個数）</strong>、用意する電源/バッテリーの容量がそれを上回るか確認する（→研究『電流計算と電源容量』）。</div></li><li><span class="st-title">1個だけで点灯テスト（机上）</span><div class="st-detail">いきなり5個つながず、まず<strong>NeoPixel1個</strong>を選んだ方式・電源・データ線でつなぎ、確認用スクリプトで光らせる。ここでロジックレベル（3.3V→5V）の問題が出ることがある（→つまずき）。1個が安定して光ってから次へ。</div></li><li><span class="st-title">5個を数珠つなぎにして全段テスト</span><div class="st-detail">1個目のDOUT→2個目のDIN…と順に5個つなぎ、各個に+5VとGNDも配る。確認用スクリプトで<strong>0番→1番→…→4番</strong>を順に単独点灯させ、どのインデックスがどの物理段かを記録する。これがそのまま対応表の元になる。</div></li><li><span class="st-title">テストが通ったら各段にLEDを固定して配線を取り回す</span><div class="st-detail">各段の決めた位置にNeoPixelを固定し、電源/データ/GNDの3線を機構・車輪に干渉しないよう束ねて固定する。走行の振動で抜けないようコネクタ/結束を確実に。最初のLED前にデータ線へ直列抵抗（信号保護の定番、目安数百Ω）、電源にコンデンサ（突入電流対策の定番）を入れる是非も調べる。</div></li><li><span class="st-title">対応表を作ってPRでPM承認を得る</span><div class="st-detail"><code>shelf_level(1〜5) → LEDインデックス(0〜4) → GPIO/データ線（とSPIならどのSPIか）</code> を表にして、<code>robot/</code> 配下の固定ファイル（例 <code>robot/led_mapping.md</code>）に書き、PRに含めてPM（水谷）のレビューを通す。<strong>口頭合意で終わらせない</strong>（食い違いの温床）。PCで書いて push → Pi で <code>git pull</code> の流れ。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <ul class="research"><li><div class="r-topic">Raspberry Pi 5（RP1チップ）でのNeoPixel/WS2812 制御の現行手段</div><div class="r-why"><strong>このIssue最大の落とし穴</strong>。Pi 5 は新I/Oチップ(RP1)のため、従来定番の rpi_ws281x / Adafruit_NeoPixel（PWM+DMA方式）が <code>ws2811_init failed with code -3</code> で動かない。これを知らずにAdafruitの旧チュートリアル通り進めると、配線が正しくても必ず詰む。SPI経由のドライバ等、Pi5で動く方式を最初に選ぶ必要がある。</div><div class="r-where">SPI経由でPi5対応のライブラリ Pi5Neo: https://github.com/vanshksingh/Pi5Neo 。Raspberry Pi 公式フォーラムで『Raspberry Pi 5 neopixel ws2811_init failed code -3』を検索: https://forums.raspberrypi.com/ 。※CLAUDE.md記載の Adafruit『NeoPixels on Raspberry Pi』(https://learn.adafruit.com/neopixels-on-raspberry-pi) は<strong>旧Pi向け</strong>でPi5の壁に触れていないので、配線の参考にはなるが点灯方式はPi5用を別途調べること。</div></li><li><div class="r-topic">NeoPixel 5個ぶんのピーク電流の見積りと外部5V電源/バッテリーの容量選定</div><div class="r-why">Piの5Vピンから給電すると容量不足で不安定・Pi破損の恐れ。1個あたり満白点灯で<strong>約60mA</strong>、5個で<strong>最大約300mA</strong>が目安。本機はバッテリー駆動の移動ロボなので外部5V電源/バッテリーから給電し、GNDだけPiと共通にするのが定番。用意する電源容量がこの最大電流を上回るか自分で計算して確認する。</div><div class="r-where">Adafruit NeoPixel Überguide『Best Practices』（電源・電流の節）: https://learn.adafruit.com/adafruit-neopixel-uberguide/best-practices 。1個あたりの最大電流と、電源を別系統にしてGNDだけ共通にする理由を確認する。</div></li><li><div class="r-topic">Pi GPIO 3.3V ロジックと WS2812 5V DIN のレベルシフト（電圧変換）の要否</div><div class="r-why">PiのGPIOは<strong>3.3Vロジック</strong>、WS2812のデータ入力(DIN)は<strong>約5Vロジック</strong>を期待するため、直結だとDINの閾値に届かず『最初のLEDだけ色化け』『全体がチラつく』『光らない』という超頻出症状になる。配線も向きも合っているのに色がおかしい、の主因がこれ。レベルシフタIC、または給電・配線方法での回避を調べる。</div><div class="r-where">Adafruit NeoPixel Überguide のロジックレベル/Best Practices の節: https://learn.adafruit.com/adafruit-neopixel-uberguide/best-practices （『Logic Level』『3.3V→5V』の記述）。選んだPi5用ライブラリのREADMEにもレベルシフトの注意があるか確認。</div></li><li><div class="r-topic">shelf_level(1〜5) と LEDインデックス(0〜4) の対応設計（オフバイワン）</div><div class="r-why">DBの <code>books.shelf_level</code> は <strong>1始まり（1〜5、schema.sqlでcheck制約）</strong>、NeoPixelのインデックスは <strong>0始まり（0〜4）</strong>。この1ズレ（オフバイワン）を明文化しないと『2段目を呼んだのに3段目が光る』事故になる。さらに物理的な段の上下とインデックスの向きも決めておく必要がある。</div><div class="r-where">列定義の正は <code>supabase/schema.sql</code> の <code>books.shelf_level int not null check (shelf_level between 1 and 5)</code>。LED側のインデックスは選んだライブラリのサンプル（配列の何番目か）で確認。対応のルールを自分で表に落とす。</div></li><li><div class="r-topic">対応表をどこに・どの形式で残し、PRでPM承認を得るかの共有運用</div><div class="r-why">robot/README.md には『共有テーブルの形はPM(水谷)が決める』とあり、置き場所が曖昧だと口頭合意で終わり食い違う。文書＋PRで残して初めて『共有した』ことになる。</div><div class="r-where"><code>robot/README.md</code>（説明文）は読むだけにして、対応表は <code>robot/</code> 配下に新規ファイル（例 <code>robot/led_mapping.md</code>）を作って表で記載 → PRに含めてPMレビュー。開発フローは CLAUDE.md／AGENTS.md（PCで書いてpush→Piでgit pull、main直push禁止・PR・PM承認後Squash）。</div></li><li><div class="r-topic">NeoPixelの3線（電源/データ/GND）配線と数珠つなぎ、保護部品（抵抗・コンデンサ）</div><div class="r-why">5個を安定して光らせる物理配線の基本。DOUT→次のDINで数珠つなぎし、各個に+5VとGNDを配る。データ線の直列抵抗（信号反射対策の定番）、電源のコンデンサ（突入電流のならし）を入れる是非を判断するため。</div><div class="r-where">Adafruit NeoPixel Überguide『Best Practices』: https://learn.adafruit.com/adafruit-neopixel-uberguide/best-practices （直列抵抗・コンデンサ・配線長の節）。Raspberry Pi のGPIO配置: https://www.raspberrypi.com/documentation/computers/raspberry-pi.html 。</div></li><li><div class="r-topic">確認用の使い捨て最小点灯スクリプトの作り方（製品ロジックではない）</div><div class="r-why">ハードが正しいか確かめるには『各LEDを順に点けるだけ』の最小コードが要る。本番の点灯ロジックは別Issueだが、確認手段は自分で持つ必要がある。答えを写すのではなく、選んだライブラリのサンプルを参考に自作してよい。</div><div class="r-where">選定したPi5対応ライブラリの <code>examples/</code>（例：Pi5Neo の examples）。supabase等は使わず、ローカルで各インデックスを順に点灯するだけの短いスクリプトでよい。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処（安全注意つき）</h2>
+  <table><tr><th>症状・落とし穴</th><th>原因・対処</th></tr><tr><td><code>ws2811_init failed with code -3 (Hardware revision is not supported)</code></td><td><strong>Pi5最大のハマり</strong>。定番 rpi_ws281x/Adafruit_NeoPixel（PWM+DMA）はPi5(RP1)非対応。SPI経由のPi5Neo等、Pi5対応の方式に切り替える（→研究1）。配線は悪くないので作り直さない。</td></tr><tr><td>配線も向きも合っているのに最初のLEDだけ色化け／全体がチラつく</td><td>Piの3.3Vデータ信号がWS2812 DINの5V閾値に届かない<strong>ロジックレベル不足</strong>の可能性。レベルシフタ(3.3V→5V)や給電・配線の見直しを調べる（→研究3）。</td></tr><tr><td>LEDが暗い／不安定／たまに消える、Piが落ちる</td><td><strong>電流容量不足</strong>。Piの5Vピンから給電していないか確認。外部5V電源/バッテリーから給電しGNDだけ共通に。5個ぶん最大電流(目安~300mA)を計算し容量が足りる電源を使う（→研究2）。</td></tr><tr><td>2段目を呼んだのに別の段が光る</td><td>shelf_level(1始まり)とLEDインデックス(0始まり)の<strong>オフバイワン</strong>。対応表で変換ルールと段の向きを明文化（→研究4）。</td></tr><tr><td>対応表が伝わらない／後で食い違う</td><td>口頭合意のまま。<code>robot/</code> 配下のファイル（例 led_mapping.md）に表で書き、PRでPM承認まで取る（→研究5）。</td></tr><tr><td>走行したら配線が抜けた／LEDが取れた</td><td>固定不足。振動前提で結束・コネクタを確実に。線が車輪や機構に干渉しない取り回しに。</td></tr><tr><td>【安全】配線中・通電中の注意</td><td><strong>通電したまま配線を抜き差ししない</strong>（ショートでLED/Pi破損）。+5VとGNDを逆/短絡させない。半田付けは換気・やけど注意。バッテリー使用時は端子の短絡に特に注意（発熱・発火の恐れ）。</td></tr></table>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p><strong>前提</strong>：ハード確認には最小の点灯コードが要る。製品ロジックは別Issueだが、<strong>各LEDを順に点灯するだけの使い捨てスクリプト</strong>は、答えを写すのではなく選定したPi5対応ライブラリのサンプル（examples）を参考に自分で用意してよい。</p>
+  <ol><li>5段それぞれに対象の本を実際に入れて、無理なく出し入れできることを確認する。</li><li>外部5V電源/バッテリーから給電し、GNDがPiと共通になっていることを目視・テスタで確認する。</li><li>確認用スクリプトでLEDインデックス 0→1→2→3→4 を<strong>1個ずつ単独点灯</strong>させ、どのインデックスがどの物理段か（上から/下から）を記録する。</li><li>全白点灯（5個同時に最大輝度）させても暗くならない・チラつかない・Piが落ちないことを確認する（電源容量がOKの証拠）。</li><li>色化け/チラつきが出たらロジックレベル（3.3V→5V）と給電を見直す。</li><li>対応表（shelf_level→インデックス→GPIO/データ線）とこの実測結果が一致していることを確認し、ファイルに反映してPRを出す。</li></ol>
+  <div class="callout ok"><span class="label">完成判定</span><p>「5段に本が入る」かつ「各段のLEDを1段ずつ個別に光らせられる」かつ「外部電源で5個同時点灯しても安定」かつ「対応表をPRでPM承認」まで来たらこのIssueは完了。Pi5でどうしても光らせられない事情がある場合は次の『回避ルート』参照。</p></div>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">回避ルート（Pi5で詰まったら）</h2>
+  <div class="callout warn"><span class="label">ハード単体だけ先に保証する</span><p>Pi5でのドライバ選定が長引いても、ハードの完成（機構・配線・電源）は止めない。まず<strong>旧Pi / Arduino / 開発PC</strong> など『確実に点く環境』でNeoPixel5個が個別点灯することをハード単体として保証し、Pi5でのドライバ選定はソフト側Issueと並行で詰める。こうすれば『配線が悪いのか、ドライバが悪いのか』の切り分けもできる。</p></div>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AIには<strong>答えのコード（特に本番点灯ロジック）を書かせない</strong>。考え方・調べ先・つまずきの切り分けを引き出すコーチとして使う。下のプロンプトをコピペして使ってよい。</p>
+  <pre><code>私はハードウェア初心者です。
+移動本棚ロボの「5段の本棚部＋各段にNeoPixelを1個ずつ（計5個）」を自分の手で作って学びたいです。
+頭脳は Raspberry Pi 5 です。
+
+お願い：
+- 完成コードや本番の点灯ロジックは書かないでください。考え方・手順・調べる場所・つまずきの切り分けだけ教えてください。
+- まず私に質問して、理解度を確かめながら進めてください。
+- 次の観点を順に整理して：
+  (1) Raspberry Pi 5 (RP1チップ) で NeoPixel を光らせる現行手段。定番のrpi_ws281x/Adafruit(PWM+DMA)が
+      ws2811_init failed code -3 で動かない問題と、SPI経由など代替の選び方
+  (2) NeoPixel5個ぶんのピーク電流の計算と、外部5V電源/バッテリーの容量選定（Piの5Vピンから取らない理由）
+  (3) Pi GPIO 3.3V と WS2812 5V DIN のレベルシフト要否（色化け/チラつきの切り分け）
+  (4) 電源/データ/GNDの3線配線と数珠つなぎ、保護部品（直列抵抗・コンデンサ）の是非
+  (5) shelf_level(1始まり) と LEDインデックス(0始まり) のオフバイワン対応表の作り方
+- 公式docsやライブラリのページ名/URLを示し、私自身に読ませてください。
+- 動作確認用の『各LEDを順に点けるだけの使い捨てスクリプト』は、答えを写すのではなく
+  どのサンプルを参考にどう自作すればよいか、考え方だけ導いてください。
+
+今つまずいているのは：（ここに状況を書く。例：Pi5でws2811_init failed code -3が出る／5個目だけ光らない）</code></pre>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>NeoPixel</td><td>1個ずつ色と明るさを指定できるフルカラーLED（WS2812系）。数珠つなぎして1本のデータ線で全部を制御できる。</td></tr><tr><td>数珠つなぎ（デイジーチェーン）</td><td>前のLEDの出力(DOUT)を次のLEDの入力(DIN)へつないで連ねる配線。+5VとGNDは各個に配る。</td></tr><tr><td>shelf_level</td><td>DBの books の列。本がどの段にあるか（1〜5、1始まり）。</td></tr><tr><td>LEDインデックス</td><td>NeoPixel配列の何番目か（0〜4、0始まり）。shelf_levelと1ズレるので対応表で変換する。</td></tr><tr><td>オフバイワン</td><td>1始まりと0始まりのズレなど『1だけずれる』定番バグ。対応表で明文化して防ぐ。</td></tr><tr><td>ロジックレベル</td><td>信号のHIGH/LOWを表す電圧。Piは3.3V、NeoPixelのDINは約5Vを期待するので変換が要ることがある。</td></tr><tr><td>レベルシフト</td><td>信号電圧を変換すること（ここでは3.3V→5V）。足りないと色化け/チラつきの原因になる。</td></tr><tr><td>電流容量</td><td>電源が供給できる電流の上限。足りないとLEDが暗い・不安定、Piが落ちる。NeoPixel5個で最大~300mAが目安。</td></tr><tr><td>ピーク電流</td><td>全白最大輝度など、最も電流が流れる瞬間の値。電源容量はこのピークを上回らせる。</td></tr><tr><td>RP1</td><td>Raspberry Pi 5 の新I/Oチップ。これが原因で従来のNeoPixelライブラリがそのまま動かない。</td></tr><tr><td>直列抵抗 / コンデンサ</td><td>データ線の保護（信号の反射対策・数百Ω目安）／電源の突入電流をならす定番部品。入れる是非を調べる。</td></tr></table>
+</section>
+
+<section id="sec-9">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>DB列名の正は <code>supabase/schema.sql</code>。<code>books.shelf_level int not null check (shelf_level between 1 and 5)</code>（1始まり・1〜5）。LEDインデックスは0始まりなので対応表で変換する。</li><li>ロボ側コードと対応表の置き場：<code>robot/</code> ディレクトリ配下。<code>robot/README.md</code> は<strong>説明文</strong>なのでコード/対応表はそこに書かず、同ディレクトリに新規ファイル（例 <code>robot/led_mapping.md</code> や確認用スクリプト）を追加する。PCで書いて push → Pi で <code>git pull</code> して実行（CLAUDE.md）。</li><li>開発フロー：main直push禁止 → ブランチ(feature/◯◯)でPR、1 PR=1 Issue目安、マージはPM承認後Squash（AGENTS.md）。対応表のPRもこの流れでPM(水谷)承認を得る。</li><li>関連Issue：ソフト側の「LED点灯（呼んだ段を光らせる）」Issue（このIssueの対応表とハードを使う側）。要件 F-10 の土台がこのIssue。</li><li>Pi5×NeoPixel：Pi5Neo https://github.com/vanshksingh/Pi5Neo ／ Raspberry Pi 公式フォーラム https://forums.raspberrypi.com/ 。配線一般：Adafruit Überguide https://learn.adafruit.com/adafruit-neopixel-uberguide/best-practices （※Adafruit『NeoPixels on Raspberry Pi』は旧Pi向け）。Pi GPIO：https://www.raspberrypi.com/documentation/computers/raspberry-pi.html</li><li>環境変数キーは <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> が正。<code>.env.local</code> は各自手作り。詳しくは同フォルダ 環境構築ガイド.html（アプリ側の話だが共通の前提として）。</li></ul>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

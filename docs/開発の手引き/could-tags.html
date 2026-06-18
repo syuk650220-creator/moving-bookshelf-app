@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>タグ付け｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero could">
+    <h1>タグ付け（S-2 / S-3 / S-7）</h1>
+    <p>本に自由なタグ（例: 機械学習・論文・卒研）を付けて、表示・絞り込みできるようにする（要件 C-02）。</p>
+    <div class="badges">
+      <span class="badge">担当：アプリ</span>
+      <span class="badge">余力で</span>
+      <span class="badge">優先 ★☆☆</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill">画面 S-2 / S-3 / S-7</span>
+    <span class="pill role">担当：アプリ</span>
+    <span class="pill sprint">余力で</span>
+    <span class="pill prio">優先 ★☆☆</span>
+    <span class="pill lang">TypeScript</span>
+    <span class="pill lang">React</span>
+    <span class="pill lang">Supabase JS</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p><strong>ゴール:</strong> 本に自由なタグを付けられるようにし、本詳細でタグを<strong>表示</strong>、検索画面でタグによる<strong>絞り込み</strong>ができるようにする（要件 <strong>C-02</strong>）。</p>
+  <p>タイトルや著者だけでは「機械学習の本」「卒研で使った本」みたいな探し方ができない。<code>books.tags</code>（<code>text[]</code> = 文字列の配列カラム）を使うと、1冊の本に複数のラベルを自由に付けられて、後から「このタグの本」とまとめて探せる。</p>
+  <p>スキーマ上は最初からタグ用の列が用意されている（<code>supabase/schema.sql</code> の <code>books.tags text[] not null default '{}'</code>）。だからDBの変更は不要で、アプリ側で『付ける・見せる・絞る』の3つを足すのがこのIssue。</p>
+  <div class="callout study"><span class="label">COULD（余力で）</span><p>これは MUST/SHOULD の後にやる『余裕があれば』機能。完璧を目指さず、まず『1個のタグで絞り込めた』を最小ゴールにすると進めやすい。表記ゆれ対策などの凝った正規化は後回しでOK。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li>本にタグを付けて保存できる（保存先は books.tags）→ 動作確認の手順1で確認</li><li>本詳細（app/books/[id]/page.tsx）でその本のタグが表示される → 動作確認の手順2で確認</li><li>検索画面（app/search/page.tsx）でタグを指定すると、そのタグを持つ本だけに絞り込める → 動作確認の手順3で確認</li><li>タグの前後の空白が除かれている（『 AI 』を入れても『AI』として保存される）→ 動作確認の手順4で確認</li><li>空文字（空白だけ）のタグは保存されない → 動作確認の手順4で確認</li><li>同じタグが重複して入らない（『AI』を2回足しても1個）→ 動作確認の手順4で確認</li><li>×などでタグを1個外して保存すると、その本のタグだけが減る（本そのものは消えない）→ 動作確認の手順5で確認</li></ul>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <div class="callout warn"><span class="label">前提（先に読む）</span><p>この機能は《本登録 S-3》の保存処理(insert)、または本を編集して保存する処理(update)が先に動いていることが前提。今の register / books/[id] / search はどれも静的な雛形で、まだ保存処理もフォームも無い（自分の目で各 page.tsx を開いて確認した上で着手すること）。保存処理がまだ無ければ、(A)本登録Issueの担当と連携して insert に乗せる か、(B)自分で『既存の本を編集して保存(update)』する小さい画面/処理から始める、のどちらかを選ぶ。</p></div>
+  <ol class="steps"><li><span class="st-title">現状を自分の目で確認する</span><div class="st-detail">app/register/page.tsx・app/books/[id]/page.tsx・app/search/page.tsx・app/page.tsx を開く。どれも今は文章だけの雛形。『どこに保存処理があるか』ではなく『どこに保存処理をこれから足すか』を決めるのが最初の一歩。</div></li><li><span class="st-title">Supabase に練習用のタグを直接入れて、表示から作る</span><div class="st-detail">いきなり入力UIを作らず、まず Supabase の SQL Editor で既存の本に tags を入れてみる（下のSQL例）。これで『DBに入ったタグをアプリで読んで表示する』だけに集中できる。</div></li><li><span class="st-title">本詳細でタグを表示する</span><div class="st-detail">app/books/[id]/page.tsx で、その本の tags（string[] で返ってくる）をループして表示する。まずは「読んで見せる」だけ。data fetching の現行の書き方は同梱docsで確認（下の調べるセクション参照）。</div></li><li><span class="st-title">タグ入力UIを作る（付ける）</span><div class="st-detail">テキスト入力＋『追加』で配列に足し、各タグ横の×で外す『チップ入力』を作る。useState で『今の本のタグ配列』を持ち、追加=新しい配列を作って set、×で消す=その要素を除いた新しい配列を作って set。useState や onClick を使うコンポーネントには 'use client' が要る（理由は調べるセクション）。</div></li><li><span class="st-title">保存する（insert か update を選ぶ）</span><div class="st-detail">前提で選んだ方に乗せる。新規登録時は insert の値に tags を含める。既存の本の編集時は、その本の tags 列を『組み立てた新しい配列でまるごと上書き(update)』する。×で消した結果も『減った配列で上書き』。部分更新ではなく毎回まるごと差し替えが基本動作。</div></li><li><span class="st-title">保存の直前に正規化する</span><div class="st-detail">保存する配列を作るときに必ず通す処理: 各タグを trim（前後の空白除去）→ 空文字を除外 → 重複を除外。この3つだけまず確実に。表記ゆれ統一（小文字化など）は余力で。</div></li><li><span class="st-title">検索画面でタグ絞り込みを足す</span><div class="st-detail">app/search/page.tsx で、選んだタグを使って Supabase の select に絞り込み条件を付ける。1個のタグで絞れたら成功。複数タグは contains / overlaps の違いを理解してから（調べるセクション参照）。</div></li></ol>
+  <div class="callout tip"><span class="label">表示対象の範囲（一覧について）</span><p>『一覧』はトップ app/page.tsx（S-1 本一覧）を指すが、これも今は雛形で他Issueの範囲。一覧側のタグ表示は対象外でOK。このIsseでは まず本詳細(app/books/[id]) でのタグ表示を確実にすれば Done を満たせる。一覧が実装済みなら余力で同じ表示を足す。</p></div>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <ul class="research"><li><div class="r-topic">配列カラム text[] にデータを入れる／更新する方法</div><div class="r-why">tags は普通の文字列カラムではなく配列。JS側では string[]（文字列の配列）を渡す。一番のつまずきは『タグの追加/削除のたびに、その本の現在のtags全体を新しい配列に組み立て直して、tags列をまるごと上書きupdateする』という考え方。1個だけ足す/消す部分更新ではない。これが分かると後述『タグを消したつもりが消えない』も防げる。supabase-js v2 では select した text[] はそのまま JS の string[] で返るので、表示・編集での型の不安は少ない。</div><div class="r-where">Supabase JS の update/insert: https://supabase.com/docs/reference/javascript/update と https://supabase.com/docs/reference/javascript/insert / 配列カラムの考え方は schema.sql の books.tags の定義も合わせて読む。</div></li><li><div class="r-topic">タグでの絞り込み: contains と overlaps の違い</div><div class="r-why">PostgREST/supabase-js には配列用の絞り込みがある。contains（cs / @&gt;）は『指定したタグを“すべて”含む』(AND的)、overlaps（ov / &amp;&amp;）は『指定したタグの“どれか”を含む』(OR的)。重要: この差が出るのは複数タグを同時に指定したときだけで、タグ1個なら両者は同じ結果になる。まず1個で動かしてから複数の挙動を試すと混乱しない。</div><div class="r-where">Supabase JS フィルタ: https://supabase.com/docs/reference/javascript/select の Filtering（contains / overlaps の項）。</div></li><li><div class="r-topic">タグ入力UI（チップ入力）と 'use client'</div><div class="r-why">入力して配列に足す・×で消す、という操作は useState と onClick が必要。Next.js 16 では state やイベントを使うコンポーネントには 'use client' 宣言が要る。なぜサーバー/クライアントを分けるのか、どこに 'use client' を書くのかを現行の書き方で確認する（学習データと挙動が違う可能性があるので必ず同梱docsを見る）。</div><div class="r-where">node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md と node_modules/next/dist/docs/03-api-reference/01-directives/use-client.md。</div></li><li><div class="r-topic">Next.js 16 でのデータ取得・更新の現行の書き方</div><div class="r-why">タグの表示＝本データの取得、保存＝更新。このNext.jsは16系で、取得/更新の書き方が学習データと違う可能性がある。答えのコードを写すのではなく、現行ガイドのパターンを読んで自分で組み立てる。</div><div class="r-where">取得: node_modules/next/dist/docs/01-app/01-getting-started/06-fetching-data.md / 更新: 07-mutating-data.md / DB接続は lib/supabaseClient.ts の supabase を import して使う。</div></li><li><div class="r-topic">タグの正規化（trim・空除外・重複除外、表記ゆれ）</div><div class="r-why">正規化は『保存する配列を作る瞬間』に効かせる。最小ラインは trim＋空文字除外＋重複除外の3つだけ。表記ゆれ統一（toLowerCase など）は、(1)英字にしか効かず日本語タグ（機械学習/論文 等）や全角半角ゆれ(AI/ＡＩ)には無力、(2)小文字化して“保存値そのもの”を変えると画面表示まで小文字になる副作用がある。やるなら『保存値を変えるのか、比較だけ小文字にするのか』を決めてから。迷ったら後回しでOK。</div><div class="r-where">JS の配列/文字列処理（Array の filter / new Set による重複除去 / String.trim）を MDN で確認。COULDなので最小ラインで割り切る。</div></li><li><div class="r-topic">本一覧画面がどれかの確認と、本登録の保存処理の依存</div><div class="r-why">『一覧でタグ表示』が指す画面の特定と、タグ保存が乗る土台(insert/update)の有無を最初に確かめないと着手位置を間違える。app配下は page.tsx / register / search / books/[id] / history / login のみで、トップ app/page.tsx が S-1 本一覧、いずれも現状は雛形。これを踏まえ、本詳細(books/[id])の表示を主目標にし、保存は本登録Issueの担当と前提をすり合わせる。</div><div class="r-where">app/page.tsx（S-1 本一覧）・app/books/[id]/page.tsx・app/register/page.tsx・app/search/page.tsx を実際に開いて現状確認。要件は基本設計の F-02 / C-02、関連Issue『本登録(S-3)』。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <div class="callout warn"><span class="label">削除の操作を先に覚える</span><p>×で消す＝その本のtags配列から『その要素を除いた新しい配列』を作って update する（本そのものは消さない）。タグの追加も削除も毎回『新しい配列を作ってまるごと上書き』が基本。下の表はその再確認。</p></div>
+  <table><tr><th>症状・勘違い</th><th>原因</th><th>対処</th></tr><tr><td>タグを消したつもりが消えない</td><td>配列の一部だけ消そうとしている／古い配列のまま update している</td><td>消したいタグを除いた新しい配列を作り、その配列で tags 列をまるごと上書き update する</td></tr><tr><td>タグが文字列としてくっつく（例: "AI,論文"が1個に）</td><td>配列ではなく1本の文字列として入れている</td><td>tags は text[]。string[]（要素ごとに分かれた配列）で渡す</td></tr><tr><td>空白だけのタグや重複が保存される</td><td>正規化を保存直前に通していない</td><td>保存配列を作るときに trim→空文字除外→重複除外を必ず通す</td></tr><tr><td>onClick / useState でエラーになる</td><td>'use client' が無い</td><td>そのコンポーネント先頭に 'use client' を書く（use-client.md で確認）</td></tr><tr><td>日本語タグの表記ゆれが揃わない</td><td>toLowerCase は英字専用で日本語/全角半角には効かない</td><td>COULDなので無理に揃えない。最小は trim＋重複除外。統一は余力で</td></tr><tr><td>Enterで同じタグが2回入る（日本語入力中）</td><td>IME変換確定のEnterと追加のEnterが両方発火している</td><td>重複除外があれば実害は減る。気になれば変換確定中のEnterを追加扱いしない工夫を（余力で）</td></tr><tr><td>select した tags の型が不安</td><td>text[] が何で返るか分からない</td><td>supabase-js v2 では string[] でそのまま返る。配列としてループ表示してよい</td></tr></table>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p>まず <code>package.json</code> の <code>scripts</code> を開いて dev スクリプトを確認してから起動する（このプロジェクトでは dev= <code>next dev</code> なので <code>npm run dev</code> でOK）。</p>
+  <ul class="checklist"><li>手順1: タグを付けて保存 → Supabase の Table Editor で対象の本の tags 列に配列として入っていること（Doneの1項目目に対応）</li><li>手順2: 本詳細(/books/[id]) を開くと、その本のタグが並んで表示されること（Doneの2項目目に対応）</li><li>手順3: 検索画面でタグを1個指定 → そのタグを持つ本だけに絞り込まれること（Doneの3項目目に対応）</li><li>手順4: 『 AI 』『AI』『（空白だけ）』を入れて保存 → tags は『AI』1個だけ、空白タグは入っていないこと（Doneの4・5・6項目目に対応）</li><li>手順5: タグを1個×で外して保存 → その本のタグだけが1個減り、本そのものや他の本は消えていないこと（Doneの7項目目に対応）</li></ul>
+  <div class="callout ok"><span class="label">OKの目安</span><p>『1個のタグで本を絞り込めて、本詳細にタグが見えて、重複・空白・前後空白が入らない』までできていれば COULD として十分。</p></div>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <div class="callout study"><span class="label">答えでなく導きを求める</span><p>AIには完成コードを書かせず、考え方と調べ場所を聞く。このNext.jsは16系で挙動が違うことがあるので、必ず node_modules/next/dist/docs/ の現行ガイドと突き合わせる。</p></div>
+  <pre><code>あなたは私の学習を助けるコーチです。答えの完成コードは書かないでください。
+代わりに、考え方・つまずきやすい点・どのドキュメントのどこを読むべきかを示してください。
+
+状況: Next.js 16(App Router) + React + Supabase JS のプロジェクト。
+Supabaseの books.tags は text[]（文字列の配列）。
+やりたいこと: 本にタグを付けて保存、本詳細で表示、検索でタグ絞り込み(要件C-02)。
+DBは lib/supabaseClient.ts の supabase を import して使う。
+
+質問:
+1. text[] カラムを更新するとき『配列をまるごと上書きする』とはどういう操作か、考え方だけ説明して。
+2. タグ追加/×削除のチップ入力で、useState の状態をどう持つと素直か（コードでなく方針で）。
+3. 検索の contains と overlaps の違いと、タグ1個のときに同じ結果になる理由を説明して。
+4. 保存直前の正規化(trim・空除外・重複除外)はどの順で何を使うと良いか、方針だけ。
+各回答で、確認すべき同梱docsのパスかSupabase docsのURLも教えて。</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>text[]（配列カラム）</td><td>1つのマスに複数の文字列を入れられる列。JS では string[] として扱う</td></tr><tr><td>正規化</td><td>保存前にデータを揃える処理。ここでは trim・空除外・重複除外のこと</td></tr><tr><td>まるごと上書き update</td><td>配列の一部だけ直すのでなく、新しい配列を作って列ごと差し替える更新の仕方</td></tr><tr><td>contains（cs / @&gt;）</td><td>指定タグを『すべて』含む本を探す（AND的）。※差が出るのは複数タグ指定時だけ。1個なら overlaps と同結果</td></tr><tr><td>overlaps（ov / &amp;&amp;）</td><td>指定タグの『どれか』を含む本を探す（OR的）。※1個なら contains と同結果</td></tr><tr><td>チップ入力</td><td>入力したタグを小さなラベル(チップ)で並べ、×で消せるUI</td></tr><tr><td>'use client'</td><td>useStateやonClickを使うコンポーネントの先頭に書く宣言（Next.js 16）</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>要件: C-02（タグ付与・表示・絞り込み）/ 一覧表示は F-02。基本設計のスキーマ books.tags(text[]) を参照</li><li>編集対象ファイル: app/books/[id]/page.tsx（表示・S-2）/ app/search/page.tsx（絞り込み・S-7）/ app/register/page.tsx（保存・S-3）/ DB接続は lib/supabaseClient.ts</li><li>関連Issue: 『本登録(S-3)』の保存処理(insert)が前提。着手前に担当と insert/update のどちらが先に存在するかをすり合わせる</li><li>関連Issue: 『本一覧(S-1, app/page.tsx)』『検索(S-7)』— タグ表示/絞り込みの土台になる画面</li><li>Supabase: select https://supabase.com/docs/reference/javascript/select / update https://supabase.com/docs/reference/javascript/update</li><li>Next.js 現行ガイド: node_modules/next/dist/docs/01-app/01-getting-started/06-fetching-data.md・07-mutating-data.md・05-server-and-client-components.md</li><li>環境変数・起動でつまずいたら 同フォルダ『環境構築ガイド.html』。キー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正</li></ul>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

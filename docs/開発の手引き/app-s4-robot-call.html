@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ロボ呼出（本＋席を選んで呼ぶ）｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero ">
+    <h1>ロボ呼出（本＋席を選んで呼ぶ）（S-4（S-2 本詳細から開く想定））</h1>
+    <p>本と席（stop_points）を選んで「呼ぶ」を押すと robot_calls に1行 insert（status=queued）。今並んでいる呼出キュー（queued/moving）も画面に出す。</p>
+    <div class="badges">
+      <span class="badge">担当：アプリA</span>
+      <span class="badge">Sprint 2</span>
+      <span class="badge">優先 ★★★</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill">画面 S-4（S-2 本詳細から開く想定）</span>
+    <span class="pill role">担当：アプリA</span>
+    <span class="pill sprint">Sprint 2</span>
+    <span class="pill prio">優先 ★★★</span>
+    <span class="pill lang">TypeScript</span>
+    <span class="pill lang">React</span>
+    <span class="pill lang">Next.js</span>
+    <span class="pill lang">Supabase JS</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p>ゴールは、<strong>「この本を、この席へ呼ぶ」</strong>という操作を作ること。利用者が本と席を選んで「呼ぶ」を押すと、<code>robot_calls</code> テーブルに1行追加され（<code>status='queued'</code>）、ロボへの呼び出し依頼になる。さらに、今並んでいる呼出（<code>queued</code>/<code>moving</code>）の一覧も画面に出す（F-09）。</p>
+  <div class="callout study"><span class="label">設計の肝（疎結合 / アプリ⇄ロボはDB経由）</span><p>アプリはロボと直接通信しない。アプリは <code>robot_calls</code> に<strong>insert（行を足す）だけ</strong>、<code>robot_status</code> を読むだけ。ロボ側が <code>robot_calls</code> を購読して動き、<code>robot_status</code> を更新する。だから今回作るのは「<code>robot_calls</code> に1行入れる＋キューを読む」側だけでよい。</p></div>
+  <div class="callout warn"><span class="label">S-2（本詳細）は今スタブ。book_idは自分で用意して始める</span><p>本来この画面は S-2（<code>app/books/[id]/page.tsx</code>）から <code>book_id</code> を受け取って開く想定。でも S-2 は現状『担当者がこの画面を実装します』だけのスタブで、まだ <code>book_id</code> を渡せない。なので<strong>最初の動作確認では book_id を自分で用意して進める</strong>（やり方はステップ1）。S-2 からの受け渡し（URLクエリ/props）は別Issue・後回しでOK。</p></div>
+  <p><strong>置き場所（最初の一歩）</strong>: まずは専用ページ <code>app/robot-call/page.tsx</code> を新規に作り、ここ単体で「席を選ぶ→呼ぶ→キューに出る」を完成させる。S-2 から開くモーダル/受け渡しは、動いてから後で繋げばよい。</p>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li><code>app/robot-call/page.tsx</code>（クライアントコンポーネント）を作り、画面が表示できている</li><li>席（<code>stop_points</code>）を <code>select</code> してリスト/ドロップダウンで選べる（先にシードSQLで仮の席を入れておく・ステップ2参照）</li><li>本（<code>book_id</code>）が決まっている（当面は Table Editor からコピーした実在の id を使う・ステップ1参照）</li><li>本と席の両方が選ばれるまで「呼ぶ」ボタンは押せない（無効）／揃ったら押せる</li><li>「呼ぶ」で <code>robot_calls</code> に1行 insert される（<code>book_id</code>, <code>seat_id</code>, <code>status='queued'</code>, <code>requested_by</code>）</li><li><code>requested_by</code> は今は仮の固定文字列（例 <code>"guest"</code> や自分の名前）でOK（ログイン実装後に置き換え）</li><li>現在の呼出キュー（<code>status</code> が <code>queued</code> か <code>moving</code>）を <code>created_at</code> 昇順で一覧表示できる（F-09）</li><li>insert に成功したらキュー一覧に反映される（再 select するか Realtime で）</li><li>失敗時（未選択や不正値）はエラーが画面で分かる（一度わざと失敗させて確認済み・動作確認参照）</li></ul>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">1. まず book_id を1つ手に入れる（S-2待ちにしない）</span><div class="st-detail">Supabase の Table Editor → books を開き、実在する本の id（uuid）を1つコピーする。books が空なら、まず適当な本を1行 insert（title と shelf_level は必須）。当面はこの id を、画面上のテキスト入力に貼るか、コードの定数として持っておく。これで book_id 問題は解決。S-2 からの受け渡しは後回し。</div></li><li><span class="st-title">2. 先に席データを入れてから席を select する</span><div class="st-detail">stop_points が空だと席一覧は当然カラ。まず『動作確認のしかた』のシードSQLを Supabase の SQL Editor で実行して仮の席（例: 1番席/2番席）を入れる。そのうえで <code>lib/supabaseClient.ts</code> の <code>supabase</code> を import し、<code>stop_points</code> を select（id, label を取得）して画面にドロップダウン/ボタンで出す。</div></li><li><span class="st-title">3. 「選んだ席」を state で覚える</span><div class="st-detail">React の <code>useState</code> で選択中の seat_id を保持する。ドロップダウンなら <code>&lt;select&gt;</code> の <code>onChange</code>、ボタン並びなら各ボタンの <code>onClick</code> で state を更新。本（book_id）と席（seat_id）が両方そろうまで「呼ぶ」ボタンを無効（disabled）にする。</div></li><li><span class="st-title">4. 「呼ぶ」で robot_calls に insert</span><div class="st-detail">ボタンを押したら <code>robot_calls</code> に insert する。入れる中身は <code>{ book_id, seat_id, status:'queued', requested_by }</code>。<code>requested_by</code> は今は固定文字列（例 "guest" や自分の名前）でOK。<code>status</code> は省略してもDB側の既定で 'queued' が入るが、学習のため明示してよい。</div></li><li><span class="st-title">5. 呼出キューを取得して表示（F-09）</span><div class="st-detail"><code>robot_calls</code> を select し、<code>status</code> が <code>queued</code> または <code>moving</code> の行だけに絞り、<code>created_at</code> 昇順で並べて一覧表示する。insert が成功したら、この select をもう一度呼んで一覧を更新する（一番手堅い方法）。</div></li><li><span class="st-title">6.（任意）Realtime で自動更新にする</span><div class="st-detail">余裕があれば、再 select の代わりに Supabase Realtime で <code>robot_calls</code> を購読し、行が増えたら自動でキューを更新する。ただし事前設定が必要（『つまずき』『調べること』参照）。まずは5の手動再 select で完成させてから挑戦するのが安全。</div></li><li><span class="st-title">7.（後で）S-2 と繋ぐ</span><div class="st-detail">専用ページで動いたら、S-2（本詳細）から book_id を渡してこの操作を開く形に発展させる。S-2 が未実装の今は無理にやらず、別Issue/後回しでよい。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <div class="callout study"><span class="label">ここが核心</span><p>答えのコードを写すのではなく、下の『何を/なぜ/どこで』を自分でたどって書くこと。AIには答えでなく道案内を頼む（AIコーチの使い方参照）。</p></div>
+  <ul class="research"><li><div class="r-topic">stop_points を select して席選択UIを作る</div><div class="r-why">席を選ばせるには、まずDBから席の一覧（id, label）を取ってくる必要がある。これがキュー insert の seat_id の元になる。</div><div class="r-where">Supabase JS の select 公式: https://supabase.com/docs/reference/javascript/select （.select('id,label') の書き方・戻り値の data/error）。座標やラベルの列名は supabase/schema.sql の stop_points（id, label, x, y, theta）で確認。</div></li><li><div class="r-topic">robot_calls に insert する（book_id, seat_id, status, requested_by）</div><div class="r-why">このIssューの本体。アプリ→ロボは『robot_calls に1行足す』だけで成立する（疎結合）。列名・値を間違えると入らない。</div><div class="r-where">Supabase JS の insert 公式: https://supabase.com/docs/reference/javascript/insert 。入れる列の正解は supabase/schema.sql の robot_calls（seat_id は int で stop_points.id、book_id は uuid で books.id、status は queued/moving/arrived/done/canceled のいずれか、requested_by は text・NULL可・FK無し）。</div></li><li><div class="r-topic">選んだ席を state に保存し、本＋席が揃うまでボタンを無効にする</div><div class="r-why">React 未経験だと『クリックや選択でデータを覚える』『揃うまでボタンを押せなくする』のやり方で必ず詰まる。フォーム入力と state を繋ぐのが今回の山。</div><div class="r-where">useState: https://react.dev/learn/state-a-components-memory 。イベントで state を更新: https://react.dev/learn/responding-to-events 。&lt;select&gt; など制御コンポーネント入門: https://react.dev/learn/reacting-to-input-with-state 。disabled は React の &lt;button&gt; に disabled 属性を渡すだけ（条件は『本と席が両方ある』）。</div></li><li><div class="r-topic">キューを status で絞り created_at 昇順で取得（F-09）</div><div class="r-why">『今並んでいる呼出』だけ見せたい＝queued/moving に絞り、古い順に並べる。絞り込みと並べ替えの書き方を知る必要がある。</div><div class="r-where">Supabase JS のフィルタ（.in('status',[...])）と並べ替え（.order('created_at', { ascending: true })）: https://supabase.com/docs/reference/javascript/select と https://supabase.com/docs/reference/javascript/order 。スキーマの idx_calls_queue も created_at 順なので昇順で正しい。</div></li><li><div class="r-topic">データ更新時の今どきの作法（mutating data）を知る</div><div class="r-why">Next.js 16 では『データを変える操作』の流儀（Server Actions など）が学習データと違う可能性。今の正解の形を一度見ておく。</div><div class="r-where">node_modules/next/dist/docs/ の 01-app/.../07-mutating-data.md を開く。<strong>ただし</strong>: このIssューは学習目的で、まず<strong>クライアント側（'use client' + supabase JS で insert/再select）で完結させてよい</strong>。07-mutating-data.md は Server Actions 中心だが『今の流儀を知る』ための参考であって、必ず Server Actions に置き換える必要はない。どちらでやるか迷ったら、まずクライアント側で動かす。</div></li><li><div class="r-topic">'use client'（クライアントコンポーネント）</div><div class="r-why">useState・onClick・onChange・ブラウザでの supabase 呼び出しはクライアント側でしか動かない。ファイル先頭の宣言が要る。</div><div class="r-where">node_modules/next/dist/docs/ の 03-api-reference/01-directives/use-client.md と 01-app/.../05-server-and-client-components.md 。</div></li><li><div class="r-topic">（任意）Realtime で呼出キューを自動更新</div><div class="r-why">他の人が呼んだ呼出も、リロードせず一覧に出せると気持ちいい。F-09 の発展。</div><div class="r-where">Supabase Realtime: https://supabase.com/docs/guides/realtime 。<strong>重要な前提</strong>: 対象テーブル robot_calls を supabase_realtime パブリケーションに追加しないとイベントが一切飛ばない（Dashboard → Database → Replication で robot_calls を有効化）。コードを書くだけでは届かない、最頻出のつまずき。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <table><tr><th>症状・勘違い</th><th>原因と対処</th></tr><tr><td>insert で book_id を渡せず詰まる</td><td>S-2 がスタブで book_id をくれないのが原因。最初は Table Editor の books から実在 id（uuid）をコピーして使う（ステップ1）。S-2 連携は別Issue・後回しでよい。</td></tr><tr><td>席一覧が空っぽ</td><td>stop_points にデータが無いだけ。先に『動作確認』のシードSQLを SQL Editor で実行してから select する（順番が大事・ステップ2）。</td></tr><tr><td>robot_status や stop_points に insert しようとしてエラー</td><td>この2つには insert ポリシーが無く、アプリ（匿名キー）からは追加できない仕様。アプリが insert するのは robot_calls だけ。</td></tr><tr><td>でもシードSQLでは stop_points に入った？矛盾では？</td><td>矛盾ではない。SQL Editor からの insert は管理者権限で実行されRLSを通り抜けて入る。アプリ（匿名キー）からは RLS に弾かれて入らない、という違い。</td></tr><tr><td>insert は通った気がするのに data が空/エラーが分からない</td><td>supabase の戻り値は { data, error }。error を必ず受けて画面に出す。何も表示しないと成功も失敗も分からない。</td></tr><tr><td>Realtime を購読したのに何も来ない</td><td>robot_calls が supabase_realtime パブリケーションに未追加なのが定番原因。Dashboard → Database → Replication で robot_calls を有効化する。コードだけでは届かない。</td></tr><tr><td>onChange/onClick が動かない・useState が使えない</td><td>ファイル先頭に 'use client' が無い／サーバーコンポーネントのまま書いている。クライアント宣言を確認。</td></tr></table>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p><strong>先に席の仮データを入れる</strong>。Supabase の SQL Editor で次を実行（席は本来ハード/結合側が決めるが、開発中の仮データとして自分で入れてよい）:</p>
+  <pre><code>-- 開発用：仮の席（停車ポイント）を入れる
+insert into stop_points (id, label, x, y, theta) values
+  (1, '1番席', 0.0, 0.0, 0.0),
+  (2, '2番席', 1.5, 0.0, 0.0),
+  (3, '窓側席', 1.5, 2.0, 0.0)
+on conflict (id) do nothing;</code></pre>
+  <ul class="checklist"><li>ページを開くと席のドロップダウン/ボタンに『1番席/2番席/窓側席』が出る</li><li>本未選択 or 席未選択のとき「呼ぶ」が押せない（disabled）。両方そろうと押せる</li><li>「呼ぶ」を押したあと、Supabase の Table Editor → robot_calls に1行増えている（book_id, seat_id, status=queued, requested_by が入っている）</li><li>画面のキュー一覧（queued/moving）にその呼出が出る（古い順）</li><li>【失敗も一度確認】わざと未選択のまま、または存在しない seat_id（例 999）で呼んでみて、エラー表示がちゃんと出ることを確認する（999 は stop_points に無いので外部キー違反になる）</li><li>【任意・Realtime】robot_calls の Replication を有効化したうえで、Table Editor から手動 insert した行が、リロードなしで一覧に出れば成功</li></ul>
+  <div class="callout tip"><span class="label">失敗パスも必ず一度試す</span><p>成功した時しか試さないと『エラー表示が本当に出るか』が未検証のまま Done にしがち。わざと失敗させてエラーが画面で分かることを1回確認しておく。</p></div>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <div class="callout study"><span class="label">答えでなく道案内を頼む</span><p>AIに完成コードを書かせると学べない。下のプロンプトのように『考え方・調べ場所・チェック観点』を聞く。</p></div>
+  <pre><code>あなたは初心者の私を導くコーチです。完成コードは書かず、考え方・手順・調べる場所・確認の観点だけ教えてください。
+
+状況: Next.js 16(App Router) + React + TypeScript + Supabase JS のアプリで、
+「本(book_id)と席(seat_id)を選んで『呼ぶ』を押すと robot_calls に1行 insert(status='queued')し、
+queued/moving のキューを created_at 昇順で一覧表示する」画面 app/robot-call/page.tsx を作っています。
+supabase は lib/supabaseClient.ts の supabase を import します。S-2(本詳細)はまだ未実装なので、
+book_id は当面 Table Editor からコピーした実在 uuid を使います。
+
+聞きたいこと:
+1) このページは 'use client' が必要？なぜ？確認すべき公式docsは？
+2) 選んだ席を state で覚え、本と席が揃うまでボタンを無効にする設計の考え方は？
+3) robot_calls への insert と、status で絞った昇順 select、それぞれ調べるべき Supabase JS のページは？
+4) insert 成功/失敗をユーザーに分かるように出すための観点は？
+5) Realtime を後で足すなら、コード以外に必要な事前設定は何？
+
+各回答で「自分で確認すべき公式docsのパス/URL」を必ず添えてください。コードは書かないで。</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>robot_calls</td><td>ロボへの呼び出し依頼を1件1行で貯めるテーブル。アプリはここに insert する。</td></tr><tr><td>seat_id</td><td>呼ぶ先の席。stop_points.id（int）を指す。robot_calls の列名は seat_id。</td></tr><tr><td>book_id</td><td>呼ぶ本。books.id（uuid）を指す。</td></tr><tr><td>status（呼出）</td><td>呼出の進行状態。queued→moving→arrived→done（または canceled）。新規は queued。</td></tr><tr><td>queue（キュー）</td><td>順番待ちの列。ここでは status が queued/moving の呼出たち＝『今並んでいる呼出』。</td></tr><tr><td>queued</td><td>並んだばかり・まだ動いていない状態。insert 時の初期値。</td></tr><tr><td>stop_points</td><td>席（停車ポイント）の座標表。アプリは select するだけ（insert 不可）。</td></tr><tr><td>requested_by</td><td>誰が呼んだか（text・NULL可）。今は仮文字列でOK、ログイン後に置き換え。</td></tr><tr><td>疎結合</td><td>アプリとロボが直接つながらず、DBのテーブル越しに間接連携する設計。</td></tr><tr><td>RLS</td><td>行レベルセキュリティ。テーブルごとに誰が select/insert できるかを決める仕組み。</td></tr><tr><td>Realtime（任意）</td><td>DBの変化をリロードなしで受け取る仕組み。対象テーブルの有効化が前提。</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>要件: F-08（本＋席を選んで呼ぶ）, F-09（呼出キューが見える）。基本設計の操作一覧（呼出の起点は S-2 本詳細）。</li><li>関連Issue: 『本詳細・借りる/返す（S-2）』＝この呼出の起点になる予定（現状スタブ・連携は後で）／『ロボの現在地・状態を表示（S-1）』＝robot_status を読む側／ロボ側の『robot_calls を購読して動く』Issue（呼出を実際に処理する側）。</li><li>環境変数・Supabase接続でつまずいたら、同フォルダの『環境構築ガイド.html』を参照（キーは NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正）。</li><li>DBの列名・値の正解は supabase/schema.sql を見る（推測しない）。</li></ul>
+  <div class="callout ok"><span class="label">このIssュー単体で完成できる</span><p>S-2 もロボ側も未実装でOK。book_id は手で用意し、状態確認は Supabase の手入力で代用できる。まず専用ページで『選ぶ→呼ぶ→キューに出る』を完成させよう。</p></div>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

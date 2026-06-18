@@ -1,0 +1,309 @@
+{
+  "id": "could-s7-search",
+  "group": "COULD（余力で）",
+  "order": 1,
+  "taskName": "検索（タイトル／著者で絞り込み）",
+  "screen": "S-7",
+  "role": "アプリ",
+  "sprint": "余力で",
+  "priority": "★☆☆",
+  "status": "",
+  "category": "COULD",
+  "stack": [
+    "TypeScript",
+    "React",
+    "Next.js",
+    "Supabase JS"
+  ],
+  "oneLineGoal": "検索ボックスに打った文字で、タイトル/著者から本を絞り込んで一覧表示する（今回はタグ検索は対象外）。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "検索ボックスに入力した文字で、本を **タイトル** と **著者** から絞り込んで一覧表示する画面 (S-7) を作ります。編集ファイルは `app/search/page.tsx` の1枚だけです。"
+        },
+        {
+          "type": "p",
+          "text": "本棚に入る本はせいぜい数冊〜数十冊。利用者が「あの本どこ？」とすぐ探せるようにするのがゴールです。検索はあれば便利だが無くても他機能は回る、という位置づけの **COULD（余力で）** なので、優先度は低め・後回し可です。"
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "label": "スコープ（ここ大事）",
+          "text": "画面の正式名は『検索・タグ (S-7)』で、`app/search/page.tsx` のプレースホルダにも『タイトル/著者/タグで絞り込み』と書いてあります。ただし **今回 (要件 C-01) で作るのは title / author の2つだけ**。タグ (tags) 検索は同じ S-7 の中でも別タスク/将来対応として今回は扱いません。理由は下の用語ミニ辞典・研究セクション参照（tags は配列型で検索の書き方が違うため）。"
+        }
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {
+          "type": "checklist",
+          "items": [
+            "`app/search/page.tsx` に検索ボックス（テキスト入力）と結果一覧がある",
+            "入力した文字に応じて、タイトル または 著者 に その文字を含む本だけが一覧に出る（部分一致）",
+            "部分一致の例: タイトル『アルゴリズム入門』があるとき、検索ボックスに『ごり』と打つとヒットする（『アルゴリズム』の中の『ごり』に一致）",
+            "英字タイトルなら大文字小文字を区別しない。例: タイトル『Algorithm』に対して『algo』でも『ALGO』でもヒットする",
+            "該当する本が0件のときは「該当する本がありません」のような分かるメッセージを出す（真っ白にしない）",
+            "検索ボックスを空にすると、絞り込み無し（または全件）に戻る",
+            "main へ直 push せず、`feature/search` 等のブランチ → PR → PM 承認後マージ"
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "tip",
+          "label": "debounce は任意",
+          "text": "「入力のたびに叩きすぎないようにする (debounce)」は **任意** です。無くても上の Done は満たせます。動作が重く感じたら入れる、くらいの温度感でOK。"
+        }
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {
+          "type": "steps",
+          "items": [
+            {
+              "title": "ブランチを切る",
+              "detail": "main から `feature/search` のようなブランチを作って、そこで作業します（main へ直 push 禁止）。"
+            },
+            {
+              "title": ".env.local が用意できているか確認",
+              "detail": "Supabase に接続するには `NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` の2つが .env.local に必要です。まだなら『環境構築ガイド.html』を見て自分で作成（.env.local.example は廃止）。"
+            },
+            {
+              "title": "ページをクライアントコンポーネントにする",
+              "detail": "検索ボックスは入力で状態が変わるので、ファイル先頭に `'use client'` を付け、検索語を `useState` で持ちます。まずは入力した文字がそのまま画面に出るところまで作って動作確認。"
+            },
+            {
+              "title": "Supabase から本を取得する場所を決める",
+              "detail": "データ取得は `useEffect` の中で行い、検索語(state)が変わるたびに走らせます。ここがつまずきポイント: useEffect のコールバック自体に async は付けられません。useEffect の中で async な関数を定義し、それを呼び出す形にします（考え方だけ覚えて、書き方は下のReact公式 useEffect で確認）。"
+            },
+            {
+              "title": "部分一致で絞り込むクエリを書く",
+              "detail": "supabase の `.from('books').select(...)` に、タイトルか著者のどちらかに含まれていればヒットさせる条件を付けます。大小無視の部分一致は `ilike`、『AかB どちらか』は `.or()` を使います（書き方は研究セクション参照）。"
+            },
+            {
+              "title": "結果を一覧表示する",
+              "detail": "取得した本の配列を map で並べます。現時点では共通の一覧UI部品は無い前提なので、このIssue内で最小のリスト（title・author くらい）を自分で作ってOK。凝らなくて良いです。"
+            },
+            {
+              "title": "0件・空入力の表示を整える",
+              "detail": "結果が空配列なら『該当する本がありません』を表示。検索ボックスが空のときの挙動（全件 or 何も出さない）も決めて実装。"
+            },
+            {
+              "title": "（任意）打つたびに叩きすぎないよう debounce",
+              "detail": "重さが気になるときだけ。入力が止まって少し経ってから検索を走らせる仕組みです。Done には含みません。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {
+          "type": "research",
+          "items": [
+            {
+              "topic": "クライアントコンポーネントとは（'use client' / useState）",
+              "why": "検索ボックスは入力でリアルタイムに状態が変わる。サーバーコンポーネントのままでは useState が使えないので、このページはクライアント側で動かす必要がある。",
+              "where": "node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md と 03-api-reference/01-directives/use-client.md"
+            },
+            {
+              "topic": "クライアントでの非同期データ取得をどこに置くか（useEffect の中 + async 関数）",
+              "why": "「Supabaseをいつ・どこで呼ぶか」が初心者の一番の詰まり所。useEffect のコールバックに直接 async は付けられず、中で async 関数を定義して呼ぶ／検索語が変わるたび再実行する／必要ならクリーンアップ、という型を知る必要がある。",
+              "where": "React 公式 useEffect: https://react.dev/reference/react/useEffect （Next同梱の 06-fetching-data.md は SWR や use API 中心で、この useEffect+自作fetch パターンは直接は載っていない点に注意）"
+            },
+            {
+              "topic": "Supabase で本を取得する（select と列名）",
+              "why": "books テーブルから一覧を取る基本。列名は schema 通り正確に: id, isbn, title, author, shelf_level, tags, status, created_at。",
+              "where": "Supabase JS select: https://supabase.com/docs/reference/javascript/select / 列定義は supabase/schema.sql"
+            },
+            {
+              "topic": "部分一致 ilike と OR 検索（.or の文字列フォーマット）",
+              "why": "『タイトルか著者のどちらかに含む』を1回のクエリで表現する。ilike は大小無視の部分一致(% がワイルドカード)。or は『列.演算子.値』をカンマで並べた1本の文字列を渡す独特な書き方で、ここが定番のつまずき所。",
+              "where": "ilike: https://supabase.com/docs/reference/javascript/ilike / or: https://supabase.com/docs/reference/javascript/or （or の項にある文字列フォーマット例 例: title.ilike.%word%,author.ilike.%word% をそのまま真似ること）"
+            },
+            {
+              "topic": "入力に応じた絞り込みと debounce（任意）",
+              "why": "入力のたびにDBを叩くと無駄が多い。debounce は『入力が落ち着いてから1回だけ実行』する考え方。本が数冊なら無くても十分だが、概念は知っておくと良い。",
+              "where": "概念検索: 『React debounce useEffect』で検索。まずは debounce 無し（入力ごと取得）で Done を満たし、必要なら後追いで。"
+            },
+            {
+              "topic": "結果0件の表示（条件分岐レンダリング）",
+              "why": "ヒット0件で真っ白だと『壊れた？』と誤解される。配列が空かどうかで表示を出し分ける。",
+              "where": "Reactの条件付きレンダリング: https://react.dev/learn/conditional-rendering"
+            },
+            {
+              "topic": "（将来用）text[] 型のタグ検索は ilike では効かない",
+              "why": "tags は text[]（配列）型。ilike は文字列用なので配列には使えず、配列専用フィルタ(contains / overlaps)が必要。今回は対象外だが、後続のタグ検索Issueへの橋渡しとして知っておく。",
+              "where": "contains: https://supabase.com/docs/reference/javascript/contains / overlaps: https://supabase.com/docs/reference/javascript/overlaps"
+            },
+            {
+              "topic": "設計の選択肢: 入力ごとにDB問い合わせ vs 全件取得→JS側で絞り込み",
+              "why": "本が5冊程度なら、最初に全件取得してJS側の filter で絞る方が、毎回DBを叩くより簡単で debounce も不要になる。どちらでもDoneは満たせるので、規模に合わせて選ぶ判断力を付ける。",
+              "where": "考え方の整理。全件取得は前述 select、JS側絞り込みは Array.prototype.filter / String.includes（MDN）"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {
+          "type": "table",
+          "headers": [
+            "症状",
+            "原因と対処"
+          ],
+          "rows": [
+            [
+              "何も表示されない・空っぽ",
+              ".env.local に **2つとも** 設定されているか確認。`NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` のどちらかが欠けると supabaseClient.ts の生成時に undefined になり、接続できず空表示になる（古い ANON_KEY 名は誤り）。両方そろっているか『環境構築ガイド.html』と突き合わせる。"
+            ],
+            [
+              "接続はできてるが0件しか出ない",
+              "そもそも books に行があるか SQL Editor で確認。テスト用に最低1〜2冊 insert する（次セクションの確認用データ参照）。"
+            ],
+            [
+              "use client を付けてないとエラー",
+              "useState / useEffect はクライアント専用。ファイル先頭に `'use client'` が無いとエラーになる。"
+            ],
+            [
+              "useEffect に async を付けてエラー",
+              "`useEffect(async () => ...)` は不可。useEffect の中で async 関数を定義し、それを呼ぶ形にする（研究セクションの useEffect 項参照）。"
+            ],
+            [
+              "or の書き方が分からない / 構文エラー",
+              ".or() は文字列を1つだけ渡す独特な記法。`列.演算子.値` をカンマで並べる（例: title.ilike.%kw%,author.ilike.%kw%）。公式 or ページの例の形をそのまま真似る。"
+            ],
+            [
+              "大文字小文字でヒットしたりしなかったり",
+              "大小を無視したいなら `like` ではなく `ilike` を使う（i = case-insensitive）。"
+            ],
+            [
+              "著者で検索したいのにヒットしない",
+              "author は null 可（未入力の本がある）。null の本は author 条件にはヒットしないのが正常。title 側の or 条件があるので一覧自体は出る。"
+            ],
+            [
+              "タグで検索したいのに効かない",
+              "tags は text[]（配列）型なので ilike は使えない。今回は対象外。将来やるなら contains / overlaps（研究セクション将来用の項）。"
+            ],
+            [
+              "打つたびに重い（任意対処）",
+              "入力ごとにDBを叩いているため。**任意**で debounce を入れるか、本が少数なら全件取得→JS側 filter に切り替える。Done必須ではない。"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {
+          "type": "ol",
+          "items": [
+            "`npm run dev` で開発サーバを起動し、ブラウザで `/search` を開く",
+            "検索ボックスに、テスト本のタイトルに含まれる文字を入れる → その本だけが一覧に残るか",
+            "部分一致の確認: タイトル『アルゴリズム入門』に対し『ごり』で打ってヒットするか（『ぎ』ではヒットしないので注意。『ぎ』は文字列に含まれない）",
+            "大小無視の確認: 英字タイトル『Algorithm』に対し『algo』『ALGO』どちらでもヒットするか",
+            "著者名の一部で打って、著者でもヒットするか",
+            "存在しない文字列を入れて『該当する本がありません』が出るか",
+            "検索ボックスを空に戻すと元に戻るか"
+          ]
+        },
+        {
+          "type": "callout",
+          "variant": "warn",
+          "label": "確認用データ（制約に注意）",
+          "text": "books が空だと何も出ません。SQL Editor で1〜2冊だけ insert してください。必須列は title と shelf_level。shelf_level は 1〜5 のみ、status は available か on_loan のみ（制約あり・違反すると insert 失敗）。**DELETE は仕様で誰も不可** なので、消せません。試しすぎて不要行を量産しないよう、まず1〜2冊だけにしてください。"
+        },
+        {
+          "type": "code",
+          "lang": "sql",
+          "code": "-- SQL Editor に貼る。まず1〜2冊だけ。\ninsert into books (title, author, shelf_level, status)\nvalues\n  ('アルゴリズム入門', '田中太郎', 1, 'available'),\n  ('Algorithm Design', 'Smith', 2, 'available');"
+        }
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {
+          "type": "p",
+          "text": "AIは『答えのコードを書いてもらう人』ではなく『考え方を教えてくれるコーチ』として使います。下のプロンプトはコードを丸ごと書かせず、つまずきの正体と調べ方を引き出す前置き入りです。"
+        },
+        {
+          "type": "code",
+          "lang": "text",
+          "code": "私はNext.js(App Router,16系)とSupabaseで本の検索画面(S-7)を作っている初心者です。\n完成コードは書かないでください。考え方・つまずき所・どの公式ドキュメントを見ればよいかだけ教えてください。\n\nやりたいこと:\n- app/search/page.tsx に検索ボックスを作り、入力した文字でbooksテーブルのtitle/authorを部分一致(大小無視)で絞り込み一覧表示する\n- ヒット0件のときはメッセージを出す\n- 今回tagsは対象外\n\n質問:\n1. このページをクライアントコンポーネントにする理由と、useStateで検索語を持つ流れを説明して\n2. Supabaseの取得をuseEffectの中でやるとき、async関数をどう置くか（useEffectに直接asyncを付けられない件）の考え方\n3. 『titleかauthorのどちらかに部分一致』を1クエリで書くには ilike と or のどちらをどう使う？ orに渡す文字列フォーマットの注意点\n\n各回答の最後に、確認すべき公式ドキュメントのページ名/URLを挙げてください。"
+        }
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {
+          "type": "table",
+          "headers": [
+            "言葉",
+            "かんたんな意味"
+          ],
+          "rows": [
+            [
+              "部分一致",
+              "完全に同じでなく、その文字を『含む』ものを探す検索。例『ごり』→『アルゴリズム』"
+            ],
+            [
+              "ilike",
+              "Supabaseの大小無視の部分一致フィルタ。`%`が任意の文字列。like の大小無視版（i = case-insensitive）"
+            ],
+            [
+              ".or()",
+              "『AかB どちらか』を表す。`列.演算子.値` をカンマで並べた1本の文字列を渡す独特な書き方"
+            ],
+            [
+              "'use client'",
+              "ファイル先頭に書く宣言。このファイルをブラウザ側で動く部品にする（useState等が使えるようになる）"
+            ],
+            [
+              "useEffect",
+              "Reactのフック。画面表示後や値が変わった後に処理を走らせる。データ取得の置き場としてよく使う"
+            ],
+            [
+              "debounce",
+              "入力のたびでなく『落ち着いてから1回』処理する仕組み。今回は任意"
+            ],
+            [
+              "text[]（配列型）",
+              "tags のような複数値を持つ列の型。文字列用の ilike は効かず、contains/overlaps を使う"
+            ],
+            [
+              "COULD",
+              "MoSCoW優先度の一番下。あれば良いが無くても困らない＝後回し可"
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {
+          "type": "ul",
+          "items": [
+            "要件 C-01（タイトル/著者で本を絞り込む）。S-7 の正式名は『検索・タグ』だが、タグ検索は今回スコープ外（将来の別タスク）",
+            "編集ファイルは `app/search/page.tsx` の1枚のみ。現状は S-7 のプレースホルダ（『タイトル/著者/タグで絞り込み(COULD)』）が入っている",
+            "共通の一覧UI部品について: 現時点で `components/` ディレクトリは未作成、`app/books/` には `[id]/page.tsx`（本詳細 S-2 のプレースホルダ）しか無い。本一覧 (S-1) の `app/books/page.tsx` も未作成。→ このIssueでは最小のリスト表示を自分で作る前提。もし先に S-1 が完成して共通部品ができていれば、それを import して再利用してよい",
+            "関連Issue: 本一覧表示（S-1）／本の詳細（S-2）。一覧UIが共通化されたら、この検索画面の表示部分もそれに寄せると良い",
+            "Supabase接続は `lib/supabaseClient.ts` の `supabase` を import して使う（URL/キーの2環境変数が前提）",
+            "環境変数の作り方・トラブルは同フォルダの『環境構築ガイド.html』。DB列定義は `supabase/schema.sql`"
+          ]
+        }
+      ]
+    }
+  ]
+}
