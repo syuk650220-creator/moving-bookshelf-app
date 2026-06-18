@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>#2 Supabaseにテーブルを作成する｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero done">
+    <h1>Issue #2　Supabaseにテーブルを作成する</h1>
+    <p>supabase/schema.sql を SQL Editor で実行し、アプリ全体の土台になる6テーブルとRLSを作る（このIssueはすでに完了済み。中身を理解して『確認・再実行のしかた』を学ぶための参照資料）。</p>
+    <div class="badges">
+      <span class="badge">担当：PM（水谷）</span>
+      <span class="badge">完了済み</span>
+      <span class="badge">優先 ★★★</span>
+      <span class="badge">✅完了</span>
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill role">担当：PM（水谷）</span>
+    <span class="pill sprint">完了済み</span>
+    <span class="pill prio">優先 ★★★</span>
+    <span class="pill done">✅完了</span>
+    <span class="pill lang">Supabase</span>
+    <span class="pill lang">SQL</span>
+    <span class="pill lang">RLS</span>
+    <span class="pill lang">PostgreSQL</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p>アプリが本やロボの情報を読み書きするには、その入れ物である<strong>データベースのテーブル</strong>が必要です。このIssueでは、設計図ファイル <code>supabase/schema.sql</code> を Supabase の <strong>SQL Editor</strong>（ブラウザ上でSQLを実行できる画面）に貼り付けて実行し、<code>books</code> / <code>loans</code> / <code>users</code> / <code>robot_calls</code> / <code>robot_status</code> / <code>stop_points</code> の6テーブルと、その<strong>RLS（行レベルセキュリティ）</strong>を一気に作ります。</p>
+  <div class="callout ok"><span class="label">このIssueはもう完了しています</span><p>DB作成はPM（水谷）が実行済みです。あなたが今から実行し直す必要は基本ありません。この資料は『何が作られたのか』『自分でどう確認するか』『万一作り直す時はどうするか』を理解するための読み物です。チェックリストは“あなたが作る”ではなく“現状こうなっているはず”という確認用として読んでください。</p></div>
+  <p>なぜ大事か：ここで決めた<strong>列名・型・ルール</strong>が、これから作る全画面（本一覧・本登録・借りる/返す・ロボ呼出）の前提になります。スキーマを読めると、後のIssueで『どの列に何を入れるか』が自分で分かるようになります。</p>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <p>下のチェックは『正しく作られていればこうなっている』という実態です。<strong>実際の <code>schema.sql</code> を1行ずつ確認した内容</strong>で、テーブルごとにポリシーの有無が違う点に注意してください（ここを誤解すると後で必ず詰まります）。</p>
+  <ul class="checklist"><li>Table Editor に6つのテーブルが並んでいる：books / loans / users / robot_calls / robot_status / stop_points</li><li>robot_status テーブルに1行だけデータがある（id=1, state='idle'）</li><li>6テーブルすべてで RLS が有効（ON）になっている</li><li>閲覧(select)ポリシーがある＝ books / loans / robot_calls / robot_status / stop_points の5つ（users には select すら無い）</li><li>追加(insert)ポリシーがある＝ books / loans / robot_calls の3つだけ（users / stop_points / robot_status には無い）</li><li>更新(update)ポリシーがある＝ books / loans / robot_calls / robot_status の4つ（users / stop_points には無い）</li><li>削除(delete)ポリシーは『どのテーブルにも1つも無い』＝アプリからは誰も削除できない（全削除事故の防止＝仕様）</li><li>users はポリシーが1つも無く、RLSがONなので一般キー（publishable）からは読み書きとも実質できない（auth と紐づける設計のため。これも仕様）</li></ul>
+  <div class="callout warn"><span class="label">『全テーブルに select/insert/update が揃っている』は誤解</span><p>RLSの世界では『ポリシーが無い操作は全部禁止』です。だから users（ポリシー0個）や stop_points（selectのみ）は、Table Editor で見ると“RLSはONなのにデータをいじれない”状態になります。これは壊れているのではなく設計どおり。後述の確認SQLで自分の目で数えられます。</p></div>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">設計図ファイルを開いて全体を眺める</span><div class="st-detail">#4（リポジトリ雛形）でローカルに clone したリポジトリのフォルダ内にある <code>supabase/schema.sql</code> を VS Code などのエディタで開きます（GitHub 上のリポジトリでもブラウザで閲覧できます）。ファイルの並び順は ①stop_points ②users ③books ④loans ⑤robot_calls ⑥robot_status の6つの create table → 後半に RLS の設定、という構成です（①=books ではない点に注意）。</div></li><li><span class="st-title">create table の塊を1つずつ読む</span><div class="st-detail">各 create table が『1つのテーブル＝表』の定義です。<code>id</code> の primary key（主キー）、<code>references ...</code> の外部キー、<code>check (...)</code> の値制限、<code>text[]</code> や <code>timestamptz</code> といった型を、用語ミニ辞典を見ながら指でなぞって読みます。答えを丸暗記するのではなく『この列は何のためか』を1つずつ言葉にしてみるのが学びになります。</div></li><li><span class="st-title">RLS（ファイル後半）の policy を数える</span><div class="st-detail"><code>alter table ... enable row level security</code> が6つ、その下に <code>create policy ... for select/insert/update</code> が並びます。select/insert/update が<strong>テーブルごとに数が違う</strong>こと、delete が1つも無いことを、自分の目で数えて Done のチェックと突き合わせます。</div></li><li><span class="st-title">（参照）SQL Editor での実行方法を知る</span><div class="st-detail">実行はPMが完了済みです。仕組みを知るために：Supabase ダッシュボード左メニューの『SQL Editor』を開き、新規クエリに schema.sql の中身を全部貼って『Run』を押す、という流れです。実行すると6テーブルとRLSが一気にできます。</div></li><li><span class="st-title">（参照）作り直したくなったら、まずPMに相談</span><div class="st-detail">すでに作成済みのため、勝手に作り直すと全員の作業が止まります。作り直しは原則 PM（水谷）に任せてください。どうしても自分の練習用環境で作り直す場合は、外部キーの依存があるため素朴な <code>drop table books;</code> は順序エラーになります。<code>drop table ... cascade;</code> を使う必要がある、という入り口だけ覚えておきましょう（詳しくは『つまずきポイント』参照）。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <p>ここがこの資料の核心です。各テーマを『何を / なぜ / どこで調べるか』で示します。リンクが切れていたら添えてある検索キーワードで調べ直してください。</p>
+  <ul class="research"><li><div class="r-topic">リレーショナルDBの基本（テーブル / 列 / 行 / 主キー / 外部キー）</div><div class="r-why">schema.sql は『表の設計図』。主キー（その行を一意に決める列）と外部キー（別テーブルの行を指す列。例: loans.book_id が books.id を指す）が分かると、なぜ本を消せない設計になっているか等が腑に落ちる。</div><div class="r-where">PostgreSQL 日本語ドキュメント https://www.postgresql.jp/document/ の『データ定義』章。リンク切れ時は《primary key foreign key とは PostgreSQL》で検索。</div></li><li><div class="r-topic">create table の読み方（型・check制約・default）</div><div class="r-why"><code>shelf_level int check (shelf_level between 1 and 5)</code> や <code>status text check (status in (...))</code> のように、DB側で不正な値を弾くルールが書かれている。これを読めると後のIssueで『どんな値を入れてよいか』を自分で判断できる。</div><div class="r-where">PostgreSQL 日本語ドキュメント『CREATE TABLE』 https://www.postgresql.jp/document/ 内で CREATE TABLE を検索。リンク切れ時は《CREATE TABLE check 制約 PostgreSQL》で検索。</div></li><li><div class="r-topic">RLS（行レベルセキュリティ）と『ポリシーが無い操作は全部禁止』という核心</div><div class="r-why">Supabaseは安全のためテーブルごとに『誰がselect/insert/update/deleteしてよいか』をpolicyで明示する。<strong>ポリシーが書かれていない操作はすべて拒否</strong>される。これを知らないと『users が読めない』『delete できない』を“バグ”と誤解する。実際 users はポリシー0個なので、現状アプリ（publishableキー）からは読み書きできない（auth と紐づく設計のため）。</div><div class="r-where">Supabase RLSガイド https://supabase.com/docs/guides/database/postgres/row-level-security 。リンク切れ時は《Supabase row level security policy》で検索。</div></li><li><div class="r-topic">create policy の読み方（for select / insert / update、using と with check）</div><div class="r-why">schema.sql 後半の <code>create policy sel_books on books for select using (true)</code> 等を読めると、『どのテーブルにどの操作が許されているか』を自力で一覧化できる。delete の policy が1つも無い＝誰も削除できない、という意図が読み取れる。</div><div class="r-where">Supabase『CREATE POLICY / Policies』 https://supabase.com/docs/guides/database/postgres/row-level-security と PostgreSQL の CREATE POLICY ドキュメント。リンク切れ時は《CREATE POLICY using with check PostgreSQL》で検索。</div></li><li><div class="r-topic">Supabase SQL Editor の使い方と Table Editor / Policies 画面</div><div class="r-why">実行・確認の入口。SQL Editor は管理者権限で動くので、アプリ経由ではできない操作（insert ポリシーが無いテーブルへの追加など）もここからは実行できる、という違いを知っておくと混乱しない。</div><div class="r-where">Supabase ダッシュボード操作ガイド https://supabase.com/docs/guides/database/overview と画面内の『SQL Editor』『Table Editor』『Authentication &gt; Policies』。リンク切れ時は《Supabase SQL Editor 使い方》で検索。</div></li><li><div class="r-topic">PostgreSQL の型 timestamptz と text[]（配列型）</div><div class="r-why">schema.sql に出てくる <code>created_at timestamptz</code> や <code>tags text[]</code> の意味を知らないと列の役割が読めない。timestamptz＝タイムゾーン付き日時、text[]＝文字列の配列（1列に複数のタグを持てる）。</div><div class="r-where">PostgreSQL 日本語ドキュメント『データ型』章 https://www.postgresql.jp/document/ 。リンク切れ時は《PostgreSQL timestamptz 配列 text[] とは》で検索。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <p>初心者が『壊れている？』と誤解しやすい、RLSの“非対称”ポイントを中心にまとめます。</p>
+  <ul><li><strong>already exists エラー</strong>：schema.sql を全部コピペして Run すると『table ... already exists』と出ることがある。これは“もう作成済み”という意味で、たいてい正常。新たに作り直す必要は無い。</li><li><strong>users が読めない / 操作できない</strong>：users は RLS がON かつ policy が1つも無いので、アプリ（publishableキー）からは select も insert もできない。これは仕様（Supabase の auth と紐づける設計のため）。バグではない。</li><li><strong>stop_points / robot_status に追加できない</strong>：stop_points は select のみ、robot_status は select と update のみ（insert ポリシーが無い）。アプリから直接 insert できないのは仕様。座標や状態の投入は #3（サンプル投入）や管理側／SQL Editor で行う。</li><li><strong>RLSがONなのにデータがいじれて当然と思い込む</strong>：『ポリシーが無い操作は全部禁止』が原則。テーブルごとにできる操作が違うのが正しい状態。</li><li><strong>robot_status の1行が消えた／無い</strong>：このテーブルは id=1 の1行固定が前提。万一行が無い場合は schema.sql の該当1行（<code>insert into robot_status ...</code>）を“自分で探して”SQL Editor で実行すると復活する。SQL Editor は管理者権限なので insert ポリシーが無くても実行できる（アプリ経由では insert ポリシーが無いため不可、という違いに注意）。</li></ul>
+  <div class="callout danger"><span class="label">作り直し（再実行）は安易にやらない</span><p>テーブルには外部キーの依存（books←loans/robot_calls、stop_points←robot_calls、robot_calls←robot_status）があるため、素朴な drop table books; は『他から参照されている』と順序エラーになります。作り直しは原則 PM（水谷）に依頼してください。どうしても自分の練習環境で消すときだけ、SQL Editor で drop table ... cascade;（依存ごと消す）を使う、という方針です。リポジトリに reset 用 SQL は同梱されていないため、再実行は慎重に。</p></div>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p>このIssueはアプリ画面ではなく『DBの状態』を確認します。Supabase ダッシュボードと、SQL Editor で打つ確認用SQLの2通りで見られます。</p>
+  <ol><li>Table Editor を開き、左に books / loans / users / robot_calls / robot_status / stop_points の6つが並ぶことを目で確認。</li><li>robot_status テーブルを開き、行が1つ（id=1, state='idle'）あることを確認。</li><li>Authentication &gt; Policies を開き、どのテーブルにどのポリシーがあるかを見る（または下の確認SQLで一覧）。</li></ol>
+  <p>確認用SQL（SQL Editor に貼って Run。これらは“読み取り中心”なので答えのコードではなく確認手段です）：</p>
+  <pre><code>-- ① テーブルが6つできているか
+select tablename from pg_tables where schemaname = 'public' order by tablename;
+
+-- ② 各テーブルで RLS が ON か（relrowsecurity が t ならON）
+select relname, relrowsecurity
+from pg_class
+where relname in ('books','loans','users','robot_calls','robot_status','stop_points');
+
+-- ③ どのテーブルに select/insert/update/delete のどの policy があるか一覧
+select schemaname, tablename, policyname, cmd
+from pg_policies
+where schemaname = 'public'
+order by tablename, cmd;
+
+-- ④ robot_status に1行あるか
+select * from robot_status;</code></pre>
+  <div class="callout tip"><span class="label">③のSQLが一番のおすすめ</span><p>③を実行すると『books には select/insert/update があり、users には何も無い、delete はどこにも無い』が一目で分かります。Done のチェックリストと突き合わせれば、自分の理解が正しいか確かめられます。</p></div>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AIには『答えのSQLを書かせる』のではなく『自分のschema.sqlを一緒に読む手助け』をさせます。下のプロンプトをコピペして使ってください。</p>
+  <pre><code>あなたは私のコーチです。答えのコードをいきなり書かず、私が自分で読んで理解できるよう問いかけと道案内をしてください。
+
+前提：
+- 私たちのプロジェクトは Next.js 16系（最新版で、あなたの学習データと挙動が違う可能性があります）。アプリ実装の話になったら、必ず node_modules/next/dist/docs/ の該当ガイドを私自身に開かせて現行の書き方を確認させてください。
+- DBは Supabase。設計図は supabase/schema.sql。
+- RLSの原則『ポリシーが無い操作は全部禁止』を踏まえてください。
+
+お願い：
+1. 私が貼る schema.sql の一部を、主キー・外部キー・check制約・型(timestamptz, text[])に分けて『これは何のための記述か』を問いかけ形式で確認させてください。
+2. RLSについて、books / loans / users / robot_calls / robot_status / stop_points それぞれで select/insert/update/delete のどれが許可されているかを、私自身に schema.sql 後半を数えさせる形で導いてください。答えは先に言わないでください。
+3. users と stop_points が『RLS ON なのに操作が限られる』のはなぜか、私が説明できるよう質問してください。
+
+まずは、私がどこまで読めているか確認する最初の質問を1つください。</code></pre>
+  <div class="callout study"><span class="label">コーチの使い方のコツ</span><p>『答えを教えて』ではなく『私の理解、合ってる？』と聞くと学びになります。SQLやアプリのコードを書く段では、AIに最新Next.js(16系)のdocs（node_modules/next/dist/docs/）を私に開かせるよう毎回お願いしましょう。</p></div>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>テーブル</td><td>データを入れる『表』。列（項目）と行（1件分のデータ）でできている</td></tr><tr><td>主キー (primary key)</td><td>その行を1つに特定する列。例: books.id。重複・空が許されない</td></tr><tr><td>外部キー (foreign key)</td><td>別テーブルの行を指す列。例: loans.book_id は books.id を指す。だから参照中の本は消せない</td></tr><tr><td>RLS (行レベルセキュリティ)</td><td>テーブルごとに『誰がどの操作をしてよいか』を制御する仕組み。ポリシーが無い操作は全部禁止される</td></tr><tr><td>policy (ポリシー)</td><td>RLSの許可ルール。for select/insert/update/delete 単位で作る。無い操作は禁止＝delete は誰も作っていないので削除不可</td></tr><tr><td>check 制約</td><td>列に入れてよい値の制限。例: shelf_level は 1〜5、status は available か on_loan のみ</td></tr><tr><td>timestamptz</td><td>タイムゾーン付きの日時型。created_at などで使う</td></tr><tr><td>text[]</td><td>文字列の配列型。tags のように複数の値を1列に持てる</td></tr><tr><td>cascade</td><td>drop table ... cascade のように、依存している物ごと一緒に処理する指定</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <p>Issueは番号がずれることがあるので、<strong>タスク名・画面名で照合</strong>してください（下の番号は GitHub実番号版に基づく補助情報。旧資料は番号が違うことがあります）。</p>
+  <ul><li>関連Issue：『サンプル投入』(#3) … 作ったテーブルに最初のデータを入れる。stop_points や robot 関連の投入はここで。</li><li>関連Issue：『本一覧』(#1) … ここで作った books テーブルを select して画面に出す。users が読めない件の理解が活きる。</li><li>関連Issue：『本登録』(#5) / 『借りる・返す』(#7) … books/loans への insert・update を使う。今回読んだポリシー構成が前提。</li><li>関連Issue：『ブリッジ』(#8) / 『座標変換』(#9) … robot_calls / robot_status / stop_points をロボ側から使う。</li><li>設計の基本：同フォルダの基本設計の『DBスキーマ』章、リポジトリの supabase/schema.sql（一次情報。迷ったらこれを読む）。</li><li>環境変数のキー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正。.env.local は各自手作り。詳しくは同フォルダの『環境構築ガイド.html』。</li></ul>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

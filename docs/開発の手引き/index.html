@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>開発の手引き｜移動本棚ロボ</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <h1>📚 開発の手引き（困ったときはここ）</h1>
+    <p>移動本棚ロボ アプリの開発で迷ったら、まずこのフォルダを開いてください。<br>
+    環境構築から、最初のスプリント（Issue #1〜#9）の進め方・調べ方までをまとめています。</p>
+    <div class="badges">
+      <span class="badge">🎓 初心者向け</span>
+      <span class="badge">🧭 進め方＋調べ方</span>
+      <span class="badge">🤖 AIコーチの使い方つき</span>
+    </div>
+  </header>
+
+  <div class="callout tip">
+    <p><strong>使い方</strong>：自分の担当 Issue のカードを開くと、「やること → 進め方の手順 → <strong>進めながら調べる・学ぶこと</strong> → つまずき対処 → 動作確認 → AIコーチへの頼み方」がそろっています。コードの答えは載せていません（自分で書いて学ぶスタイル）。</p>
+  </div>
+
+  <section>
+    <h2 class="sec">まず最初に</h2>
+    <div class="cards">
+      <a class="card env" href="環境構築ガイド.html">
+      <div class="c-no">まず最初に</div>
+      <div class="c-title">🛠 環境構築ガイド</div>
+      <div class="c-desc">アプリを自分のPCで動かせるようにする手順（clone → npm install → .env.local → npm run dev）。新メンバーは最初にここ。</div>
+      <div class="c-tags"><span class="pill">全員</span><span class="pill sprint">Sprint 0</span></div>
+    </a>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="sec">最初のスプリント：Issue #1〜#9 の進め方</h2>
+    <p class="section-intro">担当の色：<span class="pill role">アプリ</span> <span class="pill robot" style="background:#f3e8ff;border-color:#e9d5ff;color:#6b21a8">ロボ</span> <span class="pill done">基盤（PM・完了済み）</span>。番号は GitHub の実Issue番号です。</p>
+    <div class="cards">
+      <a class="card " href="issue-01.html">
+      <div class="c-no">ISSUE #1</div>
+      <div class="c-title">本一覧（ホーム）を作る</div>
+      <div class="c-desc">Supabaseのbooksを読み込んで、タイトル/著者/段/状態が見えるホーム画面(S-1)を作る。</div>
+      <div class="c-tags"><span class="pill">S-1</span><span class="pill role">アプリA</span><span class="pill sprint">Sprint 1</span></div>
+    </a>
+    <a class="card " href="issue-02.html">
+      <div class="c-no">ISSUE #2</div>
+      <div class="c-title">Supabaseにテーブルを作成する</div>
+      <div class="c-desc">supabase/schema.sql を SQL Editor で実行し、アプリ全体の土台になる6テーブルとRLSを作る（このIssueはすでに完了済み。中身を理解して『確認・再実行のしかた』を学ぶための参照資料）。</div>
+      <div class="c-tags"><span class="pill role">PM（水谷）</span><span class="pill done">✅完了</span></div>
+    </a>
+    <a class="card " href="issue-03.html">
+      <div class="c-no">ISSUE #3</div>
+      <div class="c-title">サンプルデータを投入する</div>
+      <div class="c-desc">本5冊と席3つ(stop_points)を Supabase に投入し、#1 本一覧に表示できる中身を用意する。</div>
+      <div class="c-tags"><span class="pill role">PM（水谷）</span><span class="pill sprint">Sprint 0（準備）</span></div>
+    </a>
+    <a class="card " href="issue-04.html">
+      <div class="c-no">ISSUE #4</div>
+      <div class="c-title">リポジトリの雛形を作成</div>
+      <div class="c-desc">Next.js + Supabase の雛形・docs・テンプレ一式を用意し、新メンバーが「この構成が何か」を理解して開発を始められる土台をつくる。</div>
+      <div class="c-tags"><span class="pill role">PM（水谷）</span><span class="pill done">✅完了</span></div>
+    </a>
+    <a class="card " href="issue-05.html">
+      <div class="c-no">ISSUE #5</div>
+      <div class="c-title">本登録（バーコード／openBD）</div>
+      <div class="c-desc">ISBNを入れたらopenBDでタイトル・著者を自動取得し、段(1〜5)を選んで books に1冊登録できる本登録画面(S-3)を作る。</div>
+      <div class="c-tags"><span class="pill">S-3</span><span class="pill role">アプリB</span><span class="pill sprint">Sprint 1</span></div>
+    </a>
+    <a class="card " href="issue-06.html">
+      <div class="c-no">ISSUE #6</div>
+      <div class="c-title">ゲスト名入力を作る</div>
+      <div class="c-desc">ログインの代わりに「ゲスト名」を入力して、後の貸出操作で使える形に保持する画面(S-6)を作る。</div>
+      <div class="c-tags"><span class="pill">S-6</span><span class="pill role">アプリB</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    <a class="card " href="issue-07.html">
+      <div class="c-no">ISSUE #7</div>
+      <div class="c-title">借りる／返すを作る</div>
+      <div class="c-desc">本詳細画面(S-2)で1冊を表示し、『借りる』『返す』ボタンで loans と books の2テーブルを続けて更新し、貸出履歴も見せる。</div>
+      <div class="c-tags"><span class="pill">S-2</span><span class="pill role">アプリA</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    <a class="card robot" href="issue-08.html">
+      <div class="c-no">ISSUE #8</div>
+      <div class="c-title">ブリッジ最小実装（robot_calls購読）</div>
+      <div class="c-desc">Pythonで robot_calls を見張り、queued の呼び出しを検知して moving→arrived→done とログを出す「橋渡し役」の第一歩を作る。</div>
+      <div class="c-tags"><span class="pill role">ハード制御</span><span class="pill sprint">Sprint 1</span></div>
+    </a>
+    <a class="card robot" href="issue-09.html">
+      <div class="c-no">ISSUE #9</div>
+      <div class="c-title">席座標→Nav2ゴール変換の下調べ</div>
+      <div class="c-desc">stop_points の x,y,theta を読んで Nav2 のゴール(PoseStamped)に変換する関数の素案を作る（下調べ中心）</div>
+      <div class="c-tags"><span class="pill role">ハード制御</span><span class="pill sprint">Sprint 2</span></div>
+    </a>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="sec">着手のおすすめ順 ＆ 依存関係</h2>
+<pre class="ascii">[完了] #2 テーブル作成 / #4 リポジトリ雛形 ─┐
+                                          ├─ アプリ：#1 本一覧 → #5 本登録 / #6 ゲスト名 → #7 借りる/返す
+   #3 サンプルデータ投入（PM）───────────────┤
+                                          └─ ロボ ：#8 ブリッジ最小 → #9 座標変換の下調べ</pre>
+    <div class="callout tip"><p>最初の山場は <strong>#1 本一覧（S-1）</strong>。「Supabaseから読んで画面に出す」最初の成功体験で、ここを越えると他の画面は同じ型で書けます。</p></div>
+  </section>
+
+  <section>
+    <h2 class="sec">知っておくと混乱しないこと</h2>
+    <div class="callout warn">
+      <span class="label">① 資料によって Issue 番号がズレています</span>
+      <p>この手引きは「コピペ用Issue集（GitHub実番号版）」に合わせ、<strong>#1＝本一覧</strong> としています。一部の古い資料では <strong>#4＝本一覧</strong>（旧番号）で書かれています。迷ったら<strong>番号より「タスク名・画面名(S-◯)」で照合</strong>してください。</p>
+    </div>
+    <div class="callout danger">
+      <span class="label">② 接続キーの名前（重要）</span>
+      <p>一部の古い資料に <code>NEXT_PUBLIC_SUPABASE_ANON_KEY</code> や <code>.env.local.example</code> という記述がありますが、<strong>現在のリポジトリは <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code> に統一</strong>され、example ファイルは廃止しました。<a href="環境構築ガイド.html">環境構築ガイド</a>の手順が正です。</p>
+    </div>
+    <table>
+      <tr><th>記号</th><th>意味</th><th>例</th></tr>
+      <tr><td><strong>S-◯</strong></td><td>画面番号（Screen）。画面のIssueにだけ付く</td><td>S-1 本一覧</td></tr>
+      <tr><td><strong>F-◯</strong></td><td>機能要件（Function）</td><td>F-08 ロボ呼出</td></tr>
+      <tr><td><strong>#◯</strong></td><td>GitHubのIssue番号（自動採番。S-とは別物）</td><td>#1</td></tr>
+    </table>
+  </section>
+
+  <footer>
+    <p>移動本棚ロボ｜開発の手引き ／ ものづくりゼミ 2026（9人・3ヶ月）</p>
+    <p>この手引きは生きた資料です。分かりにくい所・古い所は、気づいた人が直して PR を出してください。</p>
+  </footer>
+
+</div>
+</body>
+</html>

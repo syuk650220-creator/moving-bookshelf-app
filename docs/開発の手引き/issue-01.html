@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>#1 本一覧（ホーム）を作る｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero ">
+    <h1>Issue #1　本一覧（ホーム）を作る（S-1）</h1>
+    <p>Supabaseのbooksを読み込んで、タイトル/著者/段/状態が見えるホーム画面(S-1)を作る。</p>
+    <div class="badges">
+      <span class="badge">担当：アプリA</span>
+      <span class="badge">Sprint 1</span>
+      <span class="badge">優先 ★★★</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill">画面 S-1</span>
+    <span class="pill role">担当：アプリA</span>
+    <span class="pill sprint">Sprint 1</span>
+    <span class="pill prio">優先 ★★★</span>
+    <span class="pill lang">TypeScript</span>
+    <span class="pill lang">React</span>
+    <span class="pill lang">Next.js(App Router)</span>
+    <span class="pill lang">Tailwind</span>
+    <span class="pill lang">Supabase JS</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p>アプリの入口になる<strong>ホーム画面(S-1)</strong>を作ります。Supabaseの <code>books</code> テーブルを読み込んで、本を一覧表示する画面です。タイトル・著者・段（<code>shelf_level</code>）・状態（<code>status</code>）が見え、<code>status</code> を色分けし、<code>/register</code>（本登録）と <code>/history</code>（履歴）への導線を置きます。</p>
+  <div class="callout tip"><span class="label">なぜ最初におすすめ？</span><p>「DBから読んで画面に出す」という、このアプリで何度も使う一番の基本を一通り体験できるからです。ここで掴んだ流れ（import → select → map → 表示）は他の画面でもそのまま使えます。</p></div>
+  <p>現状 <code>app/page.tsx</code> は中身が仮の文章だけの<strong>スタブ（仮置きファイル）</strong>です。これを本物の一覧画面に作り替えます。編集するのは基本 <code>app/page.tsx</code> の1枚。DB接続の窓口 <code>lib/supabaseClient.ts</code> は <strong>import するだけ</strong>で、中身は触りません。</p>
+  <div class="callout warn"><span class="label">このNext.jsは最新版(16系)</span><p>あなたの知っている書き方と違う可能性があります。答えのコードを覚えるのではなく、必ず <code>node_modules/next/dist/docs/</code> の該当ガイドを開いて「今の正しい書き方」を確認しながら進めてください。下の『調べる・学ぶこと』が道案内です。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li><code>books</code> の一覧が表示され、各行に タイトル / 著者 / 段(shelf_level) / 状態(status) が見える</li><li><code>status</code> を色分けしている（available=在庫あり、on_loan=貸出中 が見た目で区別できる）</li><li>画面上部に <code>/register</code> と <code>/history</code> へのリンクがある（next/link の Link を使う）</li><li>読み込み中の表示が出る（loading）</li><li>本が0件のとき「本がありません」等のメッセージが出る（empty）</li><li>取得に失敗したときのエラー表示が出る ※どう発火させるか（自分で throw するか、state方式で出し分けるか）は下の研究セクションとdocsで確認</li><li>PRを出して Closes #1 を本文に書く</li></ul>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">ステップ0：初回だけの環境準備（ここが生命線）</span><div class="st-detail">まだこのプロジェクトを動かしたことがなければ先に：(1)リポジトリを clone、(2)<code>npm install</code> で依存をインストール、(3)<code>.env.local</code> を自分で手作りする。<code>.env.local</code> の正しいキー名・値は同フォルダの「環境構築ガイド.html」の通りに書く（正しいキー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。古い資料の …ANON_KEY は誤り）。これが終わっていないと <code>npm run dev</code> すら起動しません。</div></li><li><span class="st-title">ステップ1：ブランチを切る</span><div class="st-detail">main へ直接書かない。<code>feature/book-list</code> のような自分のブランチを作ってから作業する。コマンドは下の『動作確認のしかた』のcodeブロックにまとめてあります。</div></li><li><span class="st-title">ステップ2：開発サーバーを起動して現状を見る</span><div class="st-detail"><code>npm run dev</code> を実行し、ブラウザで http://localhost:3000 を開く。今は仮の文章だけが出るはず。ここを作り替えていく。</div></li><li><span class="st-title">ステップ3：サーバー/クライアントどちらで作るか決める</span><div class="st-detail">一覧を「表示するだけ」ならサーバーコンポーネントがシンプルで素直。理由と違いは下の研究『サーバーとクライアントの違い』で確認する。迷ったらまずサーバー方式で。</div></li><li><span class="st-title">ステップ4：supabase を import して books を select する</span><div class="st-detail"><code>import { supabase } from '@/lib/supabaseClient'</code> のように読み込み、<code>books</code> を全件 select する。⚠重要：現状の <code>app/page.tsx</code> は <code>export default function Home()</code> で <strong>async ではない</strong>。サーバー側で await して読むなら、この関数を <code>export default async function Home()</code> に変える必要がある（ここに気づかず詰まりやすい）。なお <code>lib/supabaseClient.ts</code> の <code>supabase</code> は <strong>公開鍵(PUBLISHABLE_KEY)で作られた読み取り用クライアント</strong>で、サーバー/ブラウザどちらから import して使ってもよく、どちらも RLS で保護されているので安全。</div></li><li><span class="st-title">ステップ5：取れたデータを map で1行ずつ表示する</span><div class="st-detail">select の結果（配列）を <code>.map()</code> で回し、各本のタイトル/著者/段/状態を1行として描く。React で配列を出すときの <code>key</code> の付け方も研究セクションで確認。</div></li><li><span class="st-title">ステップ6：status を色分けする</span><div class="st-detail"><code>status</code> が available か on_loan かで色を変える。Tailwind のクラス（例: 文字色や背景色のユーティリティ）を条件で切り替える考え方を研究セクションで確認。</div></li><li><span class="st-title">ステップ7：loading / 0件 / error を出す</span><div class="st-detail">読み込み中・0件・失敗の3状態を用意する。サーバー方式なら『読み込み中＝loading.tsx』『エラー＝error.tsx』というファイル規約が使える。⚠️ error.tsx は例外的に<strong>先頭に 'use client' が必須</strong>（公式docsに『Error boundaries must be Client Components』と明記）。また Supabase の select はエラーを throw せず <code>{ data, error }</code> の error で返すことが多いので、error.tsx を発火させたいなら<strong>自分で throw する</strong>、またはサーバーコンポーネント内で error を見て<strong>自前のエラー表示を出す（state方式/分岐）</strong>かを選ぶ。どちらにするかは研究セクションで確認。</div></li><li><span class="st-title">ステップ8：上部に /register と /history のリンクを置く</span><div class="st-detail">画面上部に2つの導線を置く。<code>next/link</code> の <code>Link</code> コンポーネントを使う（<code>&lt;a&gt;</code> タグだとページ全体が再読込される）。共通ナビは layout.tsx にまだ無いので、このIssueでは page.tsx 内に置けばOK。</div></li><li><span class="st-title">ステップ9：動作確認して PR を出す</span><div class="st-detail">下の『動作確認のしかた』で各状態を確認 → コミット → push → GitHubで PR。本文に『何をしたか / Closes #1 / 動作確認』を書く。マージは PM(水谷) 承認後に Squash and merge。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <p>ここがこの資料の核心です。各ステップで詰まりやすい概念を「何を / なぜ / どこで調べるか」でまとめました。答えのコードはあえて載せません。下のdocsを自分で開いて、今のNext.js16の書き方を確認してください。</p>
+  <ul class="research"><li><div class="r-topic">サーバーコンポーネントとクライアントコンポーネントの違い（use client）</div><div class="r-why">どちら側でDBを読むか・どこに 'use client' を書くかでファイルの作り方が変わる。一覧表示だけならサーバー側がシンプルだが、なぜそうなのかを理解しておくと後で迷わない。</div><div class="r-where">node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md と node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md</div></li><li><div class="r-topic">サーバーコンポーネントの『最小の骨組み』：関数を async にして await でDBを読む</div><div class="r-why">現状の page.tsx は <code>function Home()</code>（async でない）。サーバーで await して読むには <code>async function Home()</code> に変える必要がある。この“形”を最初に掴まないとステップ4で必ず詰まる。</div><div class="r-where">node_modules/next/dist/docs/01-app/01-getting-started/06-fetching-data.md のサーバーコンポーネント冒頭（async関数にして await でデータを取る形）</div></li><li><div class="r-topic">データ取得をサーバー側でやる書き方（考え方）</div><div class="r-why">docs で『async関数の中で await してDBを読む』という骨組みを掴むため。</div><div class="r-where">node_modules/next/dist/docs/01-app/01-getting-started/06-fetching-data.md の『With an ORM or database』の節。※注意：この節の例は別のDBライブラリ(ORM, Drizzle風 <code>db.select().from(...)</code>)なので<strong>構文は Supabase と違う</strong>。docs では“async関数にして await でDBを読む”という形だけを掴み、実際の select の文法は次のSupabase公式で確認すること。</div></li><li><div class="r-topic">Supabase の select の基本（実際の構文）</div><div class="r-why">実際に books を読むときの文法（<code>.from('books').select(...)</code>）と、戻り値が <code>{ data, error }</code> であることを知るため。</div><div class="r-where">https://supabase.com/docs/reference/javascript/select 。⚠重要：<strong>error は throw されず戻り値の error フィールドで返る</strong>ことが多い。error.tsx に出したいなら自分で throw する、state方式なら自分で出し分ける——どちらにするかをここで判断する。列名は title / author / shelf_level / status / id（DBスキーマ通り）。</div></li><li><div class="r-topic">配列を map で表示する／React の key</div><div class="r-why">select で返るのは配列。各行を描くには map で回す。React は各要素に一意な key（本なら id が最適）を求める。</div><div class="r-where">Reactの基本（公式 https://react.dev/learn/rendering-lists ）。本プロジェクトでは id を key にするのが素直。</div></li><li><div class="r-topic">Tailwind で status を色分けする</div><div class="r-why">available / on_loan を見た目で区別する。条件によって付けるクラスを変える考え方が要る。</div><div class="r-where">Tailwind 公式 https://tailwindcss.com/docs （文字色・背景色のユーティリティ）。条件分岐でクラス文字列を切り替えるのは普通のJS/TSの三項演算子等でOK。</div></li><li><div class="r-topic">loading.tsx でのローディング表示</div><div class="r-why">サーバー方式では、そのフォルダに loading.tsx を置くだけで読み込み中に自動表示される。手で state を持たなくてよい。</div><div class="r-where">node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/loading.md と node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md</div></li><li><div class="r-topic">error.tsx でのエラー表示（use client 必須）</div><div class="r-why">サーバー方式でエラー境界を作るには error.tsx を置く。だが<strong>先頭に 'use client' が必須</strong>で、これを書かずに詰まる人が最多。データ取得自体はサーバーのままでよく、エラー表示の部品だけがクライアントになる、という分担を理解する。</div><div class="r-where">node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/error.md（『Error boundaries must be Client Components』の記述）と node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md（L212付近）</div></li><li><div class="r-topic">リンクと画面遷移（next/link の Link）</div><div class="r-why">上部の <code>/register</code>・<code>/history</code> への導線に使う。<code>&lt;a&gt;</code> タグだとページ全体が再読込される。Link を使うとクライアントサイド遷移＝全体を再読込せず速い。</div><div class="r-where">node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md（<code>Link</code> を <code>next/link</code> から import する節と、なぜ a タグでなく Link かの説明）</div></li><li><div class="r-topic">books テーブルに本当にデータがあるかを自分で確認する方法</div><div class="r-why">一覧が空のとき『バグなのか、データが無いだけなのか』を自分で切り分けるため。PM待ちにせず自走できる。</div><div class="r-where">Supabase ダッシュボード → Table Editor → books テーブルを開いて行があるか見る。前提の #3（サンプル投入）が済んでいるか確認。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <div class="callout danger"><span class="label">error.tsx を作ったのにエラーになる／効かない</span><p>error.tsx は先頭に 'use client' が無いと動きません（公式docsに『Error boundaries must be Client Components』と明記）。さらに error.tsx は throw された例外しか捕まえません。Supabase の select は失敗を error フィールドで返すだけで throw しないことが多いので、その error を自分で throw するか、サーバー内で error を見て自前表示するかを選んでください。</p></div>
+  <div class="callout warn"><span class="label">await したらエラーになる</span><p>現状の <code>page.tsx</code> は async ではありません。サーバーで await してDBを読むなら <code>export default async function Home()</code> に変える必要があります。ここを忘れると await が使えずエラーになります。</p></div>
+  <div class="callout warn"><span class="label">画面が真っ白／一覧が空</span><p>(1) ターミナルに env 関連のエラーが出ていないか（.env.local の作成漏れ・キー名違い。正は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY）。(2) データが0件なだけかも：Supabaseダッシュボード → Table Editor → books テーブルに行があるか自分で見る。行が無ければ #3（サンプル投入）の前提が未完了。</p></div>
+  <ul><li>列名は title / author / shelf_level / status / id。スペルや大文字小文字を間違えると取れない（DBスキーマ通りに）。</li><li><code>status</code> は available か on_loan の2値。それ以外を想定した色分けは不要。</li><li>DELETE は誰もできない仕様（RLSにDELETEポリシー無し＝全削除事故防止）。この画面では読み取りだけなので関係ないが覚えておくと安心。</li><li>リンクは <code>&lt;a&gt;</code> でなく <code>next/link</code> の <code>Link</code>。<code>&lt;a&gt;</code> だと毎回ページ全体が再読込される。</li></ul>
+  <div class="callout tip"><span class="label">Issue番号で迷ったら</span><p>古い資料は番号がズレていることがあります（旧版で #4=本一覧 等）。番号よりタスク名・画面名(S-1)で照合してください。このIssueは #1=本一覧 が正です。</p></div>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <pre><code># 初回だけ（ステップ0）
+npm install
+# .env.local を「環境構築ガイド.html」の通りに自分で作成
+#   キー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正
+
+# 毎回の作業
+git checkout main
+git pull
+git checkout -b feature/book-list
+npm run dev
+# ブラウザで http://localhost:3000 を開く</code></pre>
+  <ul class="checklist"><li>一覧が出て、各行に タイトル / 著者 / 段 / 状態 が見える</li><li>available と on_loan で色が違う</li><li>読み込み中の表示が一瞬でも出る（回線が速いと見えにくければ DevTools の Network で Slow 3G にして確認）</li><li>books が0件のとき（または一時的に空想定で）『本がありません』等が出る</li><li>わざとエラーを起こすと（例：通信を切る/キーを一時的に壊す等）エラー表示が出る ※error.tsx を使うなら自分で throw する設計になっているか確認</li><li>上部リンクを押すと URL が /register に変わり、ページ全体がリロードされない（DevTools の Network タブで“document”の再取得が起きないことで確認。遷移先が未実装でもこの基準で合否を判定できる）</li></ul>
+  <div class="callout ok"><span class="label">前提の確認</span><p>この画面は #2(テーブル作成)・#3(サンプル投入)・#4(リポジトリ雛形) が済んでいる前提です（PM側で完了済み）。一覧が空に見えるときは、まず Supabaseダッシュボード → Table Editor → books に行があるか自分で確認してから、バグかデータ無しかを切り分けましょう。</p></div>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AIには『答えのコードを書かせる』のではなく『考え方を導いてもらう』のが本プロジェクトの方針です。下のプロンプトをコピペして使ってください。</p>
+  <pre><code>あなたは私のプログラミング『コーチ』です。答えの完成コードは書かないでください。
+私は Next.js も初心者です。私が自分の手で書いて学べるよう、考え方・手順・つまずき所・調べ先だけを示してください。
+
+前提（重要）:
+- このプロジェクトの Next.js は最新版(16系)で、あなたの学習データと書き方が違う可能性があります。
+- だから一般論で断定せず、まず node_modules/next/dist/docs/ の該当ガイドを私に開かせて、今の書き方を確認させてください。
+- DB は Supabase JS。lib/supabaseClient.ts の supabase を import して使います（公開鍵PUBLISHABLE_KEYの読み取り用クライアント、RLS保護）。
+- 列名は books: id, isbn, title, author, shelf_level(1..5), tags, status(available|on_loan), created_at。
+
+やりたいこと: app/page.tsx に books 一覧のホーム画面(S-1)を作る。
+タイトル/著者/段/状態を表示、status を色分け、/register と /history へのリンク、loading/0件/error 表示。
+
+次の点を『質問返し』で私に考えさせてください（答えを直接書かない）:
+1) サーバー/クライアントどちらで作るべきか、その理由。確認すべき docs はどれか。
+2) page.tsx を async にする必要があるのはなぜか。
+3) Supabase select の戻り値は何で、error はどう扱うべきか（throw か分岐か）。
+4) error.tsx に 'use client' が必要な理由と、確認すべき docs。
+5) リンクに a タグでなく next/link の Link を使う理由。
+
+私が詰まったら、答えではなく『どのファイルのどの節を読めばいいか』を教えてください。</code></pre>
+  <div class="callout study"><span class="label">コーチ活用のコツ</span><p>AIが完成コードを出してきたら『コードはいらない。私が書くから、考え方と読むべきdocsの場所だけ教えて』と言い直しましょう。自分で書く時間が一番の学びです。</p></div>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>サーバーコンポーネント</td><td>サーバー側で動く部品。DBを直接 await して読める。一覧表示だけならこれが素直。</td></tr><tr><td>クライアントコンポーネント</td><td>ブラウザ側で動く部品。先頭に 'use client' を書く。ボタン操作や state が要るとき使う。</td></tr><tr><td>'use client'</td><td>そのファイルをクライアント側にする宣言。ファイルの一番上に書く。</td></tr><tr><td>select</td><td>Supabase でテーブルからデータを読む命令。戻り値は { data, error }。</td></tr><tr><td>status</td><td>本の状態。available=在庫あり / on_loan=貸出中 の2値。</td></tr><tr><td>shelf_level</td><td>本がある段（1〜5）。本棚の何段目か。</td></tr><tr><td>loading.tsx</td><td>そのフォルダの読み込み中に自動表示される特別なファイル（置くだけで効く）。</td></tr><tr><td>error.tsx</td><td>エラー時に表示する特別なファイル。先頭に 'use client' が必須。</td></tr><tr><td>Link</td><td>next/link の画面遷移用コンポーネント。a タグと違い全体を再読込しない。</td></tr><tr><td>RLS</td><td>行レベルのアクセス制御。本プロジェクトは select/insert/update は全員OK、DELETEは誰も不可。</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>基本設計 §2 画面設計（S-1 本一覧の要件）</li><li>環境構築ガイド.html（同フォルダ）：.env.local の作り方・正しいキー名 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。ステップ0で必ず参照</li><li>DB接続の窓口: lib/supabaseClient.ts（import して使うだけ。公開鍵の読み取り用クライアント・RLS保護。中身は編集しない）</li><li>DBスキーマ: supabase/schema.sql（books の列名を確認）</li><li>関連Issue: #2 テーブル作成 / #3 サンプル投入 / #4 リポジトリ雛形（いずれも前提・PM側で完了済み）</li><li>次に作る画面: #5 本登録(/register) / #7 借りる・返す。このホームのリンク先になる</li></ul>
+  <p>Next.js16 のガイド（自分で開いて確認）：画面とルーティング <code>node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md</code> / データ取得 <code>.../06-fetching-data.md</code> / サーバー・クライアント <code>.../05-server-and-client-components.md</code> / リンク <code>.../04-linking-and-navigating.md</code> / エラー処理 <code>.../10-error-handling.md</code> と <code>.../03-api-reference/03-file-conventions/error.md</code> / ローディング <code>.../03-api-reference/03-file-conventions/loading.md</code>。Supabase select は <a href="https://supabase.com/docs/reference/javascript/select" target="_blank" rel="noopener">公式リファレンス</a>。</p>
+  <div class="callout tip"><span class="label">開発フロー</span><p>main へ直 push 禁止。feature/◯◯ ブランチ → PR（本文に『何をしたか / Closes #1 / 動作確認』）→ PM(水谷)承認後に Squash and merge。</p></div>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

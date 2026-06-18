@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>環境構築ガイド｜移動本棚ロボ アプリ</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero">
+    <h1>環境構築ガイド（はじめての人向け・完全版）</h1>
+    <p>「移動本棚ロボ アプリ（moving-bookshelf-app）」を自分のパソコンで動かせるようにする手順書です。<br>
+    プログラミングがはじめての人でも、上から順番にマネすれば動くように書いています。</p>
+    <div class="badges">
+      <span class="badge">⏱ 所要時間 30〜60分</span>
+      <span class="badge">🎯 ゴール：localhost:3000 が開ける</span>
+      <span class="badge">💻 Windows / Mac 両対応</span>
+    </div>
+  </header>
+
+  <div class="callout tip">
+    <p>❓ わからない単語が出てきたら、まず末尾の「<a href="#glossary">用語集</a>」を見てください。</p>
+    <p>❓ 30分やって動かなかったら、抱え込まずチームに聞きましょう（<code>CONTRIBUTING.md</code> の「困ったら」参照）。</p>
+  </div>
+
+  <nav class="toc">
+    <h2>📑 目次</h2>
+    <ol>
+      <li><a href="#overview">全体像（これから何をするのか）</a></li>
+      <li><a href="#accounts">事前に用意するもの（アカウント）</a></li>
+      <li><a href="#tools">道具をインストールする</a></li>
+      <li><a href="#clone">ソースコードを自分のPCに持ってくる（clone）</a></li>
+      <li><a href="#install">部品をそろえる（npm install）</a></li>
+      <li><a href="#env">設定ファイル <code>.env.local</code> を作る</a></li>
+      <li><a href="#run">起動して確認する（npm run dev）</a></li>
+      <li><a href="#db">（参考）データベースについて</a></li>
+      <li><a href="#trouble">うまくいかないとき（トラブルシューティング）</a></li>
+      <li><a href="#flow">環境ができたら：日々の開発の流れ</a></li>
+      <li><a href="#checklist">最終チェックリスト ✅</a></li>
+      <li><a href="#glossary">用語集</a></li>
+    </ol>
+  </nav>
+
+  <!-- 0 -->
+  <section id="overview">
+    <h2 class="sec">0. 全体像（これから何をするのか）</h2>
+    <p>このアプリは、次の部品が組み合わさって動きます。</p>
+<pre class="ascii">   あなたのPC                          インターネットの向こう側
+ ┌────────────────┐                   ┌──────────────────┐
+ │  ソースコード      │ ── npm install ──▶ │   Supabase         │
+ │ (GitHubから取得)  │                    │ （データの保管庫・    │
+ │       ↓          │                   │   ログイン・DB）      │
+ │   npm run dev    │ ◀─ データ読み書き ─▶ │                    │
+ │       ↓          │                    └──────────────────┘
+ │ localhost:3000   │
+ │ （ブラウザで見る）   │
+ └────────────────┘</pre>
+    <p>やることは、ざっくり次の5ステップだけです。</p>
+    <ol>
+      <li><strong>道具をインストールする</strong>（Node.js / Git / エディタ）</li>
+      <li><strong>ソースコードを自分のPCに持ってくる</strong>（GitHubから clone）</li>
+      <li><strong>部品をそろえる</strong>（<code>npm install</code>）</li>
+      <li><strong>接続情報を書いた設定ファイルを作る</strong>（<code>.env.local</code>）</li>
+      <li><strong>起動して確認する</strong>（<code>npm run dev</code>）</li>
+    </ol>
+  </section>
+
+  <!-- 1 -->
+  <section id="accounts">
+    <h2 class="sec">1. 事前に用意するもの（アカウント）</h2>
+    <table>
+      <tr><th>必要なもの</th><th>用途</th><th>取得方法</th></tr>
+      <tr><td><strong>GitHub アカウント</strong></td><td>ソースコードの取得・PR</td><td><a href="https://github.com/">github.com</a> で無料登録</td></tr>
+      <tr><td><strong>このリポジトリへの招待</strong></td><td>コードにアクセスする権限</td><td>PM（水谷）に GitHub のユーザー名を伝えて招待してもらう</td></tr>
+      <tr><td><strong>Supabase の接続情報</strong></td><td>DB・ログイン機能に接続</td><td>この資料の<a href="#env">ステップ5</a>に値を載せています</td></tr>
+    </table>
+    <div class="callout tip">
+      <p>💡 GitHub に登録したら、自分の<strong>ユーザー名（@のあとの文字列）</strong>を PM に伝えてください。招待されないとコードを取得できません。</p>
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section id="tools">
+    <h2 class="sec">2. 道具をインストールする</h2>
+    <p>必要な道具は次の3つです。<strong>すでに入っている人は飛ばしてOK</strong>（確認方法も書いています）。</p>
+    <table>
+      <tr><th>道具</th><th>役割</th><th>必須？</th></tr>
+      <tr><td><strong>Node.js</strong></td><td>アプリを動かすエンジン</td><td>✅ 必須</td></tr>
+      <tr><td><strong>Git</strong></td><td>コードのダウンロード・共有</td><td>✅ 必須</td></tr>
+      <tr><td><strong>Visual Studio Code</strong></td><td>コードを書く・見るエディタ</td><td>✅ 必須</td></tr>
+      <tr><td>GitHub Desktop</td><td>Git を画面操作でかんたんに</td><td>⬜ あると便利</td></tr>
+    </table>
+
+    <h3><span class="num">2-1.</span> Node.js（ノードジェイエス）</h3>
+    <p>アプリを動かすための土台です。<strong>このプロジェクトは Node.js v20.9.0 以上が必要</strong>です（v20 か v22 の「LTS」版を推奨）。</p>
+    <ul>
+      <li>ダウンロード：<a href="https://nodejs.org/ja">nodejs.org/ja</a> → <strong>「LTS」</strong>と書かれた方をインストール</li>
+      <li>インストール中の選択肢は、基本そのまま「次へ」でOK</li>
+    </ul>
+    <p><strong>確認方法</strong>（ターミナルの開き方は <a href="#term">2-5</a>）：</p>
+<pre><code>node -v</code></pre>
+    <p>→ <code>v20.x.x</code> や <code>v22.x.x</code> のように <strong>v20以上</strong>の数字が出ればOK。</p>
+<pre><code>npm -v</code></pre>
+    <p>→ <code>10.x.x</code> などの数字が出ればOK（npm は Node.js に同梱）。</p>
+    <div class="callout warn"><p>⚠️ <code>v18</code> 以下が出た人は、古いので新しい LTS を入れ直してください。</p></div>
+
+    <h3><span class="num">2-2.</span> Git（ギット）</h3>
+    <ul>
+      <li><strong>Windows</strong>：<a href="https://git-scm.com/download/win">git-scm.com/download/win</a> からインストール（選択肢は基本そのまま）</li>
+      <li><strong>Mac</strong>：ターミナルで <code>git --version</code> と打つと、未インストール時は自動で案内が出ます</li>
+    </ul>
+    <p><strong>確認方法</strong>：</p>
+<pre><code>git --version</code></pre>
+    <p>→ <code>git version 2.x.x</code> のように出ればOK。</p>
+    <p><strong>初回だけ</strong>、自分の名前とメールを設定します（コミットに記録される名前です）。</p>
+<pre><code>git config --global user.name "あなたの名前"
+git config --global user.email "あなたのメール@example.com"</code></pre>
+
+    <h3><span class="num">2-3.</span> Visual Studio Code（VS Code）</h3>
+    <p>コードを書いたり見たりするエディタです。ダウンロード：<a href="https://code.visualstudio.com/">code.visualstudio.com</a></p>
+    <p>おすすめ拡張機能（左の四角アイコン＝Extensions から検索）：</p>
+    <ul>
+      <li><strong>ESLint</strong> … コードの書き方ミスを教えてくれる</li>
+      <li><strong>Tailwind CSS IntelliSense</strong> … デザイン用クラスの補完</li>
+      <li><strong>Japanese Language Pack</strong>（任意）… VS Code を日本語表示にする</li>
+    </ul>
+
+    <h3><span class="num">2-4.</span> GitHub Desktop（任意・初心者におすすめ）</h3>
+    <p>Git のコマンドが不安な人は、<strong>画面のボタン操作</strong>でクローン／コミット／プッシュできる GitHub Desktop が便利です。ダウンロード：<a href="https://desktop.github.com/">desktop.github.com</a></p>
+    <div class="callout tip"><p>このガイドは「コマンドでやる方法」を基本に書きますが、GitHub Desktop を使う場合の補足も各所に入れています。</p></div>
+
+    <h3 id="term"><span class="num">2-5.</span> ターミナルの開き方</h3>
+    <p>「ターミナル」とは、文字でコマンドを打って操作する画面のことです。</p>
+    <ul>
+      <li><strong>Windows</strong>：スタートメニューで「PowerShell」と検索して開く。または VS Code 上部 → <code>Terminal</code> → <code>New Terminal</code></li>
+      <li><strong>Mac</strong>：「ターミナル(Terminal)」アプリを開く。または VS Code 上部 → <code>Terminal</code> → <code>New Terminal</code></li>
+    </ul>
+    <div class="callout tip"><p>💡 <strong>一番ラクなのは VS Code 内のターミナル</strong>です。フォルダを開いた状態で使えば、置き場所を間違えにくくおすすめ。</p></div>
+  </section>
+
+  <!-- 3 -->
+  <section id="clone">
+    <h2 class="sec">3. ソースコードを自分のPCに持ってくる（clone）</h2>
+    <p>GitHub にあるコードを、自分のPCにコピーしてくる作業です。これを<strong>「クローン（clone）」</strong>と言います。</p>
+
+    <h3><span class="num">3-1.</span> 置き場所を決める</h3>
+    <p>コードを置くフォルダに移動します（例：デスクトップ）。</p>
+<pre><code>cd ~/Desktop</code></pre>
+    <div class="callout tip"><p><code>cd</code> は「フォルダを移動する」コマンド（change directory）。Windows の PowerShell でも <code>cd ~/Desktop</code> でデスクトップに移動できます。</p></div>
+
+    <h3><span class="num">3-2.</span> クローンする</h3>
+    <p>GitHub のリポジトリページで、緑の<strong>「Code」ボタン → HTTPS → URLをコピー</strong>。そして：</p>
+<pre><code>git clone &lt;コピーしたURL&gt;</code></pre>
+    <p>例：</p>
+<pre><code>git clone https://github.com/＜ユーザー名＞/moving-bookshelf-app.git</code></pre>
+    <p>実行すると <code>moving-bookshelf-app</code> フォルダができます。その中に入ります。</p>
+<pre><code>cd moving-bookshelf-app</code></pre>
+    <div class="callout tip"><p>🖱️ <strong>GitHub Desktop の場合</strong>：<code>File → Clone repository</code> から選んでボタンを押すだけ。クローン後 <code>Repository → Open in Visual Studio Code</code> でエディタが開けます。</p></div>
+
+    <h3><span class="num">3-3.</span> VS Code で開く</h3>
+<pre><code>code .</code></pre>
+    <p>（最後の <code>.</code> は「今いるフォルダ」の意味。<code>code</code> が効かない場合は VS Code で <code>File → Open Folder</code> から <code>moving-bookshelf-app</code> を選択。）</p>
+  </section>
+
+  <!-- 4 -->
+  <section id="install">
+    <h2 class="sec">4. 部品をそろえる（npm install）</h2>
+    <p>アプリが使う外部の部品（ライブラリ）をまとめてダウンロードします。<strong><code>moving-bookshelf-app</code> フォルダの中にいること</strong>を確認してから実行してください。</p>
+<pre><code>npm install</code></pre>
+    <ul>
+      <li>数分かかります。最後に <code>added XXX packages</code> のように出れば成功。</li>
+      <li><code>node_modules</code> という大きなフォルダができますが、自動生成なので触らなくてOK（Gitにも含めない設定済み）。</li>
+    </ul>
+    <div class="callout warn"><p>⚠️ 黄色い <code>warn</code> が大量に出ても基本は無視でOK。赤い <code>error</code> で止まったときだけ<a href="#trouble">トラブルシューティング</a>を見てください。</p></div>
+  </section>
+
+  <!-- 5 (env) -->
+  <section id="env">
+    <h2 class="sec">5. 設定ファイル <code>.env.local</code> を作る</h2>
+    <p>アプリが Supabase（データの保管庫）につなぐための<strong>接続情報</strong>を書いたファイルを作ります。このファイルは秘密情報を含むため<strong>Git には含めません</strong>（<code>.gitignore</code> 済み）。だから一人ひとり手で作ります。</p>
+
+    <h3><span class="num">5-1.</span> ファイルを作る</h3>
+    <p><code>moving-bookshelf-app</code> フォルダの<strong>直下</strong>（<code>package.json</code> と同じ場所）に、<code>.env.local</code> という名前のファイルを新規作成します。</p>
+    <ul>
+      <li><strong>VS Code でやる方法</strong>：ファイル一覧で <code>moving-bookshelf-app</code> を選び、新規ファイル → 名前を <code>.env.local</code>（先頭のドットを忘れずに）</li>
+      <li><strong>コマンドでやる方法</strong>：
+<pre><code>ni .env.local      # Windows PowerShell の場合
+touch .env.local   # Mac の場合</code></pre>
+      </li>
+    </ul>
+
+    <h3><span class="num">5-2.</span> 中身を貼り付ける</h3>
+    <p>作った <code>.env.local</code> に、下の内容を<strong>そのままコピペ</strong>して保存してください。</p>
+<pre><code>NEXT_PUBLIC_SUPABASE_URL=https://zljswppciglhvwjyquow.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_Ebl1Rfth5d2_Kikh6nK2wA_PEM75NnJ</code></pre>
+    <div class="callout tip"><p>📌 この2つの名前（<code>NEXT_PUBLIC_SUPABASE_URL</code> と <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>）は、コード <code>lib/supabaseClient.ts</code> が読みに行く名前と一致している必要があります。名前を変えると動かなくなるので、そのまま貼ってください。</p></div>
+
+    <h3><span class="num">5-3.</span> 🔐 セキュリティの超重要ルール</h3>
+    <div class="callout danger">
+      <span class="label">ここだけは必ず守る</span>
+      <ul>
+        <li>載せている <code>sb_publishable_...</code> は<strong>公開してよい種類のキー（publishable key）</strong>。ブラウザにも送られる前提なので、チーム内資料に書いてもOK。</li>
+        <li>ただし Supabase の <strong><code>service_role</code>（サービスロールキー）は絶対に共有・コピペ・コミットしないこと。</strong>漏れると DB を誰でも全操作できてしまいます。</li>
+        <li><code>.env.local</code> ファイル自体を Slack 等に貼ったり、Git に commit したりしない（<code>.gitignore</code> 済みなので通常 commit されません）。</li>
+      </ul>
+    </div>
+    <div class="callout tip"><p>🔎 自分で値を確認したい場合：Supabase ダッシュボード → 対象プロジェクト → <code>Project Settings</code> に URL（Project ID）とキーがあります（PMから閲覧権限をもらってください）。</p></div>
+  </section>
+
+  <!-- 6 run -->
+  <section id="run">
+    <h2 class="sec">6. 起動して確認する（npm run dev）</h2>
+    <p>いよいよ起動です。<code>moving-bookshelf-app</code> フォルダの中で実行します。</p>
+<pre><code>npm run dev</code></pre>
+    <p>成功すると、こんな表示が出ます（数字や文言は多少違ってOK）：</p>
+<pre class="ascii">  ▲ Next.js 16.2.7
+  - Local:   http://localhost:3000
+  ✓ Ready in X.Xs</pre>
+    <p>ブラウザ（Chrome など）で <strong>http://localhost:3000</strong> を開いてください。<br>
+    <strong>「本一覧（ホーム） / S-1」</strong> という見出しのページが表示されたら…</p>
+    <div class="callout ok"><p><strong>成功です！🎉</strong></p></div>
+
+    <h3>終了のしかた</h3>
+    <p>ターミナルで <strong><code>Ctrl + C</code></strong>（Mac も <code>Ctrl + C</code>）を押すとサーバーが止まります。また開発するときは、もう一度 <code>npm run dev</code> を実行すればOK。</p>
+    <div class="callout tip"><p>💡 コードを保存すると、ブラウザが自動で更新されます（ホットリロード）。いちいち再起動は不要です。</p></div>
+  </section>
+
+  <!-- 7 db -->
+  <section id="db">
+    <h2 class="sec">7. （参考）データベースについて</h2>
+    <p>このアプリのデータ（本・貸出履歴・ロボの状態など）は <strong>Supabase</strong> に入っています。</p>
+    <ul>
+      <li>テーブルの定義は <code>supabase/schema.sql</code> にあります。</li>
+      <li><strong>通常メンバーは、自分でDBを作る必要はありません。</strong> PMがすでに用意した共有のSupabaseにつなぎます（ステップ5の接続情報がそれです）。</li>
+      <li>自分専用のSupabaseで試したい人だけ、<code>schema.sql</code> の中身を Supabase の <code>SQL Editor</code> に貼って実行するとテーブル一式が作られます。</li>
+    </ul>
+    <div class="callout warn"><p>⚠️ このSQLには<strong>削除（DELETE）のポリシーがわざと入っていません</strong>（全削除事故を防ぐため）。仕様です。</p></div>
+  </section>
+
+  <!-- 8 trouble -->
+  <section id="trouble">
+    <h2 class="sec">8. うまくいかないとき（トラブルシューティング）</h2>
+    <div class="callout tip"><p>エラーが出たら、<strong>メッセージの全文をコピー</strong>して読む or チームに貼るのが解決の近道です。</p></div>
+
+    <h3><code>node</code> や <code>npm</code> が「コマンドが見つかりません」と出る</h3>
+    <ul><li>Node.js のインストールが終わっていないか、<strong>ターミナルを開き直していない</strong>だけのことが多い。一度閉じて開き直してから <code>node -v</code>。</li></ul>
+
+    <h3><code>git clone</code> で <code>Permission denied</code> / <code>Repository not found</code></h3>
+    <ul>
+      <li>このリポジトリへの<strong>招待が届いていない</strong>可能性大。PMにGitHubユーザー名を伝えて招待してもらう。</li>
+      <li>GitHubにログインしているかも確認。初回はユーザー名・パスワード（またはトークン）を求められることがあります。</li>
+    </ul>
+
+    <h3><code>npm install</code> が赤い error で止まる</h3>
+    <ul>
+      <li>まず <code>node -v</code> で <strong>v20以上</strong>か確認（古いと失敗）。</li>
+      <li>ネットワークが不安定なことも。もう一度 <code>npm install</code>。</li>
+      <li>それでもダメなら、<code>node_modules</code> と <code>package-lock.json</code> は消さずにエラー全文をチームに共有。</li>
+    </ul>
+
+    <h3><code>npm run dev</code> は起動するが、画面が真っ白／エラーになる</h3>
+    <ul>
+      <li><code>.env.local</code> の<strong>置き場所</strong>（<code>package.json</code> と同じ階層か）と<strong>ファイル名</strong>（先頭のドット）を確認。</li>
+      <li>値の貼り付けミス（余計なスペース・改行・引用符）がないか確認。</li>
+      <li><code>.env.local</code> を編集したら、<strong>いったん <code>Ctrl + C</code> で止めて <code>npm run dev</code> を再実行</strong>（環境変数は再起動しないと反映されません）。</li>
+    </ul>
+
+    <h3><code>supabaseKey is required</code> のようなエラーが出る</h3>
+    <ul><li><code>.env.local</code> のキー名が違っている可能性。ステップ5-2の2行をそのまま貼り直してください（キー名は <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>）。</li></ul>
+
+    <h3><code>Port 3000 is already in use</code>（3000番が使用中）</h3>
+    <ul>
+      <li>すでに別の <code>npm run dev</code> が動いています。古いターミナルで <code>Ctrl + C</code> するか、PCを再起動。</li>
+      <li>急ぎなら別ポートで起動：<code>npm run dev -- -p 3001</code> → http://localhost:3001</li>
+    </ul>
+
+    <h3><code>.env.local</code> ファイルが作れない／見えない</h3>
+    <ul>
+      <li>ファイル名が <code>.env.local</code> になっているか（<code>env.local</code> や <code>.env.local.txt</code> はNG）。</li>
+      <li>Windows のエクスプローラーで作ると拡張子が隠れて <code>.txt</code> が付くことがあります。VS Code で作るのが確実。</li>
+    </ul>
+  </section>
+
+  <!-- 9 flow -->
+  <section id="flow">
+    <h2 class="sec">9. 環境ができたら：日々の開発の流れ</h2>
+    <p>環境構築は最初の1回だけ。ここから先、毎日の作業は次のサイクルです（詳細は <code>CONTRIBUTING.md</code>）。</p>
+<pre><code>git switch main &amp;&amp; git pull        # ① 最新の本流を取り込む
+git switch -c feature/◯◯           # ② 作業用のブランチを作る
+# （コードを編集）
+npm run dev                        # ③ ローカルで動作確認
+git add .                          # ④ 変更をステージ
+git commit -m "やったことを1行で"    # ⑤ 記録
+git push -u origin feature/◯◯      # ⑥ GitHubへ送る
+# → GitHubでPull Request → 水谷がレビュー → マージ → 自動デプロイ</code></pre>
+    <div class="callout danger">
+      <span class="label">ルール（最重要）</span>
+      <ul>
+        <li><code>main</code> に直接 push しない。必ずブランチを切って <strong>Pull Request</strong> を出す。</li>
+        <li>1 PR = 1 Issue を目安に小さく。</li>
+        <li>マージは PM（水谷）の承認後。</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 10 checklist -->
+  <section id="checklist">
+    <h2 class="sec">10. 最終チェックリスト ✅</h2>
+    <p>ここまで全部できていれば、環境構築は完了です。</p>
+    <ul class="checklist">
+      <li><code>node -v</code> で <strong>v20以上</strong>が表示される</li>
+      <li><code>git --version</code> でバージョンが表示される</li>
+      <li>VS Code で <code>moving-bookshelf-app</code> フォルダを開ける</li>
+      <li><code>npm install</code> がエラーなく完了した</li>
+      <li><code>package.json</code> と同じ場所に <code>.env.local</code> を作り、2行を貼り付けた</li>
+      <li><code>npm run dev</code> を実行して <code>http://localhost:3000</code> でホーム画面が見えた</li>
+      <li><code>git switch -c feature/test</code> で試しにブランチが作れる（確認後 <code>git switch main</code> で戻る）</li>
+    </ul>
+    <div class="callout ok"><p>おつかれさまでした！ つまずいたら遠慮なくチームに聞いてください 🙌</p></div>
+  </section>
+
+  <!-- glossary -->
+  <section id="glossary">
+    <h2 class="sec">用語集（よく出る言葉）</h2>
+    <table>
+      <tr><th>言葉</th><th>かんたんな意味</th></tr>
+      <tr><td><strong>リポジトリ (repository / repo)</strong></td><td>ソースコードの保管場所。GitHub上にある“本棚”のようなもの</td></tr>
+      <tr><td><strong>クローン (clone)</strong></td><td>GitHubのコードを自分のPCにコピーしてくること</td></tr>
+      <tr><td><strong>ターミナル / コマンドライン</strong></td><td>文字でコマンドを打ってPCを操作する画面</td></tr>
+      <tr><td><strong>Node.js</strong></td><td>JavaScript / Next.js のアプリを動かすための土台（エンジン）</td></tr>
+      <tr><td><strong>npm</strong></td><td>Node.js の部品（ライブラリ）を管理する道具。<code>npm install</code> で部品をそろえる</td></tr>
+      <tr><td><strong>依存パッケージ / ライブラリ</strong></td><td>アプリが使う外部の部品。<code>node_modules</code> に入る</td></tr>
+      <tr><td><strong>環境変数 / <code>.env.local</code></strong></td><td>URLやキーなどの“接続情報・設定”を書いておくファイル</td></tr>
+      <tr><td><strong>localhost:3000</strong></td><td>自分のPCの中だけで動いている、開発用のアプリのアドレス</td></tr>
+      <tr><td><strong>Supabase</strong></td><td>データベース・ログイン機能をまとめて提供するクラウドサービス</td></tr>
+      <tr><td><strong>ブランチ (branch)</strong></td><td>作業を枝分かれさせる仕組み。本流(<code>main</code>)を壊さず安全に開発できる</td></tr>
+      <tr><td><strong>コミット (commit)</strong></td><td>変更内容を記録すること（セーブのようなもの）</td></tr>
+      <tr><td><strong>プッシュ (push)</strong></td><td>自分の記録をGitHub側に送ること</td></tr>
+      <tr><td><strong>Pull Request (PR)</strong></td><td>「この変更を本流に入れてください」とお願いする仕組み。レビューを受ける</td></tr>
+      <tr><td><strong>ホットリロード</strong></td><td>コードを保存すると、ブラウザが自動で更新される機能</td></tr>
+    </table>
+  </section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>この資料は moving-bookshelf-app の開発メンバー向けです。<br>
+    内容が古くなっていたら気づいた人が直して PR を出してください。</p>
+  </footer>
+
+</div>
+</body>
+</html>

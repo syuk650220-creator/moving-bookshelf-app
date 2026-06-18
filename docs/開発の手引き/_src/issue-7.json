@@ -1,0 +1,145 @@
+{
+  "issueNo": 7,
+  "taskName": "借りる／返すを作る",
+  "screen": "S-2",
+  "role": "アプリA",
+  "sprint": "Sprint 2",
+  "priority": "★★☆",
+  "status": "",
+  "category": "アプリ",
+  "stack": ["TypeScript", "React", "Next.js(動的ルート[id])", "Supabase JS"],
+  "oneLineGoal": "本詳細画面(S-2)で1冊を表示し、『借りる』『返す』ボタンで loans と books の2テーブルを続けて更新し、貸出履歴も見せる。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {"type": "p", "text": "**本詳細画面(S-2)** を作ります。URL は `/books/[id]`（[id] はその本の uuid）。やることは4つ：(1) URL の id で `books` を**1冊だけ**取得して表示、(2)『借りる』を押すと `loans` に1行 **insert** ＋ `books.status` を `on_loan` に **update**、(3)『返す』を押すと未返却の `loans` に `returned_at`/`returned_by` を入れて `books.status` を `available` に戻す、(4) この本の**貸出履歴(loans)** も一覧表示。"},
+        {"type": "callout", "variant": "tip", "label": "このIssueの山場", "text": "1回の操作で **2つのテーブルを続けて更新する** のが初めての回です。『片方だけ成功して片方が失敗したらどうなる？』を意識するのがこのIssueの一番の学びどころ。"},
+        {"type": "p", "text": "編集するのは基本 `app/books/[id]/page.tsx` の1枚。現状は仮の文章だけの**スタブ（仮置きファイル）**です。DB接続の窓口 `lib/supabaseClient.ts` は **import するだけ**で中身は触りません。前提は #1（本一覧）— 一覧から本をタップしてこの詳細に来る流れです。"},
+        {"type": "callout", "variant": "warn", "label": "このNext.jsは最新版(16系)", "text": "あなたの知っている書き方と違う可能性があります。特に **動的ルートの [id] の受け取り方**（params が Promise になった）は昔と変わっています。答えのコードを覚えるのではなく、必ず `node_modules/next/dist/docs/` の該当ガイドを開いて『今の正しい書き方』を確認しながら進めてください。下の『調べる・学ぶこと』が道案内です。"}
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {"type": "checklist", "items": [
+          "URL の id（`/books/[id]` の [id]）で `books` を**1件** select して、タイトル/著者/段/状態を表示できる",
+          "『借りる』で `loans` に **book_id・borrower_type(今回は \"guest\")・guest_name・borrowed_at** を入れて1行 insert できる（必須列が埋まっていること）",
+          "『借りる』成功後に `books.status` を `on_loan` に update でき、画面の状態表示も最新になる",
+          "『返す』で**未返却の loan**（`returned_at` が null）に `returned_at` と `returned_by` を入れて update できる",
+          "『返す』成功後に `books.status` を `available` に戻し、画面の状態表示も最新になる",
+          "この本の**貸出履歴(loans)** が新しい順などで一覧表示される",
+          "更新が**失敗したとき**、画面にエラーメッセージが出る（onClick 内なので try/catch + useState で出す。error.tsx では出ない）",
+          "PRを出して Closes #7 を本文に書く"
+        ]},
+        {"type": "callout", "variant": "ok", "label": "Done の確認は Table Editor でも", "text": "『insert できた』は画面の見た目だけでなく、Supabase ダッシュボード → Table Editor → loans を開いて、book_id・borrower_type・borrowed_at が**実際に埋まった行**ができているかを目で確認しましょう。必須列が空のまま『できた』と思い込むのを防げます。"}
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {"type": "callout", "variant": "study", "label": "おすすめの進め方（最初の分かれ道を消す）", "text": "この Issue は『借りる/返す』ボタン（onClick）と状態の出し分けが主役なので、ページを **use client にして** id は **use(params)** で受け、データ取得も **useEffect + select** で統一すると一本道です。サーバー方式(await params)も可能ですが、ボタン操作が多いこの画面ではクライアント方式の方が迷いません。"},
+        {"type": "steps", "items": [
+          {"title": "ステップ0：環境準備（未済なら）", "detail": "clone → `npm install` → `.env.local` を「環境構築ガイド.html」の通りに自分で作る（正しいキー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。古い資料の …ANON_KEY は誤り）。前提 #1（本一覧）が動く状態だと、一覧→詳細の流れで確認しやすい。"},
+          {"title": "ステップ1：ブランチを切る", "detail": "main へ直接書かない。`feature/borrow-return` のような自分のブランチを作る。コマンドは下の『動作確認のしかた』に。"},
+          {"title": "ステップ2：このページを use client にして id を受け取る", "detail": "`app/books/[id]/page.tsx` の先頭に `'use client'` を書き、`use(params)` で id を取り出す。⚠16系では params が **Promise** なので、昔のように `params.id` と直接読むと undefined になる。受け取り方は下の研究『動的ルート [id] と params』とdocsで必ず確認。"},
+          {"title": "ステップ3：取得処理を『関数』にまとめる（あとで再利用する）", "detail": "id で books を1件 select する処理と、その本の loans を一覧 select する処理を、**呼び直せる関数**として書く。これを useEffect で初回に1回呼ぶ。⚠重要：あとのステップ6で『更新成功後にこの関数を呼び直す』ので、最初から関数にしておくと後がラク。結果は useState に入れて画面に出す。"},
+          {"title": "ステップ4：本1件と貸出履歴を表示する", "detail": "取れた本のタイトル/著者/段/状態を表示。loans は新しい順（`borrowed_at` 降順など）で一覧に並べる。0件なら『履歴なし』等を出す。"},
+          {"title": "ステップ5：『借りる』ボタンの処理を書く", "detail": "onClick の中で順に：(1) `loans` に insert（**book_id・borrower_type=\"guest\"・guest_name（仮名でOK）・borrowed_at**）→ (2) その error を if で確認 → (3) 成功していれば `books` を `status='on_loan'` に update（**id で eq して対象を絞る**）。⚠ #6(ゲスト名) が未実装の今は **borrower_type=\"guest\" + guest_name に仮の名前**を決め打ちで入れて動かす（理由は下の研究参照）。"},
+          {"title": "ステップ6：成功したら表示を最新化する", "detail": "借りる/返すが成功したら、**ステップ3で作った取得関数を呼び直す**。これで status と履歴が最新になる。『再描画』とは具体的にこれ＝前ステップの取得関数の再呼び出し、と覚える。"},
+          {"title": "ステップ7：『返す』ボタンの処理を書く", "detail": "onClick の中で：(1) この本の**未返却 loan**（`book_id` 一致 ＆ `returned_at` が null）を `.is('returned_at', null)` で絞る → (2) 通常は1件のはずだが、複数あり得るので **まず select で対象を1件特定 → その loan の id で update** の2段が安全（または borrowed_at 降順で1件に絞る）→ (3) `returned_at`(今の時刻) と `returned_by` を update → (4) 成功したら `books` を `status='available'` に update（**id で eq**）→ (5) ステップ6の最新化。"},
+          {"title": "ステップ8：失敗時のエラー表示を入れる", "detail": "⚠ onClick 内のエラーは **error.js / エラー境界では捕まりません**（公式docsに明記）。各 supabase 呼び出しの `error` を if で見て、try/catch で囲み、`useState` に持ったエラーメッセージを画面に出す。これがクライアント方式での正しい失敗表示。"},
+          {"title": "ステップ9：動作確認して PR を出す", "detail": "下の『動作確認のしかた』で借りる→返すを通しで確認 → コミット → push → PR。本文に『何をしたか / Closes #7 / 動作確認』。マージは PM(水谷) 承認後 Squash and merge。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {"type": "p", "text": "ここがこの資料の核心です。各ステップで詰まりやすい概念を「何を / なぜ / どこで調べるか」でまとめました。答えのコードはあえて載せません。下のdocs/URLを自分で開いて、今のNext.js16・Supabaseの書き方を確認してください。"},
+        {"type": "research", "items": [
+          {"topic": "動的ルート [id] と params の受け取り方（16系では params が Promise）", "why": "URL の id を取らないと『どの本か』が決まらず、最初の一歩で止まる。16系では params が Promise になり、昔の `params.id` 直読みは undefined になる。この Issue はボタン操作中心なので use client + `use(params)` で受けるのが一本道。", "where": "node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/dynamic-routes.md の『In Client Components』節（`'use client'` ＋ React の `use(params)` で受け取る例）と冒頭の『params は Promise。await か use で開く』の記述。クライアントなので await ではなく **use(params)** を使う。"},
+          {"topic": "Supabase の select で1件だけ取る／履歴を並べて取る", "why": "id で books を1件、book_id で loans を複数（履歴）取る。1件取得・並び替え（order）・null 絞り込みの文法を知る必要がある。", "where": "https://supabase.com/docs/reference/javascript/select 。1件なら id で eq、履歴は borrowed_at の降順で order。戻り値は `{ data, error }`（error は throw されず戻り値に入る点に注意）。"},
+          {"topic": "Supabase の insert に何を入れるか（loans の必須列を schema に即して）", "why": "loans は `borrower_type` が **NOT NULL かつ CHECK(in 'user','guest')**、`book_id` も NOT NULL。これを入れずに insert すると『null value in column』や『violates check constraint』という原因の分かりにくいエラーで詰まる。誰が借りるかで guest_name か user_id のどちらを使うかも変わる。", "where": "supabase/schema.sql の loans 定義（41〜47行）で必須列を確認。insert 文法は https://supabase.com/docs/reference/javascript/insert 。⚠**#6(ゲスト名)が未実装の今は、borrower_type=\"guest\" ＋ guest_name に仮の名前を決め打ち**で入れて動かす（user_id はログイン機能後の話なので今は使わない）。"},
+          {"topic": "Supabase の update で対象を eq/is で絞る（borrow=on_loan, return=available）", "why": "books の status を変えるとき、必ず**その本だけ**に絞らないと全件書き換えてしまう。返却では『未返却の loan』を null 判定で絞る必要がある。", "where": "https://supabase.com/docs/reference/javascript/update 。books は `.eq('id', 本のid)`。未返却 loan は `.eq('returned_at', null)` では効かず **`.is('returned_at', null)`** を使う（null は eq でなく is）。複数該当時は『まず select で1件の id を特定 → その id で update』の2段、または borrowed_at 降順で1件に絞る。"},
+          {"topic": "2つのテーブルを続けて更新するときの考え方と、片方失敗時の注意", "why": "借りる/返すは loans と books を**続けて**変える。1つ目が成功して2つ目が失敗すると、データがちぐはぐ（loans は入ったのに status が変わっていない等）になる。学生プロジェクトでは完全な取り消し(トランザクション)までは求めず、『各 error を必ず確認 → 失敗を検知してユーザーに知らせる』で十分。", "where": "考え方の参照として node_modules/next/dist/docs/01-app/01-getting-started/07-mutating-data.md。⚠ただしこの docs は **Server Functions / Server Actions（'use server'）+ revalidatePath / router.refresh の世界**で、このプロジェクトの『クライアントから Supabase JS を直接叩く方式』とは噛み合いません。docs からは『更新後にデータを最新化するという発想(Refresh data)』だけ拾い、Server Function 部分はそのまま使わないこと。最新化は次の項目（取得関数の呼び直し）で行う。"},
+          {"topic": "更新後に画面を最新化する（クライアント方式の具体）", "why": "insert/update しても、画面の useState は自動では変わらない。『再描画』が何を指すのか分からず止まりやすい。", "where": "具体策：**ステップ3で作った取得関数（books 1件＋loans 一覧を取り直す関数）を、借りる/返す成功後に呼び直す**。これで status と履歴が最新になる。docs(07-mutating-data.md)の `router.refresh()` の“更新後に取り直す”という考え方が近いが、サーバー関数/revalidatePath ではなく**クライアントで select を呼び直して useState を更新**するのがこの構成の基本。"},
+          {"topic": "onClick 内のエラーをどう画面に出すか（error.js では捕まらない）", "why": "借りる/返すは onClick（イベントハンドラ）の中で動く。**Error boundary / error.js はイベントハンドラ内のエラーを捕まえない**ので、error.js で失敗を見せようとしても動かず混乱する。", "where": "node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md の『Error boundaries don't catch errors inside event handlers』の節（手動で catch して useState/useReducer に入れUIに出す、と明記）。つまり try/catch ＋ useState でメッセージを表示するのが正解。"},
+          {"topic": "未返却 loan の絞り込み（returned_at is null）と複数該当への対処", "why": "返却対象は『まだ返していない loan』＝ returned_at が null の行。同じ本を何度も借りた履歴があると、null の行が複数になり得る。order/limit が無いと該当全行を書き換える危険がある。", "where": "https://supabase.com/docs/reference/javascript/using-filters の `.is()`（null 判定は **.is('returned_at', null)**、.eq では効かない）。複数対策は『select で borrowed_at 降順 → 先頭1件の id を取り → その id で update』。通常は貸出中=1件の前提だが、安全のため id 特定の2段がおすすめ。"},
+          {"topic": "books に本当にその id の本があるか自分で確認する", "why": "詳細が表示されないとき『バグなのか、id が存在しないだけか』を自分で切り分けるため。", "where": "Supabase ダッシュボード → Table Editor → books で対象の id を探す。URL の id とコピー一致しているか確認。前提 #1（本一覧）の行から正しい id でリンクされているかも見る。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {"type": "callout", "variant": "danger", "label": "update で eq/is を付け忘れると全件書き換え", "text": "books の status を update するとき `.eq('id', 本のid)` を付け忘れると**全部の本の status が書き換わります**。しかもこのプロジェクトは **DELETE ポリシーが無く、消して作り直せません**（全削除事故防止の仕様）。だから update する前に必ず select で『対象が1件か』を確かめる癖をつけましょう。返却の未返却 loan も同様に必ず絞ってから update。"},
+        {"type": "callout", "variant": "warn", "label": "insert で『null value in column \"borrower_type\"』『violates check constraint』が出る", "text": "loans の `borrower_type` は NOT NULL ＆ CHECK(in 'user','guest') です。これを入れずに insert すると『null value in column \"borrower_type\"』、'user'/'guest' 以外を入れると『violates check constraint』が出ます。今回は #6 前なので **borrower_type=\"guest\" ＋ guest_name に仮名** を入れてください。book_id も NOT NULL なので必須。"},
+        {"type": "callout", "variant": "warn", "label": "params をそのまま読むと undefined になる", "text": "16系では params が Promise です。`params.id` と直接読むと undefined。use client にして `use(params)` で開いてから id を取り出してください（dynamic-routes.md の In Client Components 節）。"},
+        {"type": "callout", "variant": "warn", "label": "error.js を作ったのに失敗が表示されない", "text": "借りる/返すは onClick（イベントハンドラ）の中。**error.js / エラー境界はイベントハンドラ内のエラーを捕まえません**（10-error-handling.md に明記）。各 supabase 呼び出しの error を if で見て、try/catch ＋ useState でメッセージを画面に出してください。"},
+        {"type": "ul", "items": [
+          "null の絞り込みは **`.is('returned_at', null)`**。`.eq('returned_at', null)` は効かない（定番の詰まり所）。",
+          "未返却 loan が**複数になることもある**（同じ本を何度も借りた履歴）。order(borrowed_at 降順)＋先頭1件、または select で id を特定してから update。",
+          "列名は loans: book_id / borrower_type / user_id / guest_name / borrowed_at / returned_at / returned_by、books: id / status(available|on_loan)。スペル・大文字小文字を schema 通りに。",
+          "loans と books の2回更新は**続けて**走る。1回目の error を確認せず2回目に進むと、片方だけ反映されてちぐはぐになる。各 error を必ず if で確認。"
+        ]},
+        {"type": "callout", "variant": "tip", "label": "Issue番号で迷ったら", "text": "古い資料は番号がズレていることがあります。番号よりタスク名・画面名(S-2)で照合してください。このIssueは #7=借りる/返す、画面は S-2 本詳細(/books/[id]) が正です。"}
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {"type": "code", "lang": "bash", "code": "# 初回だけ\nnpm install\n# .env.local を「環境構築ガイド.html」の通りに自分で作成\n#   キー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正\n\n# 毎回の作業\ngit checkout main\ngit pull\ngit checkout -b feature/borrow-return\nnpm run dev\n# ブラウザで http://localhost:3000 → 本一覧から1冊タップ\n#   または直接 http://localhost:3000/books/<本のuuid> を開く"},
+        {"type": "checklist", "items": [
+          "詳細画面に本1冊のタイトル/著者/段/状態が出る",
+          "『借りる』を押すと status が on_loan になり、履歴に1行増える（画面が最新化される）",
+          "Table Editor → loans に book_id・borrower_type=\"guest\"・guest_name・borrowed_at が埋まった行ができている",
+          "『返す』を押すと status が available に戻り、その loan に returned_at/returned_by が入る",
+          "未返却 loan が無い状態で『返す』を押しても全件書き換え等が起きない（対象を絞れている）",
+          "わざと失敗させると（例：通信を切る／必須列をわざと抜く）画面にエラーメッセージが出る（error.js でなく useState 表示）"
+        ]},
+        {"type": "callout", "variant": "ok", "label": "前提の確認", "text": "この画面は #1(本一覧)・#2(テーブル作成)・#3(サンプル投入) が済んでいる前提です。本が表示されないときは、まず Supabase → Table Editor → books に対象 id の行があるか自分で確認し、バグか id 不一致かを切り分けましょう。"}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {"type": "p", "text": "AIには『答えのコードを書かせる』のではなく『考え方を導いてもらう』のが本プロジェクトの方針です。下のプロンプトをコピペして使ってください。"},
+        {"type": "code", "lang": "text", "code": "あなたは私のプログラミング『コーチ』です。答えの完成コードは書かないでください。\n私は Next.js も初心者です。私が自分の手で書いて学べるよう、考え方・手順・つまずき所・調べ先だけを示してください。\n\n前提（重要）:\n- このプロジェクトの Next.js は最新版(16系)で、あなたの学習データと書き方が違う可能性があります。\n- だから一般論で断定せず、まず node_modules/next/dist/docs/ の該当ガイドを私に開かせて、今の書き方を確認させてください。特に動的ルート [id] の params は Promise になっています。\n- DB は Supabase JS。lib/supabaseClient.ts の supabase を import して使います（クライアントから直接叩く方式。Server Functions/Server Actions は使いません）。\n- 列名 loans: book_id, borrower_type(NOT NULL, 'user'|'guest'), user_id, guest_name, borrowed_at, returned_at, returned_by。books: id, status(available|on_loan)。\n- #6(ゲスト名)未実装のため、借りるときは borrower_type=\"guest\" + guest_name に仮名を入れる方針です。\n- DELETE ポリシーが無く削除できない（消して作り直せない）ので update の絞り込みに注意。\n\nやりたいこと: app/books/[id]/page.tsx に本詳細(S-2)を作る。\nURL の id で books を1件表示、『借りる』で loans に insert + books を on_loan に update、『返す』で未返却 loan に returned_at/returned_by を入れ books を available に戻す、貸出履歴も一覧表示。\n\n次の点を『質問返し』で私に考えさせてください（答えを直接書かない）:\n1) use client にして use(params) で id を受けるべき理由と、確認すべき docs はどれか。\n2) loans の insert で必須な列は何か（schema のどこを見れば分かるか）。\n3) update で対象を1件に絞る方法。未返却 loan の null 判定はなぜ .eq では効かないか。\n4) loans と books を続けて更新するとき、片方失敗をどう検知して知らせるか。\n5) onClick 内のエラーが error.js で捕まらないのはなぜか、ではどう画面に出すか（確認すべき docs はどれか）。\n6) 更新後に画面を最新化するには、クライアント方式で具体的に何をすればよいか。\n\n私が詰まったら、答えではなく『どのファイルのどの節を読めばいいか』を教えてください。"},
+        {"type": "callout", "variant": "study", "label": "コーチ活用のコツ", "text": "AIが完成コードを出してきたら『コードはいらない。私が書くから、考え方と読むべきdocsの場所だけ教えて』と言い直しましょう。特に2テーブル更新の『片方失敗時の考え方』は自分で言葉にできると強いです。"}
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["動的ルート [id]", "URL の一部を変数にする仕組み。/books/[id] の [id] にその本の uuid が入る。"],
+          ["params", "[id] などの値が入ってくる入れ物。16系では Promise なので use(params) か await で開く。"],
+          ["use(params)", "クライアントコンポーネントで Promise の params を開く React の関数。先頭に 'use client' が必要。"],
+          ["insert", "Supabase で新しい行を追加する命令。loans に貸出1件を足すときに使う。"],
+          ["update", "既存の行を書き換える命令。必ず eq/is で対象を絞らないと全件書き換えになる。"],
+          ["eq / is", "絞り込み条件。eq は等しい、is は null 判定用（returned_at が null は .is を使う）。"],
+          ["borrower_type", "誰が借りたかの種別。'user'（ログイン利用者）か 'guest'（ゲスト）の2値。NOT NULL。"],
+          ["未返却 loan", "returned_at が null の貸出行。これに返却日時を入れると『返した』状態になる。"],
+          ["2テーブル更新", "1操作で loans と books を続けて変えること。片方失敗に注意。"],
+          ["RLS", "行レベルのアクセス制御。select/insert/update は全員OK、DELETEは誰も不可（削除不能）。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {"type": "ul", "items": [
+          "基本設計 §4-1 操作一覧（S-2 本詳細・借りる/返す/履歴の要件）",
+          "環境構築ガイド.html（同フォルダ）：.env.local の作り方・正しいキー名 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+          "DB接続の窓口: lib/supabaseClient.ts（import して使うだけ。中身は編集しない）",
+          "DBスキーマ: supabase/schema.sql（loans/books の列名と必須列・CHECK 制約を確認。特に loans 41〜47行）",
+          "関連Issue: #1 本一覧（前提・ここから詳細へ遷移） / #6 ゲスト名（今回は仮名で代用、実装後にここを差し替え）",
+          "編集ファイル: app/books/[id]/page.tsx（このIssueで作り込む1枚）"
+        ]},
+        {"type": "p", "text": "Next.js16 のガイド（自分で開いて確認）：動的ルート `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/dynamic-routes.md`（In Client Components 節）と `.../page.md` / use client `.../03-api-reference/01-directives/use-client.md` / データ取得 `.../01-getting-started/06-fetching-data.md` / データ更新の考え方 `.../01-getting-started/07-mutating-data.md`（※Server Function 部分は使わず最新化の発想だけ拾う） / エラー処理 `.../01-getting-started/10-error-handling.md`（イベントハンドラのエラーは手動 catch + useState）。Supabase は [select](https://supabase.com/docs/reference/javascript/select) / [insert](https://supabase.com/docs/reference/javascript/insert) / [update](https://supabase.com/docs/reference/javascript/update) / [filters(.is)](https://supabase.com/docs/reference/javascript/using-filters)。"},
+        {"type": "callout", "variant": "tip", "label": "開発フロー", "text": "main へ直 push 禁止。feature/◯◯ ブランチ → PR（本文に『何をしたか / Closes #7 / 動作確認』）→ PM(水谷)承認後に Squash and merge。1 PR=1 Issue 目安。"}
+      ]
+    }
+  ]
+}
