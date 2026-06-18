@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>#6 ゲスト名入力を作る｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero ">
+    <h1>Issue #6　ゲスト名入力を作る（S-6）</h1>
+    <p>ログインの代わりに「ゲスト名」を入力して、後の貸出操作で使える形に保持する画面(S-6)を作る。</p>
+    <div class="badges">
+      <span class="badge">担当：アプリB</span>
+      <span class="badge">Sprint 2</span>
+      <span class="badge">優先 ★★☆</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill">画面 S-6</span>
+    <span class="pill role">担当：アプリB</span>
+    <span class="pill sprint">Sprint 2</span>
+    <span class="pill prio">優先 ★★☆</span>
+    <span class="pill lang">TypeScript</span>
+    <span class="pill lang">React</span>
+    <span class="pill lang">Next.js</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p>一言でいうと、<strong>ゲスト名を入力する画面(S-6)</strong> を作るタスクです。編集するファイルは <code>app/login/page.tsx</code> の1枚だけ。今このファイルは説明文だけのプレースホルダー(『ログイン/ゲスト / S-6』)になっているので、ここを実際に動く入力画面に差し替えます。</p>
+  <p>なぜ必要か：本を「借りる/返す」(#7) ときに、<strong>誰が借りたか</strong> を記録したいからです。本来は Google ログインで個人を特定しますが、それは後回しの別Issueにします。今回は名前を1つ打ってもらうだけのシンプルな仕組みで、貸出が回るようにします。</p>
+  <div class="callout study"><span class="label">なぜ今回 Supabase Auth(Google ログイン)を使わないの？</span><p>MVP(まず動く最小版)を最短で出すためです。DBの権限ルール(RLS)が『select/insert/update は全員OK』に設定されている(<code>supabase/schema.sql</code>)ので、ログインしていなくても貸出データは書き込めます。さらに <code>loans</code> テーブルには <code>guest_name</code> 列があり、ゲスト名だけで貸出を記録できる設計です。ログインは認証画面・コールバック処理など手間が多いので、別Issueに切り出します。</p></div>
+  <div class="callout warn"><span class="label">このNext.jsは最新の16系です</span><p>ネット上の古い記事(Pages Router や古い App Router)とは書き方が違うことがあります。コードを書く前に必ず <code>node_modules/next/dist/docs/</code> の該当ガイドを開いて、現行の書き方を確認してください。バージョンは Next.js 16系 / React 19 です。</p></div>
+  <div class="callout tip"><span class="label">この画面はリポジトリ初の『対話する画面』です</span><p>home/login/search/register/history の各 page.tsx は今すべて同じプレースホルダー雛形で、ボタンや入力欄・画面遷移の実装例はリポジトリ内に1件もありません。つまり『他の画面を真似る』ことができないので、書き方は下の📚セクションの docs / 公式サイトで確認しながら進めます。あなたが書くコードがチームの最初の手本になります。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <p>Done は2段階に分けます。<strong>必須</strong> が今回のスコープ、<strong>次段</strong> は #7 とつなぐための任意ステップです。</p>
+  <p>■ 必須(今回のIssueはここまででOK)</p>
+  <ul class="checklist"><li>S-6(<code>app/login/page.tsx</code>)に名前を入力できるテキスト入力欄がある</li><li>入力した名前が画面の state に保持され、画面に反映される(打った文字が見える)</li><li>名前が空のときは『使う』で先に進めない(簡単なバリデーション)</li></ul>
+  <p>■ 次段(任意 / #7『借りる・返す』で必要になる)</p>
+  <ul class="checklist"><li>入力したゲスト名を localStorage または React Context に保存し、別画面からも読み出せる(これができると #7 で貸出に使える)</li></ul>
+  <div class="callout warn"><span class="label">Done の食い違いに注意</span><p>『画面内 state だけ』だと別画面に移動した瞬間に名前は消えます。必須項目はそれでも満たせますが、最終ゴール(貸出で使える形で保持)には次段の保存(localStorage / Context)が要ります。まず必須を動かし、余力で次段に進む順番がおすすめです。</p></div>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">ブランチを切る</span><div class="st-detail">main に直接 push は禁止です。<code>feature/guest-name</code> のような名前でブランチを作ってから作業します(命名は CONTRIBUTING の <code>feature/◯◯</code> 形式)。</div></li><li><span class="st-title">このページをクライアントコンポーネントにする</span><div class="st-detail">入力欄やボタンのように『ユーザーと対話する』部品は、ファイルを『クライアントコンポーネント』にする必要があります。そのための宣言(use client)を、ファイルの一番上の行(import より前の最初の行)に置きます。正確な書式(クォートの種類など)は use-client.md で確認してください。</div></li><li><span class="st-title">入力値を入れておく state を用意する</span><div class="st-detail">React の state(useState)で『今入力されている名前』を1つ持ちます。考え方は📚の『Reactのstateで入力値を持つ』を参照。</div></li><li><span class="st-title">入力欄(input)と『使う』ボタン(button)を置く</span><div class="st-detail">input に今の state を表示し、文字が変わるたびに state を更新します。見た目(Tailwind)は最低限でOK。例えば枠線=<code>border</code>、左右の余白=<code>px-3</code>、上下の余白=<code>py-2</code>、角丸=<code>rounded</code> などのユーティリティを付けると入力欄らしくなります。具体的な class 名は Tailwind 公式(v4系)で調べます。</div></li><li><span class="st-title">空チェック(バリデーション)を入れる</span><div class="st-detail">『使う』を押したとき、名前が空(または空白だけ)なら先に進めないようにします。<code>trim()</code> で前後の空白を除いてから空判定する考え方を📚で確認。</div></li><li><span class="st-title">名前を保持する(保存先を決める)</span><div class="st-detail">まずは画面内 state で動作確認。次段として、#7 で別画面から読みたいので localStorage か Context に保存します。選び方は📚の『複数画面で値を使う考え方』を参照。</div></li><li><span class="st-title">次の画面へ進む処理を入れる(任意)</span><div class="st-detail">『使う』を押したあと別画面へ飛ばす場合：単純なリンクなら <code>&lt;Link&gt;</code>(next/link)、今回のように『ボタンを押した後にコードで飛ばす』なら <code>useRouter().push(...)</code> を使います。判断基準は『クリックしてすぐ遷移=Link / 検証してから遷移=useRouter』。</div></li></ol>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <p>ここがこの資料の核心です。答えのコードは載せません。『何を・なぜ・どこで調べるか』を手がかりに、自分の手で書いて学びましょう。</p>
+  <ul class="research"><li><div class="r-topic">use client(クライアントコンポーネント)とは何で、なぜ要るか / どこに書くか</div><div class="r-why">Next.js 16 では各ページはデフォルトでサーバー側で動き、onClick や useState のような対話部品はそのままだと動きません。入力画面には use client が必須。位置を間違える(関数の中に書く等)と最頻で詰まります。</div><div class="r-where">node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md(全体像) と node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md(正確な書式と置く位置=ファイル最上部)。</div></li><li><div class="r-topic">React の state で入力値を持つ(useState / onChange)</div><div class="r-why">入力欄に打った文字を『覚えておく』にはコンポーネントの state が要ります。これが今回の心臓部。React 19 を使っていますが useState の基本は同じです。</div><div class="r-where">React 公式(React 19)https://react.dev/ の『useState』および入力フォーム(controlled input)の解説ページ。検索時は『React 19』を添えると古い情報を避けられます。</div></li><li><div class="r-topic">複数画面で値を使う考え方(状態の持ち上げ / localStorage / Context)</div><div class="r-why">画面内 state だけだと別画面で名前が消えます。#7『借りる/返す』ではここで保存した <code>guest_name</code> を取り出して <code>loans</code> テーブルに insert します。だから『どこに保存すれば別画面から読めるか』を選ぶ必要があります。</div><div class="r-where">React 公式(React 19)https://react.dev/ の『状態の共有(lifting state up)』『Context』。ブラウザ保存は MDN https://developer.mozilla.org/ja/docs/Web/API/Window/localStorage 。判断材料:手軽さ重視ならlocalStorage、アプリ全体で型安全に持つならContext。#7 担当が読み出せる形にすることがゴール。</div></li><li><div class="r-topic">簡単な入力バリデーション(空チェック / trim)</div><div class="r-why">空の名前で貸出を作ると誰が借りたか分からなくなります。最低限『空なら進めない』を入れます。HTML の required 属性と、JS 側で <code>trim()</code> してから判定する方法の両方を知っておくと安心。</div><div class="r-where">MDN『required 属性』https://developer.mozilla.org/ja/docs/Web/HTML/Reference/Attributes/required (旧 /Web/HTML/Attributes/required はリダイレクト。属性名 required で照合してもOK)。trim は MDN『String.prototype.trim』。</div></li><li><div class="r-topic">画面どうしの遷移(&lt;Link&gt; と useRouter().push の使い分け)</div><div class="r-why">『使う』ボタンを押した後に別画面へ飛ばす場合、リンクとプログラム遷移のどちらを使うかで書き方が変わります。今回はボタン押下→検証→遷移の流れなので useRouter 寄りです。</div><div class="r-where">node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md(&lt;Link&gt; 中心)と node_modules/next/dist/docs/01-app/03-api-reference/04-functions/use-router.md(useRouter().push のリファレンス)。</div></li><li><div class="r-topic">Tailwind CSS(v4系)で input / button に見た目を付ける</div><div class="r-why">リポジトリ内のどの画面も今は <code>p-6</code> <code>text-2xl</code> 程度しか class を使っておらず、input/button のスタイル例がありません。真似る対象が無いので自分で調べます。</div><div class="r-where">Tailwind 公式 https://tailwindcss.com/docs 。このプロジェクトは Tailwind v4(package.json: tailwindcss ^4 / @tailwindcss/postcss)なので、検索時は『v4』を意識してください(v3 前提の古い情報に注意)。枠=border、余白=px-/py-、角丸=rounded など語で探すと見つかります。</div></li><li><div class="r-topic">なぜ今回 Supabase Auth を使わないのか(設計判断)</div><div class="r-why">『ログイン無しで貸出が成立する根拠』を理解しておくと、#7 連携で迷いません。</div><div class="r-where">supabase/schema.sql の RLS(insert/update が with check true / using true = 全員OK)と loans.guest_name 列を確認。将来ログインを足す時はゲスト貸出を borrower_type="guest" / guest_name 使用 / user_id は空、で運用する想定。</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <p>初心者がハマりやすい所を先回りで挙げます。</p>
+  <ul><li><strong>onClick や useState がエラーになる / 動かない</strong> → use client 漏れの可能性大。ファイル最上部に宣言があるか確認(step2)。</li><li><strong>use client をどこに書くか分からない</strong> → ファイルの一番上の行(import より前)に書きます。関数の中ではありません。書式は use-client.md で確認。</li><li><strong>別画面に移動したら名前が消えた</strong> → 画面内 state だけだと正常な挙動です。別画面でも使うなら localStorage か Context に保存(step6 / 📚 参照)。</li><li><strong>input に文字を打っても表示が変わらない</strong> → state と onChange の結び付け(controlled input)を確認。React 公式のフォーム解説へ。</li><li><strong>input / button にどんな class を付ければいい？</strong> → 現状どの画面も p-6 等しか無く真似る先がありません。Tailwind 公式(v4系)で border / px- / py- / rounded などを調べて付けます。</li></ul>
+  <div class="callout danger"><span class="label">main へ直接 push しない</span><p>必ずブランチを切ってから作業します。例: <code>feature/guest-name</code>。PR を出すときの本文には『何をしたか / Closes #6 / 動作確認』を書きます(テンプレは CONTRIBUTING.md)。マージは PM(水谷)承認後の Squash and merge です。</p></div>
+  <div class="callout warn"><span class="label">Next.js 16 ではエラーの見え方が違うことも</span><p>イベントハンドラやフック関連の赤いエラーが出たら、まず use client 漏れを疑ってください。正確なエラー文言は Next.js 16 で変わっている可能性があるので、docs(use-client.md)と実際の出力を突き合わせて確認しましょう。</p></div>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <p>開発サーバーを起動して、<code>/login</code>(S-6)を開いて確認します。</p>
+  <pre><code>npm run dev</code></pre>
+  <p>ブラウザで http://localhost:3000/login を開き、次を確認します。</p>
+  <ul class="checklist"><li>テキスト入力欄が表示され、文字を打つと打った内容が画面に反映される</li><li>名前を空のまま『使う』を押しても先に進めない(エラー表示 or 何も起きない)</li><li>名前を入れて『使う』を押すと、保持される(画面内 state なら state が更新される / 次段で localStorage を選んだ場合のみ、別画面でも読み出せる)</li><li>ブラウザのコンソール(F12)に赤いエラーが出ていない</li></ul>
+  <div class="callout tip"><span class="label">cross-page の確認は『次段』を作った場合だけ</span><p>別画面から名前を読めるかは、localStorage か Context に保存(次段Done)を実装したときに確認します。画面内 state だけのときは、別画面に行くと消えるのが正常なので、そこは合格条件に入れなくてOKです。</p></div>
+  <div class="callout ok"><span class="label">localStorage を選んだ場合の追加確認</span><p>F12 → Application(アプリケーション)タブ → Local Storage で、保存したキーにゲスト名が入っているか見られます。別タブ/別画面で読み出して同じ名前が出れば、#7 への受け渡し準備OKです。</p></div>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AIには『答えのコードを書かせる』のではなく、『考え方を導いてもらう・調べ先を教えてもらう』使い方をします。下のプロンプトをコピペして使ってください。</p>
+  <pre><code>あなたは私の学習を助けるコーチです。答えのコードは書かないでください。
+代わりに、考え方・つまずき所・『何を・なぜ・どこで調べるか』を示してください。
+
+前提:
+- プロジェクトは Next.js 16系(App Router) + React 19 + Tailwind CSS v4 + TypeScript。
+- このNext.jsは最新版で、あなたの学習データと書き方が違う可能性があります。
+  だから断定せず、必ず node_modules/next/dist/docs/ の該当ガイドを私自身に
+  開いて確認させてください(例: use-client.md / 05-server-and-client-components.md /
+  04-linking-and-navigating.md / use-router.md)。
+- 編集ファイルは app/login/page.tsx の1枚(画面S-6)。
+
+やりたいこと(Issue #6):
+  ゲスト名を入力する画面を作る。名前をstateで持ち、空なら進めないバリデーションを入れ、
+  後の貸出(#7)で使えるよう保持する(localStorage か Context を検討)。
+
+お願い:
+1) まず私に確認させるべき docs/公式ページを挙げてください。
+2) 実装の手順を『考え方』として段階で説明してください(コードは書かない)。
+3) 私が詰まりそうな所(use client の位置、controlled input、保存先の選択)を先回りで指摘してください。
+4) 私が書いたコードを貼ったら、答えを書き直すのではなく、どこをどう直すヒントだけください。</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>ゲスト名</td><td>ログインの代わりに使う表示名。貸出記録(loans.guest_name)に残す名前</td></tr><tr><td>クライアントコンポーネント</td><td>ブラウザ側で動く部品。入力欄やボタンなど『対話する』ものに必要。use client を付ける</td></tr><tr><td>use client</td><td>そのファイルをクライアントコンポーネントにする宣言。ファイル最上部(import より前)に書く</td></tr><tr><td>state(ステート)</td><td>コンポーネントが覚えておく値。入力中の名前を保持するのに使う(useState)</td></tr><tr><td>controlled input</td><td>入力欄の値を state で管理する作り方。打つたびに state を更新して表示も同期させる</td></tr><tr><td>バリデーション</td><td>入力チェックのこと。今回は『名前が空なら進めない』を実装する</td></tr><tr><td>localStorage</td><td>ブラウザに値を保存する仕組み。画面を移動しても消えない。別画面から読める</td></tr><tr><td>useRouter().push</td><td>ボタン押下後などにコードで別画面へ遷移させる方法(対して &lt;Link&gt; は単純なリンク)</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <p>番号は資料によってズレることがあるので、<strong>タスク名・画面名(S-◯)で照合</strong> してください。</p>
+  <ul><li>基本設計: S-6(ゲスト名入力画面) / 要件: F-04(ゲスト利用)</li><li>関連Issue: #7=借りる/返す(ここで本Issueの guest_name を loans に insert して使う)。ゲスト貸出時は borrower_type="guest" / guest_name を使い user_id は空、の運用想定。</li><li>環境構築ガイド: 同フォルダの『環境構築ガイド.html』(.env.local は各自手作り。キー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正)</li><li>DB: supabase/schema.sql(loans テーブルの guest_name 列 / RLS は全員OK・DELETE 不可)</li><li>Supabase 接続: lib/supabaseClient.ts の supabase を import して使う(#7 で使用)</li></ul>
+  <div class="callout tip"><span class="label">PR を出すとき</span><p>本文テンプレに沿って『何をしたか / Closes #6 / 動作確認』を書きます。<code>Closes #6</code> を入れておくと、マージ時に自動で Issue #6 が閉じます。</p></div>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>

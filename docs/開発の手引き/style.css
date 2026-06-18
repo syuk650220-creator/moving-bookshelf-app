@@ -1,0 +1,149 @@
+/* =========================================================
+   移動本棚ロボ｜開発の手引き 共通スタイル
+   全ページ（ポータル / 環境構築ガイド / 各Issueガイド）で共有
+   ========================================================= */
+:root{
+  --bg:#f7f8fa; --card:#ffffff; --ink:#1f2933; --muted:#5b6671;
+  --brand:#2563eb; --brand-dark:#1e40af;
+  --border:#e5e9f0; --code-bg:#0f172a; --code-ink:#e2e8f0;
+  --tip:#eff6ff; --tip-border:#3b82f6;
+  --warn:#fff7ed; --warn-border:#f59e0b;
+  --danger:#fef2f2; --danger-border:#ef4444;
+  --ok:#f0fdf4; --ok-border:#22c55e;
+  --study:#f5f3ff; --study-border:#8b5cf6;
+}
+*{box-sizing:border-box;}
+html{scroll-behavior:smooth;}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Hiragino Kaku Gothic ProN","Yu Gothic UI","Meiryo",system-ui,-apple-system,"Segoe UI",sans-serif;
+  line-height:1.85; font-size:16px;
+}
+.wrap{max-width:900px; margin:0 auto; padding:24px 20px 80px;}
+
+/* ---- パンくず / 戻るリンク ---- */
+.crumbs{font-size:.85rem; color:var(--muted); margin:4px 0 14px;}
+.crumbs a{color:var(--brand); text-decoration:none;}
+.crumbs a:hover{text-decoration:underline;}
+
+/* ---- ヒーロー ---- */
+header.hero{
+  background:linear-gradient(135deg,#2563eb,#1e40af);
+  color:#fff; border-radius:16px; padding:32px 28px; margin:8px 0 28px;
+  box-shadow:0 10px 30px rgba(37,99,235,.25);
+}
+header.hero.robot{background:linear-gradient(135deg,#7c3aed,#5b21b6); box-shadow:0 10px 30px rgba(124,58,237,.25);}
+header.hero.done{background:linear-gradient(135deg,#0d9488,#115e59); box-shadow:0 10px 30px rgba(13,148,136,.25);}
+header.hero h1{margin:0 0 8px; font-size:1.6rem; line-height:1.45;}
+header.hero p{margin:6px 0 0; opacity:.95;}
+.badges{margin-top:16px; display:flex; flex-wrap:wrap; gap:8px;}
+.badge{background:rgba(255,255,255,.18); border:1px solid rgba(255,255,255,.35);
+  padding:5px 12px; border-radius:999px; font-size:.82rem; color:#fff;}
+
+/* ---- 目次 ---- */
+.toc{background:var(--card); border:1px solid var(--border); border-radius:12px;
+  padding:18px 22px; margin:0 0 32px;}
+.toc h2{margin:0 0 10px; font-size:1.05rem; color:var(--brand-dark);}
+.toc ol{margin:0; padding-left:1.3em;}
+.toc a{color:var(--brand); text-decoration:none;}
+.toc a:hover{text-decoration:underline;}
+
+/* ---- セクション ---- */
+section{background:var(--card); border:1px solid var(--border); border-radius:12px;
+  padding:8px 26px 24px; margin:0 0 22px; scroll-margin-top:16px;}
+h2.sec{font-size:1.3rem; color:var(--brand-dark); border-bottom:2px solid var(--border);
+  padding-bottom:10px; margin:22px 0 16px;}
+h3{font-size:1.07rem; margin:24px 0 8px; color:var(--ink);}
+h3 .num{color:var(--brand); font-weight:700;}
+p{margin:10px 0;}
+a{color:var(--brand);}
+ul,ol{padding-left:1.4em;}
+li{margin:5px 0;}
+strong{color:var(--brand-dark);}
+
+/* ---- コード ---- */
+code{background:#eef1f6; color:#b91c5c; padding:2px 6px; border-radius:5px;
+  font-family:"SFMono-Regular",Consolas,"Courier New",monospace; font-size:.9em; word-break:break-all;}
+pre{background:var(--code-bg); color:var(--code-ink); padding:16px 18px; border-radius:10px;
+  overflow-x:auto; font-size:.88rem; line-height:1.6; margin:12px 0;}
+pre code{background:none; color:inherit; padding:0; font-size:inherit; word-break:normal;}
+pre.ascii{font-size:.8rem; line-height:1.45;}
+
+/* ---- 表 ---- */
+table{border-collapse:collapse; width:100%; margin:14px 0; font-size:.94rem;}
+th,td{border:1px solid var(--border); padding:9px 12px; text-align:left; vertical-align:top;}
+th{background:#f1f5fb; color:var(--brand-dark);}
+tr:nth-child(even) td{background:#fafbfd;}
+
+/* ---- コールアウト ---- */
+.callout{border-left:5px solid; border-radius:8px; padding:12px 16px; margin:14px 0;}
+.callout p{margin:4px 0;}
+.callout ul{margin:6px 0;}
+.tip{background:var(--tip); border-color:var(--tip-border);}
+.warn{background:var(--warn); border-color:var(--warn-border);}
+.danger{background:var(--danger); border-color:var(--danger-border);}
+.ok{background:var(--ok); border-color:var(--ok-border);}
+.study{background:var(--study); border-color:var(--study-border);}
+.callout .label{font-weight:700; display:block; margin-bottom:2px;}
+
+/* ---- メタ情報バー（Issueガイド上部の担当・優先など） ---- */
+.meta-bar{display:flex; flex-wrap:wrap; gap:8px; margin:0 0 8px;}
+.pill{display:inline-block; padding:4px 12px; border-radius:999px; font-size:.82rem;
+  border:1px solid var(--border); background:#f1f5fb; color:var(--brand-dark);}
+.pill.role{background:#eef2ff; border-color:#c7d2fe;}
+.pill.sprint{background:#ecfeff; border-color:#a5f3fc; color:#0e7490;}
+.pill.prio{background:#fef9c3; border-color:#fde68a; color:#854d0e;}
+.pill.done{background:#dcfce7; border-color:#86efac; color:#166534;}
+.pill.lang{background:#f3e8ff; border-color:#e9d5ff; color:#6b21a8;}
+
+/* ---- 手順ステップ（番号付きカード） ---- */
+.steps{counter-reset:step; list-style:none; padding-left:0; margin:14px 0;}
+.steps>li{position:relative; padding:12px 14px 12px 56px; border:1px solid var(--border);
+  border-radius:10px; margin:10px 0; background:#fafbfd;}
+.steps>li::before{counter-increment:step; content:counter(step);
+  position:absolute; left:14px; top:12px; width:28px; height:28px; border-radius:50%;
+  background:var(--brand); color:#fff; font-weight:700; text-align:center; line-height:28px; font-size:.95rem;}
+.steps>li .st-title{font-weight:700; color:var(--brand-dark);}
+.steps>li .st-detail{margin-top:2px;}
+
+/* ---- 調べる・学ぶこと（核心ブロック） ---- */
+.research{list-style:none; padding-left:0; margin:14px 0;}
+.research>li{border:1px solid var(--study-border); border-left-width:5px; border-radius:10px;
+  padding:12px 16px; margin:10px 0; background:var(--study);}
+.research .r-topic{font-weight:700; color:#5b21b6;}
+.research .r-topic::before{content:"📚 "; }
+.research .r-why{margin:4px 0; font-size:.95rem;}
+.research .r-where{margin:4px 0 0; font-size:.92rem; color:#4c1d95;}
+.research .r-where::before{content:"🔎 調べ方： "; font-weight:700;}
+
+/* ---- チェックリスト ---- */
+.checklist{list-style:none; padding-left:0;}
+.checklist li{padding:8px 12px; border:1px solid var(--border); border-radius:8px;
+  margin:7px 0; background:#fafbfd;}
+.checklist li::before{content:"☐"; margin-right:10px; color:var(--brand); font-weight:700;}
+
+/* ---- ポータル（index）カード ---- */
+.cards{display:grid; grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); gap:16px; margin:16px 0;}
+.card{display:block; text-decoration:none; color:inherit; background:var(--card);
+  border:1px solid var(--border); border-radius:12px; padding:18px 18px 16px;
+  transition:transform .12s ease, box-shadow .12s ease, border-color .12s ease;}
+.card:hover{transform:translateY(-3px); box-shadow:0 8px 22px rgba(37,99,235,.13); border-color:#bfdbfe;}
+.card .c-no{font-size:.78rem; color:var(--muted); font-weight:700; letter-spacing:.04em;}
+.card .c-title{font-size:1.06rem; font-weight:700; color:var(--brand-dark); margin:4px 0 6px;}
+.card .c-desc{font-size:.9rem; color:var(--muted); margin:0 0 10px; line-height:1.6;}
+.card .c-tags{display:flex; flex-wrap:wrap; gap:6px;}
+.card.env{border-color:#bfdbfe; background:linear-gradient(135deg,#eff6ff,#ffffff);}
+.card.robot:hover{box-shadow:0 8px 22px rgba(124,58,237,.13); border-color:#ddd6fe;}
+
+/* ---- その他 ---- */
+hr{border:none; border-top:1px solid var(--border); margin:26px 0;}
+footer{text-align:center; color:var(--muted); font-size:.85rem; margin-top:36px;}
+.top-link{display:inline-block; margin-top:10px; font-size:.82rem; color:var(--muted); text-decoration:none;}
+.top-link:hover{color:var(--brand);}
+.section-intro{color:var(--muted);}
+
+@media (max-width:560px){
+  body{font-size:15px;} .wrap{padding:14px 10px 60px;}
+  section{padding:6px 16px 18px;} header.hero{padding:24px 20px;}
+  .cards{grid-template-columns:1fr;}
+}

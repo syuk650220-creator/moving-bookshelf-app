@@ -1,0 +1,137 @@
+{
+  "issueNo": 8,
+  "taskName": "ブリッジ最小実装（robot_calls購読）",
+  "screen": "",
+  "role": "ハード制御",
+  "sprint": "Sprint 1",
+  "priority": "★★☆",
+  "status": "",
+  "category": "ロボ",
+  "stack": ["Python", "supabase-py", "(のちにROS2/rclpy)"],
+  "oneLineGoal": "Pythonで robot_calls を見張り、queued の呼び出しを検知して moving→arrived→done とログを出す「橋渡し役」の第一歩を作る。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {"type": "p", "text": "アプリ（Web）とロボ（Raspberry Pi）は**直接つながりません**。間に Supabase のテーブルを置き、アプリは「呼んで！」を `robot_calls` に1行 `insert` し、ロボはそのテーブルを**見張って**動きます。この「テーブルを見張ってロボの仕事に変える係」が**ブリッジ（橋渡し役）**です。このIssueはその最小版を作ります。"},
+        {"type": "p", "text": "今回のゴールは1つだけ：**`robot_calls` に `status='queued'`（順番待ち）の行が入ったらPythonで検知し、その行の `status` を `moving`（移動中）→ `arrived`（到着）→ `done`（完了）と順に書き換えながらログを出す**。Nav2（ロボの自律移動）との連携は次の #9 でやるので、今回は「検知してログ＋status更新」まででOKです。"},
+        {"type": "callout", "variant": "study", "label": "「ブリッジ＝橋渡し役」の出どころ", "text": "この役割は実在ファイル `robot/README.md` の「持ち場」と「つなぎ目（疎結合の原則）」に書かれています：『アプリとロボは直接やり取りせず、Supabase のテーブル（robot_calls / robot_status など）を介してつながる』。※`docs/基本設計書.md` は現時点ではプレースホルダ（4行のみ・中身は補遺で確定予定）なので、仕様の出どころは `robot/README.md` と `supabase/schema.sql` を正典にしてください。"},
+        {"type": "callout", "variant": "tip", "label": "Piが無くても大丈夫", "text": "このIssueはPCだけで完結できます（やることはSupabaseに繋いでテーブルを読み書きするだけ）。Pi実機での実行確認は #9 以降でOKです。"}
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {"type": "checklist", "items": [
+          "Python仮想環境(venv)を作り、supabase-py をインストールできた",
+          "接続情報を環境変数（コードに直書きしない）で渡し、Supabaseに繋げた",
+          "`robot_calls` を見張る（ポーリング or Realtime購読）コードが robot/ 配下に置いてある（例: robot/bridge_node.py）",
+          "アプリ or SQLで robot_calls に1件 insert すると、ブリッジ側のログにその行が出る",
+          "検知した行の status を queued→moving→arrived→done と更新でき、各段階がログに出る（実機なしでOK）",
+          "FIFO（先に来た順）で1件だけ掴んでいる（created_at 昇順で先頭1件）",
+          "接続キー・URLを直書きしておらず、git status に .env が出てこない（コミットされない）ことを確認した",
+          "ブランチ（feature/◯◯）を切ってPRを出した（Pi実機での実行確認は #9 以降でOK。Piが手元にある人は git pull→実行まで試す）"
+        ]},
+        {"type": "callout", "variant": "tip", "label": "robot_status は今回のスコープ外", "text": "スキーマには `robot_status`（id=1固定・ロボの現在状態を1行で持つ表）もありますが、**今回の最小実装では robot_calls の status のみ更新**し、robot_status.state / current_call_id の更新は**次段階（#9以降）の対象**とします（範囲をわざと絞ります）。robot_status を誰がいつ更新するかは設計確定待ちなので、迷ったらPM(水谷)に確認を。"}
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {"type": "steps", "items": [
+          {"title": "Python仮想環境(venv)を作る", "detail": "robot/ で作業用の仮想環境を作ります。venv＝そのプロジェクト専用のPython部屋（他と汚し合わないため）。コマンドは `python -m venv .venv` → 有効化(Win: `.venv\\Scripts\\activate` / Mac: `source .venv/bin/activate`)。詳しい意味は下の『調べる・学ぶこと』の venv 項目へ。"},
+          {"title": "supabase-py を入れる", "detail": "有効化した状態で `pip install supabase`。これがPythonからSupabaseを操作するライブラリ。`pip freeze > requirements.txt` で何を入れたか記録しておくとチーム共有が楽。"},
+          {"title": "使うSupabaseキーの種別を決める（重要）", "detail": "今回は publishable key（旧 anon に相当する読み書き可キー）で十分です。理由：RLSで select/insert/update は全員OK設計なので、最小権限で足ります。**service_role キーは使いません**（RLSを無視する強権キーで、漏れると全データ操作可能になるため）。ロボ側で使う具体的なキー名は環境構築ガイドにまだ記載が無いので、**正式なキー名はPM(水谷)に確認**してください。"},
+          {"title": "接続情報を環境変数で渡す準備", "detail": "URLとキーをコードに直書きせず、robot/ に `.env` を作って読み込む方針にします。キー名は仮に SUPABASE_URL / SUPABASE_KEY のように NEXT_PUBLIC_ 接頭辞**なし**で。NEXT_PUBLIC_ はブラウザに公開する用の名前なので、サーバー的に動くロボ側Pythonでは付けません。実際のキー名はPM確認の結果に合わせること。"},
+          {"title": "Supabaseに繋いでみる（疎通テスト）", "detail": "環境変数からURL/キーを読み、クライアントを作って `robot_calls` を select するだけの短いコードで『繋がるか』を先に確認。エラーが出たらまずキー名・値・RLSを疑う。"},
+          {"title": "検知の方式を選ぶ：まずはポーリング", "detail": "見張り方は2通り：(A)ポーリング＝数秒ごとに自分でテーブルを見に行く、(B)Realtime購読＝変化が来たら通知される。最小実装は実装が単純な(A)ポーリングを推奨。※注意：robot/README.md の最終的な持ち場は『Realtime購読』なので、これは“まず動かすための暫定”。後でRealtimeに差し替える前提で進めます。違いは下の研究項目で。"},
+          {"title": "FIFOで先頭1件だけ掴む", "detail": "`robot_calls` から status='queued' の行を created_at 昇順で並べ、先頭の1件だけ取得（order by created_at + limit 1 の考え方）。複数あっても一度に1件だけ処理するのがロボ1台の前提。"},
+          {"title": "status を順に進める：moving→arrived→done", "detail": "掴んだ行の id を指定して update。実機が無いので各段階の間は『擬似的に少し待つ(sleep数秒)』か『キー入力で1段階ずつ進める』どちらかでOK。各更新の前後で print ログを出し、3段階が見えるようにする。canceled（取消）は今回の範囲外＝来ても掴まない程度の認識でOK。"},
+          {"title": "robot/ に置いてブランチ→PR", "detail": "ファイルは robot/bridge_node.py など robot/ 配下へ。feature/◯◯ ブランチを切って push → PR（本文に Closes #8 と動作確認を書く）。Piがある人は別マシンで git pull→実行まで確認。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {"type": "p", "text": "ここがこの資料の核心。各ステップで詰まりやすい所を「何を / なぜ / どこで調べるか」で並べます。答えのコードは載せません。自分の手で書いて学んでください。"},
+        {"type": "research", "items": [
+          {"topic": "Python仮想環境(venv)の作り方と有効化", "why": "Git/Python初心者が最初に必ずぶつかる関門。venvを使わないとPCのPython本体を汚し、ライブラリ衝突の原因になる。", "where": "Python公式 venv: https://docs.python.org/ja/3/library/venv.html / pip入門: https://packaging.python.org/ja/latest/tutorials/installing-packages/"},
+          {"topic": "supabase-py のセットアップと使い方（create_client / select / update）", "why": "PythonからSupabaseを操作する土台。クライアントの作り方とテーブル操作の書き方を知らないと一歩も進めない。", "where": "supabase-py 公式リポジトリ: https://github.com/supabase/supabase-py / JS版だがメソッド名の対応が分かる select: https://supabase.com/docs/reference/javascript/select"},
+          {"topic": "Realtime購読 と ポーリング の違い", "why": "今回はポーリング採用だが、robot/README.md の最終形はRealtime購読。違いと『なぜ最小実装ではポーリングか／いつ差し替えるか』を理解しておくと後の #9 がスムーズ。", "where": "Supabase Realtime: https://supabase.com/docs/guides/realtime / ポーリングは『一定間隔でselectを繰り返す』だけなので supabase-py の select を time.sleep と組むイメージ"},
+          {"topic": "FIFOで先頭1件を取る（order by created_at limit 1）", "why": "queuedが複数あってもロボは1台。先に来た順（FIFO）で1件だけ処理しないと割り込み・取りこぼしが起きる。schema にも専用インデックス idx_calls_queue（created_at, status='queued'）がある。", "where": "supabase-py の order/limit の書き方（公式リポジトリのREADME/サンプル）: https://github.com/supabase/supabase-py / 根拠は supabase/schema.sql 73行（FIFO処理用インデックス）"},
+          {"topic": "status の update（行を特定して書き換える）", "why": "検知だけでなく moving→arrived→done と状態を進めるのがブリッジの仕事。どの行を更新するかを id で絞る eq の使い方が肝。", "where": "supabase-py 公式リポジトリ: https://github.com/supabase/supabase-py / 更新の考え方（JS版update）: https://supabase.com/docs/reference/javascript/update"},
+          {"topic": "PythonでSupabaseに繋ぐ環境変数の扱い（どのキーを使うか）", "why": "キーをコードに直書きすると漏洩→全データ操作のリスク。さらに『どの種別のキーを使うか』を間違えると権限不足や権限過大になる。", "where": "ロボ側のキー名は環境構築ガイドにまだ記載が無いため、まず**PM(水谷)に確認**。方針：publishable key（読み書き可・RLS適用）で足り、service_role は使わない/コミットしない。環境構築ガイド5-3が service_role の共有・コミットを固く禁じている点を参照。Pythonでの.env読み込みは python-dotenv: https://pypi.org/project/python-dotenv/"},
+          {"topic": "robot_calls の status 遷移の意味", "why": "queued/moving/arrived/done/canceled が何を表すかを取り違えると、アプリ側の表示や次のロボ動作とズレる。", "where": "出どころは `supabase/schema.sql` 55-56行の check 制約（status in queued|moving|arrived|done|canceled）。意味は下の用語ミニ辞典に整理済み。robot_status の state（idle|moving|arrived|returning）は同 65-66行（※今回は更新対象外）。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {"type": "callout", "variant": "warn", "label": "外部キー違反でinsertが失敗する", "text": "robot_calls.seat_id は stop_points(id) への外部キー、book_id は books(id) への外部キー（schema 53-54行）。stop_points や books が空だと『存在しないIDを指している』とエラーになり、原因不明で止まりがち。先に #3（サンプル投入）が済んでいるか、最低1件ずつデータを用意してから試すこと。"},
+        {"type": "callout", "variant": "danger", "label": "接続キーを絶対にコミットしない", "text": "使うキーは publishable（RLS適用の読み書き可キー）に限定。service_role は使わない（RLSを無視する強権キーのため）。robot/ に .env を作るなら、ルートの .gitignore は `.env*` を無視対象にしているので robot/.env も対象のはず。ただし必ず `git status` で .env がコミット候補に出てこないことを目視確認すること。"},
+        {"type": "ul", "items": [
+          "`ModuleNotFoundError: supabase`：venvを有効化せずに python を実行している/別の環境に入れた。activate し直して pip install を確認。",
+          "繋がらない・401や権限エラー：URLかキーの値ミス、またはキー種別違い。キー名はPM確認の値と一致しているか、publishable を使っているかを確認。",
+          "queued が検知されない：insert した行の status が本当に queued か（既定値は queued なので status を指定しなければOK）、ポーリング間隔が長すぎないか、フィルタ条件（status='queued'）が合っているか。",
+          "robot_status はいつ更新するの？という疑問：今回は更新しません（範囲外）。次段階で扱います。混乱したらDoneのcalloutを再読。"
+        ]}
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {"type": "p", "text": "実機なしでPCだけで確認します。前提：`books` と `stop_points` に最低1件ずつデータがあること（#3サンプル投入が済んでいるか、手動で1件用意）。"},
+        {"type": "steps", "items": [
+          {"title": "実在IDを確認する", "detail": "SupabaseのSQL Editorで、insertに使う実在のIDを先に調べる。"},
+          {"title": "ブリッジを起動する", "detail": "venvを有効化して `python robot/bridge_node.py`（ファイル名は自分の付けた名前）。起動後、見張りが回り始めるログが出るはず。"},
+          {"title": "robot_calls に1件 insert する", "detail": "別の場所（SQL Editor または アプリのボタン）から1件追加。status は省略すれば自動で queued。"},
+          {"title": "ログを確認する", "detail": "（自動で進める方式の場合）数秒ごとに moving→arrived→done と3段階のログが順に出ればOK。（キー入力で進める方式の場合）案内に従ってキーを押すたびに1段階ずつ進み、3回でdoneになればOK。どちらの方式にしたかで操作が変わる点に注意。"},
+          {"title": "DBの値も確認する", "detail": "SQL Editorで対象行の status が done になっているかを見る。ログとDBの両方で確認できれば完了。"}
+        ]},
+        {"type": "code", "lang": "sql", "code": "-- ① 実在IDを先に確認（コピペ用）\nselect id, label from stop_points;\nselect id, title from books;\n\n-- ② 上で出た実在の id に置き換えて1件作る（手順イメージ。完成文を丸暗記せず列名の意味を理解して）\n--   robot_calls に必要なのは book_id（booksの実在id）・seat_id（stop_pointsの実在id）・requested_by（誰が呼んだか/文字列）。\n--   status は省略すると自動で 'queued'。\ninsert into robot_calls (book_id, seat_id, requested_by)\nvalues ('ここにbooksの実在id', ここにstop_pointsの実在id, 'test');\n\n-- ③ 進み具合を確認\nselect id, status, created_at from robot_calls order by created_at desc limit 5;"}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {"type": "p", "text": "AIには「答えのコードを書かせる」のではなく「考え方と調べ先を導いてもらう」使い方をします。下のプロンプトをコピペして使ってください。"},
+        {"type": "code", "lang": "text", "code": "あなたは私のプログラミング学習コーチです。完成コードは書かないでください。私が自分で書いて学べるよう、考え方・手順・つまずき所・調べ先（公式ドキュメントのURL）を示してください。専門用語には1行の補足を付けてください。\n\n前提：\n- 移動本棚ロボのプロジェクト。Pythonの supabase-py で Supabase の robot_calls テーブルを見張る『ブリッジ』の最小実装を作っています（Issue #8）。\n- やること：status='queued' の行をFIFO（created_at昇順）で1件検知し、status を moving→arrived→done と更新しながらログを出す。Nav2連携は範囲外。robot_status の更新も今回は範囲外。\n- 使うキーは publishable（RLS適用）。service_role は使わない。キーは環境変数で渡し直書きしない。\n- 検知方式はまずポーリング（後でRealtimeに差し替える前提）。\n\nお願い：\n1. まず全体の進め方を箇条書きで整理して。\n2. 各ステップで『私が自分で調べるべきこと』と、その公式ドキュメントのURLを教えて。\n3. コードは書かず、書くときに気をつける点だけ指摘して。\n4. 私がコードを書いたら、答えを直さず『どこを見直すと良いか』のヒントで導いて。"}
+        ,
+        {"type": "callout", "variant": "tip", "label": "Next.js側を触るときは", "text": "このIssueはPython中心ですが、もしアプリ側（Next.js 16系）を触る場面があれば、AIの記憶ではなく必ず `node_modules/next/dist/docs/` の最新ガイドを開いて現行の書き方を確認するようAIに促してください（この版は最新で挙動が違う可能性があるため）。"}
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["ブリッジ", "アプリとロボの橋渡し役。Supabaseのテーブルを見張ってロボの仕事に変える係（robot/README.mdの『持ち場』）"],
+          ["疎結合", "互いを直接呼ばず、間にテーブルを挟んで緩くつなぐ設計。片方が変わってももう片方が壊れにくい"],
+          ["ポーリング", "一定間隔で自分から『変化あった？』と見に行く方式。実装が単純（今回採用）"],
+          ["Realtime購読", "変化があった瞬間に通知してもらう方式。robot/READMEの最終形（後で差し替え）"],
+          ["FIFO", "First In First Out。先に来たものから順に処理。created_at昇順で先頭1件を取る"],
+          ["queued / moving / arrived / done", "robot_calls.status の値。順番待ち / 移動中 / 到着 / 完了（schema.sql 55-56行）"],
+          ["canceled", "robot_calls.status の取消値。今回は範囲外（来ても掴まない認識でOK）"],
+          ["robot_status", "ロボの現在状態を1行で持つ表（id=1固定）。今回は更新しない（次段階）"],
+          ["publishable key", "RLSが効く読み書き可の接続キー。今回これを使う。service_role（強権・RLS無視）は使わない"],
+          ["venv", "そのプロジェクト専用のPython環境。ライブラリ衝突を防ぐ"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {"type": "ul", "items": [
+          "ブリッジの責務・つなぎ目の正典：`robot/README.md`（『持ち場』『つなぎ目（疎結合の原則）』）",
+          "テーブル列・status の取り得る値・RLS（削除不可）の正典：`supabase/schema.sql`（robot_calls 50-60行 / status 55-56行 / robot_status 63-69行 / FIFO index 73行）",
+          "※`docs/基本設計書.md` は現状プレースホルダ（補遺で確定予定）。仕様の出どころにはせず、上の2ファイルを見ること",
+          "前提Issue：#2 テーブル作成（これが済んでいないと robot_calls が無い）/ #3 サンプル投入（books・stop_points のデータが無いと insert がFKエラー）",
+          "次につながるIssue：#9 座標変換（robot_calls → Nav2 ゴール。Realtime化や robot_status 更新もこの先）",
+          "環境変数の考え方の参考：環境構築ガイド.html（※Next.jsアプリ用 NEXT_PUBLIC_ キーの説明。ロボ側Pythonのキー名は別途PM(水谷)確認）",
+          "番号より画面名・タスク名で照合を：古い資料はIssue番号がズレている場合あり"
+        ]}
+      ]
+    }
+  ]
+}

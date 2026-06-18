@@ -1,0 +1,130 @@
+{
+  "issueNo": 9,
+  "taskName": "席座標→Nav2ゴール変換の下調べ",
+  "screen": "",
+  "role": "ハード制御",
+  "sprint": "Sprint 2",
+  "priority": "★☆☆",
+  "status": "",
+  "category": "ロボ",
+  "stack": ["Python", "rclpy", "ROS2 Nav2"],
+  "oneLineGoal": "stop_points の x,y,theta を読んで Nav2 のゴール(PoseStamped)に変換する関数の素案を作る（下調べ中心）",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {"type": "p", "text": "本を借りたい席が決まると、ロボはその席まで自走します。席の場所は DB の `stop_points`（停車ポイントの座標表）に `x, y, theta`（位置と向き）で入っています。このIssueは、その座標を **Nav2（ROS2 のナビゲーション基盤）が理解できる「ゴール」の形に変換する関数の素案** を作るのがゴールです。"},
+        {"type": "p", "text": "全体の流れは `#8 ブリッジ`（Supabase の `robot_calls` を Realtime 購読してロボに伝える）→ **このIssue #9 で座標をゴールに変換** → Nav2 がそこまで走る、という順番です。#9 は #8 の続きの「変換」部分だけを担当します。"},
+        {"type": "callout", "variant": "study", "label": "これは下調べ中心のIssue", "text": "実機にマップを作らせて座標を確定させる工程（資料では W5＝プロジェクト第5週の『実機マッピング』と呼びます。具体的な日付はスケジュール表を参照）より前なので、いまは「実際の座標値」はまだありません。なので #9 は『仕組みを調べて、値が決まったらすぐ動かせる関数の雛形を用意しておく』のが目的です。完璧な実装より、考え方を整理してメモと素案を残すことを重視してください。"},
+        {"type": "callout", "variant": "warn", "label": "AGENTS.md の大前提", "text": "このプロジェクトの Next.js は最新版(16系)で学習データと挙動が違う可能性があります。今回はロボ側(Python/ROS2)中心なので Next.js には触れませんが、『答えを丸写しせず、必ず公式 docs を自分で開いて現行のやり方を確認する』という姿勢はロボ側でも同じです。"}
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {"type": "p", "text": "下調べIssueなので「完璧に動く」ことより「調べた内容が形に残る」ことを完了とします。下のチェックが全部ついたら完了です。"},
+        {"type": "checklist", "items": [
+          "ROS2 の座標系と姿勢（x,y,theta と quaternion の関係）を自分の言葉でメモにまとめた",
+          "Nav2 のゴール送信（NavigateToPose アクション、PoseStamped 型）の考え方を調べてメモした",
+          "theta（ヨー角・ラジアン）→ quaternion への変換方法を調べ、自分の環境で使えるか確認した",
+          "`stop_points` から座標を引く方法（どこで取るか）を #8 と整理して決めた",
+          "robot/nav_goal.py に関数シグネチャ（入力 x,y,theta / 戻り値 PoseStamped）と docstring・TODO を書いた",
+          "theta → quaternion の数値変換部分だけは実装し、手元PCで単体確認した",
+          "関数の入力を seat_id にするか x/y/theta にするか、結論をコメントに書いた（既定は x,y,theta を受け取る純粋関数）"
+        ]}
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {"type": "steps", "items": [
+          {"title": "全体像をつかむ", "detail": "『席の座標(x,y,theta) → Nav2 のゴール(PoseStamped)』という変換が必要、という1本の流れを頭に入れます。入口は #8 から渡ってくる seat_id（または座標）、出口は Nav2 に送る PoseStamped です。"},
+          {"title": "ROS2 の座標系と姿勢を調べる", "detail": "x,y は平面上の位置、theta は向き（ヨー角）。ROS2 は向きを内部では quaternion（4つの数 x,y,z,w）で持ちます。なぜ theta だけで足りないのか、theta と quaternion の対応を調べてメモします。"},
+          {"title": "Nav2 のゴール送信の形を調べる", "detail": "Nav2 へは NavigateToPose というアクションでゴールを送ります。ゴールは PoseStamped 型（header に座標系名 frame_id と時刻 stamp、pose に位置と向き）。frame_id は通常 \"map\" です。型の構造をメモします。"},
+          {"title": "theta → quaternion 変換の方法を調べる", "detail": "平面ヨー1軸なら数式は `qz = sin(theta/2)`, `qw = cos(theta/2)`, `qx = qy = 0` だけです。tf_transformations の quaternion_from_euler を使う手もありますが、入っているか先に確認します（つまずきポイント参照）。"},
+          {"title": "stop_points から座標を引く方法を #8 と決める", "detail": "座標を DB から取る役を #8（ブリッジ）側にするか #9 側にするかを相談します。このIssueの既定は『取得は #8、#9 は x,y,theta を受け取って PoseStamped を返す純粋関数』です。違う結論なら理由をコメントに残します。"},
+          {"title": "(6a) 関数の雛形だけ書く", "detail": "robot/nav_goal.py に、関数名・引数(x,y,theta)・戻り値の型(PoseStamped)・docstring・中身は `# TODO` だけを書きます。まず『形』を先に作ります。中身はまだ空でOK。"},
+          {"title": "(6b) 数値変換部分だけ実装して単体確認", "detail": "theta → qz,qw の計算だけを標準ライブラリ(math)で書き、手元PC（ROS2 無し）で値を出して確認します。PoseStamped を組み立てる部分は Pi/ROS2 環境で後から埋めます。"},
+          {"title": "調べたことをメモにまとめてPRに添える", "detail": "座標系・NavigateToPose・quaternion変換・入力の決め方を箇条書きでまとめ、素案コードと一緒にPRを出します。Done のチェックと突き合わせます。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {"type": "p", "text": "ここがこの資料の核心です。各ステップで詰まりやすい概念を『何を / なぜ / どこで』で示します。答えは載せません。自分で開いて確認してください。"},
+        {"type": "research", "items": [
+          {"topic": "ROS2 の座標系と角度の単位（REP-103）", "why": "x,y,theta の theta が『度』か『ラジアン』かを取り違えると、向きが何十倍もずれてロボが明後日を向きます。schema.sql の theta は `default 0` で単位コメントが無いので、チームで単位を確定する必要があります。", "where": "ROS の規約 REP 103（https://www.ros.org/reps/rep-0103.html）。ここに『角度は必ずラジアン・右手系』と明記されています（ROS2 では度は使わない）。これを根拠に『theta はラジアンで統一』とチームで合意しメモに残します。"},
+          {"topic": "姿勢の表し方（theta ↔ quaternion）", "why": "DB は theta（1つの角度）で持ちますが、ROS2 のゴールは quaternion（4つの数）を要求します。なぜ ROS が quaternion を使うのか、どう変換するのかを理解しないと、向きを正しくセットできません。", "where": "geometry_msgs/Pose の orientation の型定義（https://docs.ros2.org/latest/api/geometry_msgs/msg/Pose.html）と、Quaternion の意味（https://docs.ros2.org/latest/api/geometry_msgs/msg/Quaternion.html）。平面なら qz,qw だけで足りる理由も合わせて確認します。"},
+          {"topic": "Nav2 のゴール送信（NavigateToPose と PoseStamped）", "why": "ゴールの『入れ物』が PoseStamped だと分からないと、関数の戻り値の型が決められません。特に header.frame_id（通常 \"map\"）と stamp（現在時刻）を入れ忘れるとゴールが無視されて動きません。", "where": "Nav2 公式 docs（https://docs.nav2.org/ の Navigating / NavigateToPose のページ）と geometry_msgs/PoseStamped の型定義（https://docs.ros2.org/latest/api/geometry_msgs/msg/PoseStamped.html）。header(stamp+frame_id) と pose(position+orientation) の入れ子構造をメモします。"},
+          {"topic": "theta → quaternion の変換ユーティリティの有無を確認", "why": "tf_transformations の quaternion_from_euler は便利ですが、ROS2 Humble では標準で入っておらず別途インストール（python3-transforms3d 依存）が要ることがあります。知らずに import すると ModuleNotFoundError で必ず詰まります。", "where": "ros-humble-tf-transformations の有無は ROS Index（https://index.ros.org/p/tf_transformations/）と GitHub（https://github.com/DLu/tf_transformations）で確認。`apt list --installed | grep tf-transformations` で導入済みかも確認。入っていなければ apt で追加するか、平面ヨー1軸なら `qz=sin(theta/2), qw=cos(theta/2)` を自前計算します。"},
+          {"topic": "stop_points から座標を引く方法（DB取得の担当分け）", "why": "座標を DB から取る役を #8 と #9 のどちらが持つかを決めないと、関数の入力が seat_id か x/y/theta かが定まらず Done 判定がぶれます。", "where": "Supabase JS は使わずロボ側は supabase-py（https://github.com/supabase/supabase-py）で `stop_points` を select します。列名は schema.sql（supabase/schema.sql の stop_points: id, label, x, y, theta）で正確に確認。既定は『取得は #8、#9 は x,y,theta を受け取る純粋関数』。"},
+          {"topic": "実機が無い段階でシミュレータ(Gazebo)で試す選択肢", "why": "W5 の実機マッピングより前でも、シミュレータ上で NavigateToPose にゴールを送る一連を体験しておくと、本番で慌てません。ただしバージョン差で手順が変わります。", "where": "Nav2 公式の Getting Started（https://docs.nav2.org/getting_started/index.html）。TurtleBot3 + Gazebo の例が現行の Humble 版で Gazebo Classic / Ignition のどちらの手順かを確認してから始めます（版違いで詰まりやすいので、自分の環境の docs の版に合わせる）。"},
+          {"topic": "ロボ側コードの運用ルール（PCで書いて Pi で git pull）", "why": "AGENTS.md の方針では『PCの VS Code で書いて push → Pi で git pull して実行』ですが、この具体ルールは現状どの公式文書にも明文化されていません（CONTRIBUTING.md はアプリ向けの npm run dev 前提、robot/README.md は疎結合の原則のみ）。指示どおり開いても見つからず混乱します。", "where": "まず PM(水谷)に『この運用をどこに明文化するか』を確認。このIssueの作業の一部として robot/README.md に運用手順（PCで編集 → git push → Pi で git pull → 実行）を追記するのがおすすめです。CONTRIBUTING.md の基本サイクル（アプリ用）と混同しないこと。"}
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {"type": "callout", "variant": "danger", "label": "角度の単位（度とラジアン）", "text": "ROS2 は REP-103 で角度は必ずラジアンです（度は使わない）。theta=0 は『無回転＝マップの x 軸の正方向を向く』を意味します。schema.sql の theta は単位コメントが無いので、チームで『ラジアン統一』と決めてメモに残しておかないと、誰かが度で入れて事故ります。"},
+        {"type": "callout", "variant": "warn", "label": "tf_transformations が import できない", "text": "ROS2 Humble では tf_transformations / quaternion_from_euler が標準で入っていないことがあります。`import` で ModuleNotFoundError が出たら、apt で ros-humble-tf-transformations（python3-transforms3d 依存）を入れるか、平面ヨーなら `qz=sin(theta/2), qw=cos(theta/2)`（qx=qy=0）で自前計算します。"},
+        {"type": "callout", "variant": "warn", "label": "frame_id の設定漏れでゴールが効かない", "text": "PoseStamped の header.frame_id を空のまま送ると、Nav2 はどの座標系のゴールか分からずゴールが無視されます。通常は \"map\" を入れ、stamp には現在時刻を入れます。これは初心者の最頻つまずきです。"},
+        {"type": "callout", "variant": "warn", "label": "手元PC(Windows・ROS2無し)で関数全体を動かそうとする", "text": "PoseStamped など ROS2 の型を使う部分は ROS2 環境が無いと import できず ModuleNotFoundError になります。手元で確認できるのは theta→qz,qw の純粋な数値計算だけ。型を組み立てる部分は Pi/ROS2 環境で確認します（動作確認の節を参照）。"},
+        {"type": "ul", "items": [
+          "Pi で直接コードを書いてしまう → 運用は『PCで書いて push → Pi で git pull』が基本（ただし現状は未明文化なので PM に確認しつつ robot/README.md に追記する）。",
+          "x と y を取り違える / 向きと位置を混同する → x,y は位置、theta は向き、と図を描いて整理する。",
+          "quaternion の順番ミス → ライブラリやメッセージで (x,y,z,w) の並びが決まっている。型定義で順番を必ず確認する。"
+        ]}
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {"type": "p", "text": "このIssueはロボ側(Python)なので `npm run dev` は使いません。代わりに次のように確認します。"},
+        {"type": "ul", "items": [
+          "数値変換部分（theta → qz,qw）は ROS2 非依存・標準ライブラリ(math)だけで書けるので、手元PC（Windows・ROS2無し）で関数を呼んで値を出し、想定どおりか確認する（例: theta=0 なら qz=0, qw=1）。",
+          "型を組み立てる部分（PoseStamped を作る）は ROS2 が必要なので、Pi または ROS2 環境で確認する。手元PCでは ModuleNotFoundError になるのが正常。",
+          "設計指針: 『純粋な数値変換』と『PoseStamped 組み立て』を別関数に分けておくと、前者だけは手元PCで単体テストでき、後者は ROS2 環境で確認、と切り分けられて楽。"
+        ]},
+        {"type": "p", "text": "余裕があれば、Nav2 の Getting Started に沿って Gazebo シミュレータでゴールを1つ送ってみると、PoseStamped が正しい形か体感で確認できます。"}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {"type": "p", "text": "AIには『答えを書く人』ではなく『導くコーチ』になってもらいます。下のプロンプトをコピペして使ってください。"},
+        {"type": "code", "lang": "text", "code": "あなたは ROS2/Nav2 を教える親切なコーチです。私は初心者で、コードは自分の手で書いて学びたいです。\n以下を守ってください:\n- 完成コードを丸ごと書かないでください。考え方・手順・調べる場所を示してください。\n- 専門用語には必ず1行の補足を付けてください。\n- ROS2 は Humble、Nav2 を使います。パッケージの有無（例: tf_transformations が標準で入っているか）は『環境によるので自分で確認して』と促してください。\n- 角度はラジアン（REP-103）が前提です。\n\nやりたいこと: DB の stop_points(x,y,theta) を Nav2 のゴール(PoseStamped)に変換する関数の素案を作る（下調べ中心のIssue #9）。\n質問: theta(ヨー角・ラジアン)を quaternion に変換する考え方と、PoseStamped の header(frame_id, stamp) に何を入れるべきかを、答えのコードは書かずにヒントと『どの公式docsのどこを見ればよいか』で教えてください。"},
+        {"type": "callout", "variant": "tip", "text": "AIの答えを鵜呑みにせず、必ず Nav2 公式(docs.nav2.org)や geometry_msgs の型定義(docs.ros2.org)で裏取りしてください。バージョンで書き方が変わる箇所はとくに注意。"}
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["theta（ヨー角）", "平面上の向きを表す角度。ROS2 では必ずラジアン（REP-103）。theta=0 は無回転で、マップの x 軸の正方向を向くこと。"],
+          ["quaternion（クォータニオン）", "向きを4つの数(x,y,z,w)で表す方法。ROS2 の姿勢は内部でこれを使う。平面ヨーだけなら qz,qw の2つだけで足りる。"],
+          ["PoseStamped", "Nav2 のゴールの入れ物。header(時刻 stamp ＋ 座標系名 frame_id、通常 \"map\")と pose(位置 position ＋ 向き orientation) の入れ子。frame_id 漏れだとゴールが無視される。"],
+          ["NavigateToPose", "Nav2 に『ここまで行って』と頼むアクション(時間のかかる依頼の仕組み)。ゴールとして PoseStamped を渡す。"],
+          ["stop_points", "席（停車ポイント）の座標表。列は id, label, x, y, theta。seat_id でこの行を引いて座標を得る。"],
+          ["frame_id", "座標がどの座標系のものかを示す名前。ロボのナビでは通常 \"map\"。"],
+          ["W5", "プロジェクト第5週。実機にマップを作らせて座標(x,y,theta)を確定させる工程。具体的な日付はスケジュール表を参照。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {"type": "ul", "items": [
+          "前提Issue: #8 ブリッジ（Supabase robot_calls を Realtime 購読 → ロボへ）。座標取得の担当分けは #8 と相談する。",
+          "DBスキーマ: supabase/schema.sql の stop_points（id, label, x, y, theta）。列名は必ずここで確認。",
+          "ロボ側の置き場と方針: robot/README.md（疎結合の原則）。※『PCで書いて Pi で git pull』の具体運用はまだ未明文化なので、このIssueで robot/README.md に追記するのがおすすめ。PM(水谷)に確認のうえ進める。",
+          "Git の基本ルール: CONTRIBUTING.md（ただしこれはアプリ向けの npm run dev 前提サイクル。ロボ側の Pi 運用はここには無い点に注意）。",
+          "Nav2 公式: https://docs.nav2.org/ / 座標規約 REP-103: https://www.ros.org/reps/rep-0103.html / supabase-py: https://github.com/supabase/supabase-py",
+          "環境変数や各自の .env.local の作り方は同フォルダの『環境構築ガイド.html』を参照（キー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正）。"
+        ]},
+        {"type": "callout", "variant": "tip", "text": "Issue番号より『タスク名・画面名(S-◯)』で照合してください。古い資料は番号がずれていることがあります（このIssueは #9 席座標→Nav2ゴール変換）。"}
+      ]
+    }
+  ]
+}

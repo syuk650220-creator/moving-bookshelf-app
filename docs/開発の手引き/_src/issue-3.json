@@ -1,0 +1,124 @@
+{
+  "issueNo": 3,
+  "taskName": "サンプルデータを投入する",
+  "screen": "",
+  "role": "PM（水谷）",
+  "sprint": "Sprint 0（準備）",
+  "priority": "★★☆",
+  "status": "",
+  "category": "基盤",
+  "stack": ["Supabase", "SQL"],
+  "oneLineGoal": "本5冊と席3つ(stop_points)を Supabase に投入し、#1 本一覧に表示できる中身を用意する。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        {"type": "p", "text": "ひとことで言うと **「空っぽのテーブルに、お試し用のデータを入れる」** 作業です。`#2` でテーブル（本や席を入れる箱）は作りましたが、まだ中身が空。このまま `#1` 本一覧の画面を作っても、表示する本が1冊も無くて真っ白になってしまいます。"},
+        {"type": "p", "text": "そこで、本を5冊・席(`stop_points`)を3つだけ手で入れておきます。これを **シード（seed）データ** と呼びます（seed＝種。後の開発の「土台になる最初の中身」という意味）。"},
+        {"type": "callout", "variant": "study", "label": "なぜ PM がやるの？", "text": "DB に直接データを入れる作業（Supabase の SQL Editor を使う）は、プロジェクト全員で共有する1つのデータベースを触ります。事故ると全員に影響するので、まずは PM(水谷) が代表して1回だけ実行します。これが入っていないと #1 本一覧に出すデータが無く、後続が止まります。"}
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        {"type": "checklist", "items": [
+          "`books` テーブルに本が **ちょうど5件** ある（多くも少なくもない）",
+          "`stop_points` テーブルに席が **ちょうど3件** ある（id=1,2,3）",
+          "各本の `shelf_level` が **1〜5 のどれか** になっている",
+          "各本の `status` が **available か on_loan のいずれか**（タイプミスで別の文字になっていない）",
+          "`status` が `on_loan` の本が **1つ以上** ある（借りられている状態のサンプルも見たいため）",
+          "Supabase の Table Editor で、上の件数と中身を **目視で確認した**"
+        ]}
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        {"type": "callout", "variant": "ok", "label": "コードは書かないけど、これはOK", "text": "このプロジェクトは『答えのコードは載せない・自分で書いて学ぶ』が方針です。ただし #3 は“学習対象のロジック”ではなく“決まったシードを1回流すだけ”の定型作業なので、下に SQL を載せています。写経して、INSERT 文が何をしているか意味を理解しながら貼るとなお良いです。"},
+        {"type": "steps", "items": [
+          {"title": "Supabase にログインして対象プロジェクトを開く", "detail": "https://supabase.com にログイン → プロジェクト一覧から「移動本棚ロボ」のプロジェクトを開く。どのプロジェクトか分からなければ PM(水谷) に確認。**まだ Supabase アカウントが無い／プロジェクトに招待されていない場合は、先に PM(水谷) に招待してもらう。ログイン後にプロジェクト一覧へ『移動本棚ロボ』が出てこなければ招待漏れ。**"},
+          {"title": "左メニューの「SQL Editor」を開く", "detail": "SQL を貼って実行する画面です。Table Editor（表をマウスでいじる画面）ではなく SQL Editor を使います。新しいクエリ（New query）を1つ開いておく。"},
+          {"title": "まず席(stop_points)のシードSQLを貼って Run", "detail": "下の『席シードSQL』をコピーして貼り、Run を押す。席を先に入れるのは将来 robot_calls が席を参照する設計だからで、今回 robot_calls は触りません。このSQLは `on conflict (id) do nothing`（重複ガード）が付いているので、2回押しても増えません。"},
+          {"title": "次に本(books)のシードSQLを貼って Run", "detail": "下の『本シードSQL』をコピーして貼り、Run を押す。**books は重複ガードが無いので Run は必ず1回だけ。間違えて2回押さないこと。** 押した直後にステップ6の件数確認へ進む。"},
+          {"title": "件数を SQL で確認する（再実行する前に必ず）", "detail": "下の『件数確認SQL』を Run して、books=5・stop_points=3 になっているかを数字で確かめる。ここで5でなければ、本シードを押しすぎ／押せていない。**再度シードを流す前に、必ずこの件数確認をする**（むやみに Run し直すと二重投入の原因になる）。"},
+          {"title": "Table Editor で中身を目視確認する", "detail": "左メニュー Table Editor → books と stop_points を開き、行数と title・shelf_level・status を目で見て Done チェックと突き合わせる。"}
+        ]},
+        {"type": "code", "lang": "sql", "code": "-- 席シードSQL（先に流す）。theta の 0 は小数でも整数でもOK（座標は double precision 型）\ninsert into stop_points (id, label, x, y, theta) values\n  (1, '席1', 0,   0, 0),\n  (2, '席2', 1.0, 0, 0),\n  (3, '席3', 2.0, 0, 0)\non conflict (id) do nothing;"},
+        {"type": "code", "lang": "sql", "code": "-- 本シードSQL（あとに流す）。重複ガードが無いので Run は1回だけ！\n-- ISBN は表示確認用の値（実在する本物とは限らない。正確な値は openBD で各自確認）\ninsert into books (isbn, title, author, shelf_level, status) values\n  ('9784101010137', 'こころ',           '夏目漱石',   1, 'available'),\n  ('9784101121154', '砂の女',           '安部公房',   2, 'on_loan'),\n  ('9784101006048', '人間失格',         '太宰治',     3, 'available'),\n  ('9784103534228', 'コンビニ人間',     '村田沙耶香', 4, 'available'),\n  ('9784167110116', '博士の愛した数式', '小川洋子',   5, 'on_loan');"},
+        {"type": "code", "lang": "sql", "code": "-- 件数確認SQL（Run して数字を見る。books=5 / stop_points=3 が正解）\nselect 'books' as t, count(*) from books\nunion all\nselect 'stop_points', count(*) from stop_points;"}
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        {"type": "research", "items": [
+          {"topic": "INSERT 文の基本（into テーブル(列...) values (値...)）", "why": "シードを貼るだけでも、列の並びと値の対応がズレると違う列に値が入る。意味を理解しておくと #5 本登録でアプリから insert するときに直結する。", "where": "Supabase JS の insert リファレンス https://supabase.com/docs/reference/javascript/insert と、SQL の INSERT は PostgreSQL 公式 https://www.postgresql.org/docs/current/sql-insert.html"},
+          {"topic": "on conflict (id) do nothing の意味", "why": "席シードに付いている『重複ガード』。同じ id が既にあったら“何もしない”ので、2回 Run しても席が増えない（=冪等／べきとう：何回やっても結果が同じ）。なぜ本では使えないのかと合わせて理解したい。", "where": "PostgreSQL の ON CONFLICT https://www.postgresql.org/docs/current/sql-insert.html#SQL-ON-CONFLICT"},
+          {"topic": "なぜ stop_points だけ on conflict を付けられて、books には付けられないのか", "why": "二重投入で本が10件になる事故の根本理由。on conflict は『どの列の重複を見るか』に一意制約(unique/primary key)が要る。", "where": "`supabase/schema.sql` を自分の目で確認：stop_points は `id int primary key`（9行目）なので id で重複判定できる。一方 books の `isbn` は `isbn text`（28行目）で **unique 制約が無い** → 重複判定の基準が無いので on conflict が使えない。だから本は『1回だけ Run』で守るしかない。"},
+          {"topic": "shelf_level と status の check 制約に合う値", "why": "範囲外や別の文字を入れると INSERT が弾かれてエラーになる。逆に言えば、入りさえすれば値は正しい。", "where": "`supabase/schema.sql` の 31行目 `shelf_level int not null check (shelf_level between 1 and 5)` と 33〜34行目 `status ... check (status in ('available','on_loan'))` を確認。"},
+          {"topic": "RLS と SQL Editor の権限の関係（重要・復旧手段に直結）", "why": "『削除は誰も不可（DELETEポリシーが無い）』のに、二重投入をやり直したいときどうするか、を正しく理解するため。アプリ経由(anon/authenticated)と SQL Editor(管理者/service_role)で権限が違う。", "where": "`supabase/schema.sql` の **RLS セクション（行75〜101）** を読む。特に行88に `sel_stops`(select)はあるが ins_stops が無い＝アプリからは席を追加できないこと、insert ポリシー一覧（行91〜93）が books/loans/calls だけで stop_points を含まないこと、行101で **DELETE ポリシーを一切作っていない** ことを自分の目で確認。RLS の考え方は https://supabase.com/docs/guides/database/postgres/row-level-security"},
+          {"topic": "投入後の確認方法（Table Editor と count）", "why": "『入ったつもり』を防ぐ。件数を数字で見る癖をつけると、二重投入にすぐ気づける。", "where": "Supabase 左メニュー Table Editor。件数は上の『件数確認SQL』を SQL Editor で Run。Table Editor の使い方は https://supabase.com/docs/guides/database/tables"}
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        {"type": "callout", "variant": "danger", "label": "本を二重に Run して10件になった", "text": "books には重複ガードが無いので、本シードを2回押すと10件に増えます。アプリからは消せません（DELETE ポリシーが無いため）。ただし **SQL Editor は管理者権限なので、例外的に消せます**。やり直したいときは PM(水谷) に相談のうえ、SQL Editor から条件を必ず付けて1件ずつ消す。例：`delete from books where title = 'こころ';`。**条件なしの `delete from books;` は全消し事故になるので絶対NG。** これは RLS の説明（SQL Editor は管理者権限で RLS を素通りする）と整合した、正規の復旧手順です。"},
+        {"type": "ul", "items": [
+          "**check 制約で弾かれた**：`shelf_level` に 0 や 6、`status` に `avilable` などのタイプミスを入れると INSERT がエラーで止まる。値を見直す。",
+          "**席を入れる前に robot_calls をいじろうとした**：今回 robot_calls は触りません。robot_calls は #8 以降。今回は books と stop_points だけ。",
+          "**Table Editor から席を追加しようとして保存できない**：stop_points には insert ポリシーが無い（schema.sql 行88は select のみ）ので、アプリ/通常権限からは席を追加できない仕様。席は今回の SQL Editor シードで入れます。",
+          "**列の並びと値がズレる**：INSERT の列リストと values の順番は1対1。コピーした SQL の列順を勝手に変えない。"
+        ]},
+        {"type": "callout", "variant": "warn", "label": "迷ったら止まる", "text": "DB は全員共有。『とりあえず Run』を繰り返さない。1回 Run したら必ず件数確認 → おかしければ PM に相談、が鉄則です。"}
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        {"type": "p", "text": "**この #3 の Done は『DB に5件＋3件が入っていること』** です。画面表示の確認は必須ではありません。"},
+        {"type": "ol", "items": [
+          "SQL Editor で件数確認SQL を Run → books=5, stop_points=3 を確認（これが #3 の本来の確認）。",
+          "Table Editor で books を開き、title・shelf_level・status を目視。on_loan が1件以上あるか確認。",
+          "Table Editor で stop_points を開き、席1〜席3の3行を確認。"
+        ]},
+        {"type": "callout", "variant": "tip", "label": "画面で見たい人だけ（任意・後回しでOK）", "text": "（#1 本一覧がまだ無ければ丸ごとスキップでOK。これは #3 の Done 条件ではありません。）画面で確認したい場合は開発サーバーを起動します。起動コマンドは `package.json` の `scripts` を見て確認（このプロジェクトは `npm run dev` のことが多い）。このプロジェクトは Next.js 16系で挙動が訓練データと違う可能性があるため、コマンドは決め打ちせず scripts を見て確かめてください。"}
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        {"type": "p", "text": "AI には『答えの SQL を書かせる』のではなく、『自分の SQL や考え方をチェックさせる・つまずきを言語化させる』使い方をします。下のプロンプトをコピペして使ってください。"},
+        {"type": "code", "lang": "text", "code": "あなたは初心者プログラマーの学習コーチです。答えのコードを丸ごと書かず、私が自分で書けるようヒントと問いかけで導いてください。\n\n前提:\n- 移動本棚ロボというプロジェクトで、Supabase の SQL Editor に『本5冊・席3つ』のシードデータを INSERT で入れる作業をしています（GitHub Issue #3）。\n- DBスキーマは supabase/schema.sql にあります。books は shelf_level が 1..5、status が available か on_loan の check 制約付き。stop_points は id が primary key。\n- このプロジェクトの Next.js は 16系で、私の知っている書き方と違う可能性があります。Next.js 関連を答える前に node_modules/next/dist/docs/ の該当ガイドを確認するよう私に促してください。\n\nお願い:\n1) 私が書いた INSERT 文を貼るので、列と値の対応・check 制約に合っているかを指摘してください（直したコードは書かず、どこを見直すべきかを質問で）。\n2) on conflict do nothing をなぜ books に付けられず stop_points には付けられるのか、私に説明させてヒントで補ってください。\n3) 二重投入で10件になった場合の正しい復旧手順（SQL Editor からの条件付き DELETE と、条件なし DELETE の危険）を、私が手順を言えるよう問いかけてください。"}
+        ]
+      },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["シード(seed)データ", "開発の土台になる『最初に入れておくお試しデータ』。種という意味。"],
+          ["INSERT", "テーブルに新しい行（データ）を追加する SQL 命令。"],
+          ["on conflict do nothing", "同じキーが既にあったら何もしない指定。2回流しても増えない＝二重投入を防ぐ。"],
+          ["冪等（べきとう）", "何回実行しても結果が同じこと。席シードは冪等、本シードは冪等ではない。"],
+          ["check 制約", "列に入れてよい値の範囲やルール。違反する値は INSERT 時に弾かれる。"],
+          ["RLS", "行レベル・セキュリティ。誰がどの行を読み書き削除できるかのルール。SQL Editor は管理者権限で素通りする。"],
+          ["SQL Editor / Table Editor", "前者は SQL を打つ画面、後者は表をマウスで見る/編集する画面。今回の投入は SQL Editor。"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        {"type": "ul", "items": [
+          "前のIssue **#2 テーブル作成**：このシードを入れる『箱』を作る Issue。テーブルがまだ無ければ先に #2。",
+          "次のIssue **#1 本一覧**：このシードを画面に表示する Issue。#3 が終わらないと表示する中身が無い。",
+          "関連Issue **#5 本登録**：アプリから books に insert する。今回手で学んだ INSERT の考え方がそのまま生きる。",
+          "DBスキーマの正本：`supabase/schema.sql`（列名・check 制約・RLS の根拠）。",
+          "環境変数や接続でつまずいたら、同フォルダの **環境構築ガイド.html**（キー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正）。",
+          "Issue番号は GitHub実番号版に合わせています。古い資料と番号が違うときは『番号よりタスク名で照合』。"
+        ]}
+      ]
+    }
+  ]
+}

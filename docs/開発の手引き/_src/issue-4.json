@@ -1,0 +1,120 @@
+{
+  "issueNo": 4,
+  "taskName": "リポジトリの雛形を作成",
+  "screen": "",
+  "role": "PM（水谷）",
+  "sprint": "Sprint 0（準備）",
+  "priority": "★★★",
+  "status": "✅完了",
+  "category": "基盤",
+  "stack": ["Next.js", "create-next-app", "TypeScript", "Tailwind CSS", "Supabase", "Git"],
+  "oneLineGoal": "Next.js + Supabase の雛形・docs・テンプレ一式を用意し、新メンバーが「この構成が何か」を理解して開発を始められる土台をつくる。",
+  "sections": [
+    {
+      "heading": "このIssueは何？",
+      "blocks": [
+        { "type": "p", "text": "**プロジェクトの“土台（雛形）”をつくる**Issueです。Next.js(App Router) + Supabase + Tailwind CSS のひな型に、`docs/`(資料) や `.github/`(PR・Issueテンプレ) まで含めた一式を `create-next-app` で生成し、`@supabase/supabase-js` を追加しました。これにより、各メンバーは空のフォルダではなく**最初から決まった置き場所**にコードを書けます。" },
+        { "type": "callout", "variant": "ok", "label": "このIssueはすでに完了済み", "text": "雛形作成は PM（水谷）が完了済みです。この資料は『今ある構成が何で、どのファイルが何のためにあるか』を新メンバーが理解し、clone してローカルで動かすまでを案内する“参照資料”です。ゼロから作り直す手順も最後に触れますが、通常は clone するだけでOKです。" },
+        { "type": "p", "text": "Next.js の App Router では**フォルダ構成そのものがアプリの設計図**になります。最初にここを理解しておくと、以降の画面実装Issue（#1 本一覧, #5 本登録, #7 借りる/返す など）で『どのファイルを触ればいいか』に迷わなくなります。" }
+      ]
+    },
+    {
+      "heading": "完了の定義（Done）",
+      "blocks": [
+        { "type": "checklist", "items": [
+          "`git clone` してきたプロジェクトで `npm install` が通る",
+          "`npm run dev` でトップページ（`http://localhost:3000`）が表示される",
+          "`app/page.tsx`=本一覧(S-1)、`app/books/[id]/page.tsx`=本詳細(S-2)、`app/register/page.tsx`=本登録(S-3)、`app/history/page.tsx`=貸出履歴(S-5)、`app/login/page.tsx`=ログイン(S-6)、`app/search/page.tsx`=検索(S-7) の各 page.tsx がそろっている",
+          "`lib/supabaseClient.ts`（Supabase 接続）、`supabase/schema.sql`（テーブル定義+RLS）がある",
+          "`components/`(共通UI)、`docs/`(資料)、`robot/`(ロボ側・別管理)、`.github/`(PR/Issueテンプレ) のフォルダがある",
+          "`@supabase/supabase-js` が `package.json` の依存に入っている"
+        ]},
+        { "type": "callout", "variant": "tip", "label": "S-4 は欠番です", "text": "雛形にある画面は S-1, S-2, S-3, S-5, S-6, S-7 の6つです。S-4 に当たる page.tsx は意図的に置いていない（欠番）ので、『1つ足りないのでは？』と心配しなくて大丈夫です。画面の照合は番号ではなく画面名(S-◯)とファイルパスで行うのが確実です。" }
+      ]
+    },
+    {
+      "heading": "進め方ステップ",
+      "blocks": [
+        { "type": "steps", "items": [
+          { "title": "リポジトリを clone する", "detail": "ターミナルでプロジェクトを置きたいフォルダに移動し、`git clone <PMから共有されたURL>` を実行します。URL は PM（水谷）から共有されます。GitHub Desktop での Clone 手順や、`Permission denied` / `Repository not found` が出たときの対処は『環境構築ガイド.md』のステップ3に具体的に載っています。" },
+          { "title": "依存パッケージを入れる", "detail": "clone したフォルダに入って `npm install` を実行。`node_modules/`（ライブラリ本体）が作られます。これは Git 管理外なので各自で入れます。" },
+          { "title": "`.env.local` を手作りする", "detail": "プロジェクト直下（`package.json` と同じ場所）に `.env.local` という名前のファイルを新規作成し、`NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` の2行を書きます（値は Supabase の管理画面からコピー）。先頭のドットを忘れずに。書き終えたら次のステップへ。※`.env.local` を編集したら必ず再起動が必要（次のcalloutを参照）。詳しい手順と貼り付ける2行の中身は『環境構築ガイド.md』のステップ4にあります。" },
+          { "title": "開発サーバーを起動して確認", "detail": "`npm run dev` を実行し、`http://localhost:3000` をブラウザで開く。トップに『本一覧（ホーム） / S-1』の見出しと説明文が出れば成功です。" },
+          { "title": "フォルダ構成を“読む”", "detail": "`app/` の各 page.tsx、`lib/supabaseClient.ts`、`supabase/schema.sql`、`components/`、`docs/`、`robot/`、`.github/` をエディタで開いて、それぞれの役割を確認します。各 page.tsx は今は短いプレースホルダなので、構成を掴むのに最適です。" },
+          { "title": "ルーティングの仕組みを理解する", "detail": "App Router では『フォルダ＝URL』です。`app/register/page.tsx` が `/register` になる、`app/books/[id]/page.tsx` の `[id]` は動的ルート（本ごとのID）、という対応を実物のフォルダと URL を見比べて確かめます。" },
+          { "title": "（参考）ゼロから作り直す場合", "detail": "通常は不要ですが、仕組みの学習として `create-next-app` の対話（TypeScript / ESLint / Tailwind / App Router / src ディレクトリ をどう選ぶか）を“自分の手で”確認すると、何を選ぶと何が入るかが学べます。最新16系では対話の選択肢が変わっている可能性があるので、必ず公式・同梱docsで現行のやり方を確認してください（下のAIプロンプトと研究ブロック参照）。" }
+        ]},
+        { "type": "callout", "variant": "danger", "label": "超重要：.env.local を変えたら再起動", "text": "`.env.local` を新規作成・編集したら、いったん `Ctrl + C` で開発サーバーを止めて `npm run dev` を再実行しないと反映されません（環境変数は再起動しないと読み込まれない）。コードの保存は自動更新（ホットリロード）されますが、環境変数だけは別です。ここを知らないと『キーは合ってるのに接続エラー』で延々ハマります。" }
+      ]
+    },
+    {
+      "heading": "📚 進めながら調べる・学ぶこと",
+      "blocks": [
+        { "type": "research", "items": [
+          { "topic": "`.env.local` の作り方・中身・再起動の落とし穴", "why": "`.env.local.example` は廃止済みで各自手作りするため。置き場所・キー名・再起動を1つでも外すと接続エラーになり、初心者が最もハマる場所だから。", "where": "`docs/開発の手引き/環境構築ガイド.md`（GitHub/VS Code で読む。整形済みをブラウザで読むなら同フォルダの `.html`）のステップ4。キー名は `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` が正（`..._ANON_KEY` は古い誤り）。" },
+          { "topic": "`create-next-app` とは／対話で何を選ぶと何が入るか", "why": "この雛形がどう生成されたかを知ると、フォルダ構成や入っているライブラリの理由が腑に落ちるから。選択(TypeScript/Tailwind/App Router 等)自体が学びになる。", "where": "Next.js 入門の同梱docs `node_modules/next/dist/docs/01-app/01-getting-started/` 一式。create-next-app 専用ガイドが無い場合は、`package.json` の依存と実際に生成されたファイルの対応づけで確認する。最新16系は対話が変わっている可能性があるので必ず実物で確認。" },
+          { "topic": "App Router のフォルダ構成（`app/` `layout.tsx` `page.tsx`）", "why": "どのファイルが画面になり、共通の枠（レイアウト）がどこかを理解しないと、画面実装Issueで手が止まるから。", "where": "画面とルーティング: `node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md`。page.tsx の規約: `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/page.md`。" },
+          { "topic": "ルーティングの仕組み（フォルダ＝URL）と動的ルート `[id]`", "why": "`/register` や `/books/<本のID>` がどのファイルに対応するかが分かると、リンクや遷移、本詳細画面の実装に直結するから。", "where": "フォルダ＝URLの本命: `03-layouts-and-pages.md` と `page.md`。動的ルート `[id]` の受け取り: `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/dynamic-routes.md`。画面間の移動(Link/遷移): `node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md`。" },
+          { "topic": "`lib/` と `lib/supabaseClient.ts` の役割", "why": "DB接続は全画面で共通。`lib/supabaseClient.ts` の `supabase` を import して使う約束なので、中身と置き場所の意味を知っておく必要がある。", "where": "実ファイル `lib/supabaseClient.ts` を開く。`createClient(url, publishableKey)` で接続を作り `supabase` を export している。url/key は `process.env.NEXT_PUBLIC_SUPABASE_URL!` のように `process.env` から読み、末尾の `!` は TypeScript の non-null assertion=『この値は必ずある』と開発者が保証する印。`.env.local` が無いと実行時に `undefined` になり接続エラーになる（だから前項の `.env.local` が大事）。Supabase JS の使い方: https://supabase.com/docs/reference/javascript/select" },
+          { "topic": "`components/` と `supabase/schema.sql` の役割", "why": "共通UIの置き場所と、DBの設計図（テーブル+RLS）の置き場所を知ると、雛形全体の地図が完成するから。", "where": "`components/` はボタン等の使い回しUIを置く場所。`supabase/schema.sql` は books/loans/users/robot_calls/robot_status/stop_points のテーブル定義と RLS（誰が読み書きできるかのルール）。RLS の考え方は #2 テーブル作成Issueと連動。" }
+        ]}
+      ]
+    },
+    {
+      "heading": "つまずきポイントと対処",
+      "blocks": [
+        { "type": "callout", "variant": "warn", "label": ".env.local.example はもう無い", "text": "古い README には `cp .env.local.example .env.local` と書いてありますが、この example ファイルは廃止済みです。`.env.local` は『環境構築ガイド.md』のステップ4を見て自分で新規作成してください。コピー元ファイルはありません。" },
+        { "type": "p", "text": "**接続エラー（undefined になる）**：原因の多くは ①`.env.local` が `package.json` と違う場所にある ②キー名が違う（正解は `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`、`..._ANON_KEY` は誤り）③編集後に再起動していない、の3つです。上から順に確認してください。" },
+        { "type": "p", "text": "**README に `shadcn/ui` とあるが入っていない**：`package.json` の `dependencies` / `devDependencies` を開くと、入っているのは `tailwindcss` だけで `shadcn` 系のパッケージはありません。README の技術スタック欄は構想が先行した記述です。**実際に入っているライブラリは `package.json` が正**。迷ったら README ではなく `package.json` と環境構築ガイドを信じてください。" },
+        { "type": "callout", "variant": "warn", "label": "資料の番号より画面名(S-◯)で照合", "text": "Issue番号や画面番号は古い資料だと食い違うことがあります（例: 旧資料の #4=本一覧 は誤り、現行は #4=リポジトリ雛形）。画面はファイルパスと S番号（S-1〜S-7、S-4は欠番）で照合するのが安全です。" }
+      ]
+    },
+    {
+      "heading": "動作確認のしかた",
+      "blocks": [
+        { "type": "ol", "items": [
+          "`npm run dev` を実行し、ターミナルに `http://localhost:3000` が出るのを待つ。",
+          "ブラウザで `http://localhost:3000` を開く。見出しに『本一覧（ホーム） / S-1』、その下に『担当者がこの画面を実装します。要件: …』という灰色の文が表示されればOK。",
+          "URL を `http://localhost:3000/register` に変えると『本登録 / S-3』の画面に切り替わる＝『フォルダ＝URL』が効いていることが確認できる。",
+          "同様に `/history`(S-5 貸出履歴)、`/login`(S-6 ログイン)、`/search`(S-7 検索) も開いて、それぞれの見出しが出るか確認する。"
+        ]},
+        { "type": "callout", "variant": "tip", "label": "止め方", "text": "サーバーを止めるときはターミナルで `Ctrl + C`。再度開発するときに `npm run dev` で起動し直します。" }
+      ]
+    },
+    {
+      "heading": "🤖 AIコーチの使い方",
+      "blocks": [
+        { "type": "p", "text": "AIには“答えのコードを書かせる”のではなく“どこを見ればいいか導いてもらう”使い方をします。下のプロンプトをコピペして使ってください。" },
+        { "type": "code", "lang": "text", "code": "あなたは Next.js 初心者の私の学習コーチです。答えのコードは書かないでください。\nこのプロジェクトは Next.js 16系（App Router）で、学習データと挙動が違う可能性があります。\nだから一般論で答えず、まず node_modules/next/dist/docs/ の該当ガイド(例: 01-app/01-getting-started/03-layouts-and-pages.md)を私自身に開かせ、現行の書き方を確認させてください。\n\n今やりたいこと: 雛形（リポジトリの構成）を理解して、ローカルで npm run dev が動くまで進めたい。\nお願い:\n1) app/ のフォルダ構成と『フォルダ＝URL』の仕組みを、私に質問しながら気づかせてください。\n2) .env.local の作り方は docs/開発の手引き/環境構築ガイド.md のどこを読むべきか案内し、再起動が必要な理由まで私に説明させてください。\n3) lib/supabaseClient.ts の中の `!`(non-null assertion) の意味を、私が自分の言葉で説明できるよう導いてください。\n答えそのものではなく、『何を・なぜ・どこで調べるか』をヒントとしてください。" }
+      ]
+    },
+    {
+      "heading": "用語ミニ辞典",
+      "blocks": [
+        { "type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
+          ["create-next-app", "Next.js プロジェクトのひな型を対話形式で自動生成するコマンド"],
+          ["App Router", "Next.js の新しい画面の作り方。`app/` フォルダの構成がそのまま URL になる方式"],
+          ["page.tsx", "その URL で表示される画面本体。`app/register/page.tsx` → `/register`"],
+          ["動的ルート `[id]`", "`books/[id]` のように URL の一部が変わる部分。本ごとのIDが入る"],
+          ["`.env.local`", "URLやキーなど“接続情報・設定”を書くファイル。各自手作り・Git管理外。編集後は再起動が必要"],
+          ["non-null assertion `!`", "TypeScriptで『この値は必ずある』と保証する印。値が無いと実行時に undefined エラーになる"],
+          ["RLS", "Row Level Security。誰が行を読み書き・削除できるかをDB側で決めるルール（schema.sql に定義）"]
+        ]}
+      ]
+    },
+    {
+      "heading": "困ったら・参照",
+      "blocks": [
+        { "type": "ul", "items": [
+          "環境構築（clone / `.env.local` / 起動 / エラー対処）: `docs/開発の手引き/環境構築ガイド.md`（編集・GitHub/VS Code で読むならこの `.md`。ブラウザで整形済みを見るなら同フォルダの `環境構築ガイド.html`）",
+          "Git・PR のルール（ブランチ→PR→Squash and merge、1 PR=1 Issue）: `CONTRIBUTING.md`",
+          "DBの設計図（テーブル+RLS）: `supabase/schema.sql` … 関連 Issue #2 テーブル作成 / #3 サンプル投入",
+          "画面実装に進むときの関連 Issue: #1 本一覧(S-1) / #5 本登録(S-3) / #7 借りる・返す(S-2) / #9 座標変換",
+          "Next.js 同梱docs（最新16系の現行仕様の確認先）: `node_modules/next/dist/docs/01-app/01-getting-started/`",
+          "Supabase JS リファレンス: https://supabase.com/docs/reference/javascript/select"
+        ]},
+        { "type": "callout", "variant": "study", "label": "READMEより package.json と環境構築ガイドが正", "text": "README は構想段階の記述（shadcn/ui、`.env.local.example` など）が残っています。実態と食い違うときは、入っているライブラリは `package.json`、環境構築の手順は `環境構築ガイド.md` を優先してください。" }
+      ]
+    }
+  ]
+}

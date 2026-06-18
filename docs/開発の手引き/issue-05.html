@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>#5 本登録（バーコード／openBD）｜開発の手引き</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="wrap">
+
+  <nav class="crumbs"><a href="index.html">← 開発の手引き トップ</a></nav>
+
+  <header class="hero ">
+    <h1>Issue #5　本登録（バーコード／openBD）（S-3）</h1>
+    <p>ISBNを入れたらopenBDでタイトル・著者を自動取得し、段(1〜5)を選んで books に1冊登録できる本登録画面(S-3)を作る。</p>
+    <div class="badges">
+      <span class="badge">担当：アプリB</span>
+      <span class="badge">Sprint 1</span>
+      <span class="badge">優先 ★★☆</span>
+      
+    </div>
+  </header>
+
+  <div class="meta-bar"><span class="pill">画面 S-3</span>
+    <span class="pill role">担当：アプリB</span>
+    <span class="pill sprint">Sprint 1</span>
+    <span class="pill prio">優先 ★★☆</span>
+    <span class="pill lang">TypeScript</span>
+    <span class="pill lang">React</span>
+    <span class="pill lang">Next.js(16系)</span>
+    <span class="pill lang">Tailwind</span>
+    <span class="pill lang">Supabase JS</span>
+    <span class="pill lang">fetch</span>
+    <span class="pill lang">openBD API</span></div>
+
+  <nav class="toc">
+    <h2>📑 このページの内容</h2>
+    <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
+  </nav>
+
+<section id="sec-0">
+  <h2 class="sec">このIssueは何？</h2>
+  <p>本棚に並べる本を <strong>アプリから1冊ずつ登録する画面 (S-3)</strong> を作ります。やることは「ISBN(本の裏のバーコードの数字)を入力 → <code>openBD</code> という無料の書誌APIでタイトル・著者を自動取得 → 段(1〜5)を選ぶ → <code>books</code> テーブルに1件 insert → ホームへ戻る」の流れです。</p>
+  <div class="callout study"><span class="label">今回のうれしさ</span><p>外部API(openBD)を初めて触る回です。「ネット上のサービスにfetchで問い合わせて、返ってきたJSONから欲しい値を取り出す」という、これから何度も使う基本パターンを身につけます。前提Issueは #2(テーブル作成), #3(サンプル投入), #4(リポジトリ雛形) です。</p></div>
+  <div class="callout warn"><span class="label">ファイルはもう存在します(新規作成ではない)</span><p>編集する <code>app/register/page.tsx</code> は #4(リポジトリ雛形)で <strong>すでに仮画面(プレースホルダ)</strong> が置かれています。中身は「本登録 / S-3」という見出しと『担当者がこの画面を実装します』という説明文だけです。同じ名前のファイルを新しく作るのではなく、この既存ファイルの中身を自分の実装に置き換えます。</p></div>
+</section>
+
+<section id="sec-1">
+  <h2 class="sec">完了の定義（Done）</h2>
+  <ul class="checklist"><li>ISBNをテキスト入力できる(まずは手入力でOK。バーコードカメラは将来拡張)</li><li>「取得」ボタンを押すと openBD からタイトル・著者が自動でフォームに入る</li><li>openBDで見つからない時は、タイトル・著者を手で入力できる(フォールバック)</li><li>段(shelf_level)を1〜5から選べる</li><li>「登録」を押すと books に1件増える(status は available)</li><li>登録に成功したらホーム(/)へ自動で戻る</li></ul>
+</section>
+
+<section id="sec-2">
+  <h2 class="sec">進め方ステップ</h2>
+  <ol class="steps"><li><span class="st-title">ブランチを切る</span><div class="st-detail">main に直接書かないこと。<code>git switch -c feature/register-book</code> のように feature ブランチを作ってから作業します(コマンドは下のcodeブロック参照)。1 PR = 1 Issue が目安です。</div></li><li><span class="st-title">既存スタブを置き換える準備をする</span><div class="st-detail"><code>app/register/page.tsx</code> には すでに仮画面が入っています。新規作成ではなく、(1)ファイル先頭(use client ディレクティブ と import 群)と (2)return の中身 を、自分の実装に置き換えていきます。このページはユーザーが入力したりボタンを押したりする画面なので『クライアントコンポーネント』にする必要があります。先頭に書く合図(ディレクティブ)が何かは docs で確認(研究ブロック参照)。</div></li><li><span class="st-title">入力フォームと state を用意する</span><div class="st-detail">ISBN・タイトル・著者・段(shelf_level) の4つを React の state(useState)で持ちます。段は 1〜5 の select(プルダウン)で選ばせると楽です。ただし select の値は『文字列』で返ってくるので、insert する時に数値へ変換が必要になります(詳しくは『つまずきポイント』)。入力欄を value と onChange で state につなぐ『制御コンポーネント』の考え方を docs/React で確認。</div></li><li><span class="st-title">「取得」ボタンで openBD を呼ぶ(ここが核心・小さく分ける)</span><div class="st-detail">(a) ボタンの onClick を async 関数にする。(b) <code>fetch(\</code>https://api.openbd.jp/v1/get?isbn=${isbn}\<code>)</code> を await する。(c) さらに <code>res.json()</code> を await してJSONに変換する(なぜ await が2回要るか=本文の読み取りも非同期だから)。(d) 返ってきた配列の中身から title / author を取り出して setTitle / setAuthor で state に入れる。取得中・失敗時の表示は別の小さな state(例: loading, message)で管理すると親切です。</div></li><li><span class="st-title">見つからない時のフォールバックを作る</span><div class="st-detail">openBDは登録の無い本だと <code>[null]</code> を返します(=配列の中身が null)。その場合は『見つかりませんでした。手で入力してください』と出すだけにして、タイトル・著者欄はそのまま手入力できるようにします。fetch自体が失敗(オフライン等)した場合と、見つからない([null])場合は分けて扱えると更に良いです。</div></li><li><span class="st-title">「登録」ボタンで books に insert する</span><div class="st-detail">supabase は <code>import { supabase } from '@/lib/supabaseClient'</code> のように読み込みます(雛形で用意済み)。<code>supabase.from('books').insert({...})</code> で1件追加します。列名は schema.sql の通り: isbn, title, author, shelf_level(数値に変換), status は 'available' を入れる。insert の戻り値の error をチェックして、あればメッセージを出す。</div></li><li><span class="st-title">成功したらホームへ遷移する</span><div class="st-detail">画面遷移には <code>useRouter</code> を使います。本体の先頭で一度 <code>const router = useRouter()</code> と呼んでおき、insert 成功後に <code>router.push('/')</code> でホームへ戻します。import 元が今回の最大の罠です(研究ブロック参照)。</div></li><li><span class="st-title">動作確認 → コミット → PR</span><div class="st-detail">下の『動作確認のしかた』で確認できたら、<code>git add</code> → <code>git commit</code> → <code>git push</code> して GitHub で Pull Request を作成。PR本文は『何をしたか / Closes #5 / 動作確認』。マージは PM(水谷)承認後に Squash and merge。</div></li></ol>
+  <pre><code># 1. 最新の main を取り込んでからブランチを切る
+git switch main
+git pull
+git switch -c feature/register-book
+
+# 作業後
+git add app/register/page.tsx
+git commit -m "本登録画面(S-3)を実装 (openBD取得+books登録)"
+git push -u origin feature/register-book
+# → GitHub上で Pull Request を作成 (本文に Closes #5)</code></pre>
+</section>
+
+<section id="sec-3">
+  <h2 class="sec">📚 進めながら調べる・学ぶこと</h2>
+  <p>ここがこの資料の核心です。答えのコードは載せません。下の「何を・なぜ・どこで」を見て、自分でdocsを開いて現行の書き方を確かめながら書いてください。</p>
+  <ul class="research"><li><div class="r-topic">use client ディレクティブ(このページをクライアント化する)</div><div class="r-why">入力やボタン操作・useState・useRouter を使うページは『クライアントコンポーネント』にする必要がある。ファイルの一番上に書く1行が何かを確認する。</div><div class="r-where">node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md と node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md</div></li><li><div class="r-topic">フォーム入力とReactのstate(useState)</div><div class="r-why">ISBN・タイトル・著者・段 をユーザー入力に合わせて保持し、画面に反映するため。useState は <code>import { useState } from 'react'</code> で読み込む(import元を間違えやすい)。入力欄を value と onChange で state につなぐ『制御コンポーネント』の形を覚える。</div><div class="r-where">React公式 https://react.dev/reference/react/useState と https://react.dev/learn/reacting-to-input-with-state</div></li><li><div class="r-topic">fetchで外部API(openBD)を呼ぶ基本と注意</div><div class="r-why">openBDは鍵不要の公開APIなので、今回はブラウザ(クライアント)から直接 fetch してOK。async/await の使い方、fetch の結果に対して <code>res.json()</code> をもう一度 await する理由(本文の読み取りも非同期処理だから)を理解する。</div><div class="r-where">MDN https://developer.mozilla.org/ja/docs/Web/API/Fetch_API/Using_Fetch ／ 参考: node_modules/next/dist/docs/01-app/01-getting-started/06-fetching-data.md。なお 05-server-and-client-components.md の『Use API keys without exposing them to the client(鍵をクライアントに晒さない)』の項は、鍵が要るAPIはサーバーで呼ぶという《逆ケース》の話。今回は公開APIなので当てはまらない対比として読むこと。</div></li><li><div class="r-topic">openBDのレスポンス構造(配列 → summary → title/author)の取り出し方</div><div class="r-why">返り値は『配列』で、要素が見つからない時は null。タイトルは summary.title で取れることが多いが、author は summary に無い/空のことがあり、その場合 onix 側にしかない。断定せず、必ず自分の目で実物を見てキー名を確認する。</div><div class="r-where">openBD APIガイド https://openbd.jp/api/ ／ まずブラウザで https://api.openbd.jp/v1/get?isbn=9784101010137 を開き、title と著者がどのキー(summary.title / summary.author 等)に入っているか目視確認する。見つからない例は https://api.openbd.jp/v1/get?isbn=9784101010136 (これは [null] が返る)。</div></li><li><div class="r-topic">Supabaseのinsert(books に1件追加)</div><div class="r-why">取得・入力した値を DB に保存するため。列名は schema.sql に厳密一致させる(isbn, title, author, shelf_level, status)。status には 'available' を入れる。insert の戻り値の error を必ず確認する。</div><div class="r-where">Supabase JS docs https://supabase.com/docs/reference/javascript/insert ／ 列名・制約は supabase/schema.sql(books: shelf_level は 1..5 の int, status は available|on_loan)</div></li><li><div class="r-topic">登録後の画面遷移(useRouter)</div><div class="r-why">insert 成功後にホーム(/)へ戻すため。最大の罠は import 元。<code>import { useRouter } from 'next/navigation'</code> が正しい(古い学習データの <code>next/router</code> は旧版で別物。16系では navigation を使うことを docs で確認)。使い方は本体の先頭で一度 <code>const router = useRouter()</code> と呼んでから <code>router.push('/')</code> を使う、の2段階。</div><div class="r-where">node_modules/next/dist/docs/01-app/03-api-reference/04-functions/use-router.md と node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md</div></li></ul>
+</section>
+
+<section id="sec-4">
+  <h2 class="sec">つまずきポイントと対処</h2>
+  <div class="callout danger"><span class="label">useRouter の import 元(最頻出の罠)</span><p><code>import { useRouter } from 'next/router'</code> と書くと動きません。16系(App Router)では <code>import { useRouter } from 'next/navigation'</code> が正しい。古いネット記事・学習データは next/router を案内していることが多いので注意。</p></div>
+  <div class="callout warn"><span class="label">.env.local を直したらサーバー再起動</span><p>supabase が undefined・環境変数が読めない時、原因は2つ。(1)キー名が古い(正は <code>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code>。古い anon は誤り)。(2)もっと頻発するのが『.env.local を作った/直した後にサーバーを再起動していない』。Next.js は env を起動時にしか読まないので、<code>npm run dev</code> を一度 Ctrl+C で止めて起動し直す。</p></div>
+  <p><strong>title/author が undefined になる</strong>: openBDのレスポンスは配列で、見つからない時は中身が null。配列の0番目を取り出してから .summary.title… とたどる必要がある。さらに author は summary に無い/空のことがあるので、必ず実レスポンス( https://api.openbd.jp/v1/get?isbn=9784101010137 )を見てキー名を確認してから取り出すこと。</p>
+  <p><strong>shelf_level でエラー / 段が変な値で保存される</strong>: HTMLの select の value は『文字列』で返ってくる(例: "3")。books.shelf_level は 1..5 の int(数値)なので、insert の前に <code>Number(...)</code> で数値へ変換する。変換し忘れると型エラーや 1..5 制約違反になりがち。</p>
+  <p><strong>「取得」を押しても何も起きない</strong>: onClick の関数を async にし忘れ/await を付け忘れていると、fetch の途中の値(Promise)を使ってしまう。fetch を await、さらに res.json() を await、の2回 await を確認する。</p>
+  <p><strong>見つからない例で『コードが壊れた』と勘違い</strong>: テストで <code>9784101010136</code> を入れると openBD は <code>[null]</code>(見つからない)を返します。これはバグではなく仕様。ヒットする例は <code>9784101010137</code>(『こころ』夏目漱石/新潮文庫)。</p>
+</section>
+
+<section id="sec-5">
+  <h2 class="sec">動作確認のしかた</h2>
+  <ol><li><code>npm run dev</code> を実行して開発サーバーを起動する(.env.local を直した直後なら必ず再起動)。</li><li>ブラウザで http://localhost:3000/register を開き、ISBN欄に <code>9784101010137</code> を入れて「取得」を押す → タイトル『こころ』と著者『夏目,漱石,1867-1916』が自動で入ることを確認(著者はカンマ区切りで生没年まで入るのは正常)。</li><li>次に <code>9784101010136</code> を入れて「取得」→『見つかりません』と出て、タイトル・著者を手入力できる(フォールバック)ことを確認。</li><li>段(shelf_level)を1〜5から選び、「登録」を押す → エラーが出ず、ホーム(/)へ戻ることを確認。</li><li>Supabase の管理画面 → Table Editor → books テーブルを開き、いま登録した行が1件増えていることを確認する(ここが本番の確認ポイント)。</li></ol>
+  <div class="callout warn"><span class="label">ホーム(S-1)では今はまだ見えない</span><p>登録できたかの確認は『Supabase の Table Editor で books に行が増えたか』を主軸にしてください。ホーム(本一覧 S-1 / app/page.tsx)も現状はスタブ(仮画面)で、本を一覧表示しません(別Issue)。画面に出ないからといって『登録できていない』と早とちりしないこと。</p></div>
+</section>
+
+<section id="sec-6">
+  <h2 class="sec">🤖 AIコーチの使い方</h2>
+  <p>AIには『答えのコードを書かせる』のではなく『考え方とつまずき所を引き出すコーチ』として使います。下のプロンプトをコピペして使ってください。</p>
+  <pre><code>あなたは初心者向けのプログラミングコーチです。私はNext.js(16系・App Router)とSupabaseで「本登録画面(app/register/page.tsx)」を作っています。
+
+大事なルール:
+- 完成コードは書かないでください。私が自分で書いて学びたいです。
+- 代わりに「考え方・手順・つまずき所・どこを調べるか」を案内してください。
+- このNext.jsは16系で、あなたの学習データと書き方が違う可能性があります。断定せず、node_modules/next/dist/docs/ の該当ガイドを私が自分で開いて確認するよう促してください(特に useRouter の import 元、use client ディレクティブ)。
+- openBD( https://api.openbd.jp/v1/get?isbn=ISBN )はレスポンスが配列で、見つからない時は[null]。author は summary に無い/空のことがあるので、私に実物を確認させてください。
+
+やりたいこと: ISBN入力→openBDで取得→books にinsert(status=available, shelf_levelは数値に変換)→/へ遷移。
+まずは「どんな順番で・何から手をつければよいか」を、私が次の一歩を踏める粒度で質問しながら導いてください。</code></pre>
+</section>
+
+<section id="sec-7">
+  <h2 class="sec">用語ミニ辞典</h2>
+  <table><tr><th>言葉</th><th>かんたんな意味</th></tr><tr><td>ISBN</td><td>本に付いた世界共通の番号。裏表紙のバーコード下段(978…で始まる13桁)の数字。</td></tr><tr><td>openBD</td><td>ISBNから書名・著者などを無料で返してくれる公開API(鍵不要)。</td></tr><tr><td>fetch</td><td>ブラウザからネット上のAPIに問い合わせる命令。結果はあとから返るので await で待つ。</td></tr><tr><td>JSON</td><td>APIがデータをやりとりする時の文字の形式。res.json()でJavaScriptの値に変換する。</td></tr><tr><td>state(useState)</td><td>画面に表示する『今の値』をReactで保持する仕組み。入力値の管理に使う。</td></tr><tr><td>クライアントコンポーネント</td><td>ブラウザ側で動く部品。入力やボタン操作・useStateを使うページに必要。先頭に合図のディレクティブを書く。</td></tr><tr><td>shelf_level</td><td>本を置く『段』。books列で1〜5の整数。selectの値は文字列なので数値変換が要る。</td></tr><tr><td>フォールバック</td><td>本命(openBD自動取得)が使えない時の代替手段。ここでは手入力のこと。</td></tr></table>
+</section>
+
+<section id="sec-8">
+  <h2 class="sec">困ったら・参照</h2>
+  <ul><li>基本設計 §4-2 openBD(書誌取得の仕様)</li><li>関連Issue: #2 テーブル作成 / #3 サンプル投入 / #4 リポジトリ雛形(このページのスタブを置いた回) / #1 本一覧(登録した本を見せる画面・別担当)</li><li>環境変数・.env.local の作り方は同フォルダの『環境構築ガイド.html』(正しいキー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY)</li><li>DBの列名・制約は supabase/schema.sql(books: shelf_level 1..5, status available|on_loan, 登録時は available)</li><li>openBD実物確認: https://api.openbd.jp/v1/get?isbn=9784101010137 (ヒット例) / https://api.openbd.jp/v1/get?isbn=9784101010136 (見つからない例)</li><li>Next.js docs(同梱): use-router.md / use-client.md / 04-linking-and-navigating.md / 06-fetching-data.md / 07-mutating-data.md</li><li>Supabase JS: https://supabase.com/docs/reference/javascript/insert</li></ul>
+  <div class="callout tip"><span class="label">番号で照合しないで</span><p>古い資料はIssue番号がズレていることがあります。やりたいことは『番号』ではなく『タスク名・画面名(S-3 本登録)』で照合してください。</p></div>
+</section>
+
+  <footer>
+    <p><a class="top-link" href="index.html">← 開発の手引き トップに戻る</a></p>
+    <p>移動本棚ロボ｜開発の手引き ／ 内容が古くなっていたら気づいた人が直して PR を。</p>
+  </footer>
+
+</div>
+</body>
+</html>
