@@ -34,6 +34,17 @@
     <ol><li><a href="#sec-0">このIssueは何？</a></li><li><a href="#sec-1">完了の定義（Done）</a></li><li><a href="#sec-2">進め方ステップ</a></li><li><a href="#sec-3">📚 進めながら調べる・学ぶこと</a></li><li><a href="#sec-4">つまずきポイントと対処</a></li><li><a href="#sec-5">動作確認のしかた</a></li><li><a href="#sec-6">🤖 AIコーチの使い方</a></li><li><a href="#sec-7">用語ミニ辞典</a></li><li><a href="#sec-8">困ったら・参照</a></li></ol>
   </nav>
 
+  <div class="callout study">
+    <span class="label">▶ 進める前に（全Issue共通）</span>
+    <p>作業は <code>main</code> から <strong>ブランチを切って</strong> 進めます。<code>main</code> へ直接 push は禁止。完成したら Pull Request → PM（水谷）レビュー → マージ。</p>
+    <pre><code>git switch main &amp;&amp; git pull        # 最新を取り込む
+git switch -c feature/◯◯           # このIssue用のブランチを作る（ここから作業）
+# （資料を見ながら実装）→ npm run dev で確認
+git add . &amp;&amp; git commit -m "やったことを1行で"
+git push -u origin feature/◯◯      # → GitHub で Pull Request</code></pre>
+    <p>コマンドの全手順・GitHub Desktop での方法は <a href="環境構築ガイド.html#flow">環境構築ガイドの「日々の開発の流れ」</a>へ。物理作業中心のIssueでも、<code>robot/</code> のコードや記録を変更するときは同じ流れで。</p>
+  </div>
+
 <section id="sec-0">
   <h2 class="sec">このIssueは何？</h2>
   <p>本を借りたい席が決まると、ロボはその席まで自走します。席の場所は DB の <code>stop_points</code>（停車ポイントの座標表）に <code>x, y, theta</code>（位置と向き）で入っています。このIssueは、その座標を <strong>Nav2（ROS2 のナビゲーション基盤）が理解できる「ゴール」の形に変換する関数の素案</strong> を作るのがゴールです。</p>

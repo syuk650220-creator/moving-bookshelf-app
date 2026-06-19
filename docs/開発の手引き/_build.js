@@ -127,6 +127,17 @@ function renderItem(d) {
     <ol>${toc}</ol>
   </nav>
 
+  <div class="callout study">
+    <span class="label">▶ 進める前に（全Issue共通）</span>
+    <p>作業は <code>main</code> から <strong>ブランチを切って</strong> 進めます。<code>main</code> へ直接 push は禁止。完成したら Pull Request → PM（水谷）レビュー → マージ。</p>
+    <pre><code>git switch main &amp;&amp; git pull        # 最新を取り込む
+git switch -c feature/◯◯           # このIssue用のブランチを作る（ここから作業）
+# （資料を見ながら実装）→ npm run dev で確認
+git add . &amp;&amp; git commit -m "やったことを1行で"
+git push -u origin feature/◯◯      # → GitHub で Pull Request</code></pre>
+    <p>コマンドの全手順・GitHub Desktop での方法は <a href="環境構築ガイド.html#flow">環境構築ガイドの「日々の開発の流れ」</a>へ。物理作業中心のIssueでも、<code>robot/</code> のコードや記録を変更するときは同じ流れで。</p>
+  </div>
+
 ${body}
 
   <footer>
