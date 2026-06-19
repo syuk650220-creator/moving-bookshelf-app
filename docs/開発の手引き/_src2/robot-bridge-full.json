@@ -17,7 +17,7 @@
       "blocks": [
         {"type": "p", "text": "ゴール: **1件の呼出を最後まで処理できるブリッジ** を作る。ロボ側プログラム(Python)が Supabase の `robot_calls` から `queued`(処理待ち)の呼出を1件取り出し、**`moving`→`arrived`→`done`** と状態を進める。同時にロボの現在地ともいえる `robot_status` も更新して『今ロボが何をしているか』を常に正しく表す。"},
         {"type": "p", "text": "なぜ必要か: アプリとロボは **直接通信しない**(疎結合)。アプリは `robot_calls` に呼出を insert し `robot_status` を購読するだけ。ロボ側は `robot_calls` を見て動き、`robot_status` を更新する。この『テーブルを介した橋渡し』の本体がこのブリッジ。ここが動かないとアプリの呼出ボタンを押してもロボは一切反応しない。"},
-        {"type": "callout", "variant": "study", "label": "前提タスク（番号は仮）", "text": "本Issueは『ブリッジ最小実装』(前提タスク。GitHub番号は未採番なのでタスク名で呼ぶ)を発展させるもの。最小実装の成果物は『robot/ 配下に Supabase へ接続して `queued` を1件取得するコード』。**ただし現状 robot/ には README.md のプレースホルダしか無く、接続コードはまだ存在しない。** 最小実装がまだ無い/別ブランチなら、まず『接続して queued を1件 select できる』ところを自分で作るのが最初の一歩(下のステップ2)。"}
+        {"type": "callout", "variant": "study", "label": "前提タスク: #8 ブリッジ最小", "text": "本Issueは『#8 ブリッジ最小』(前提タスク)を発展させるもの。#8 ではまずポーリングで `queued` を取得し、最終形は Realtime購読(robot/README.md が定める持ち場)。本Issueでもまずポーリングで進めてよい(後で Realtime に差し替え)。最小実装の成果物は『robot/ 配下に Supabase へ接続して `queued` を1件取得するコード』。**ただし現状 robot/ には README.md のプレースホルダしか無く、接続コードはまだ存在しない。** 最小実装がまだ無い/別ブランチなら、まず『接続して queued を1件 select できる』ところを自分で作るのが最初の一歩(下のステップ2)。"}
       ]
     },
     {
@@ -44,7 +44,7 @@
           {"title": "3. moving に進める update を書く", "detail": "取得した1件の `id` を取り出し、その `id` で絞り込んで status を moving に update。**update は必ず対象の id で絞り込む(絞り込み忘れ＝全行更新事故)。** RLS は『update 全員OK』なので、絞り込みを忘れると robot_calls 全件を moving にしてしまう。同時に updated_at=now() も入れる。"},
           {"title": "4. robot_status も moving に合わせる", "detail": "robot_status(常に id=1 の1行)を state='moving'、current_call_id=その呼出のid、updated_at=now() に update。current_call_id には robot_calls に実在する id しか入れられない(外部キー)。"},
           {"title": "5. Nav2 呼び出しを仮の関数で挟む", "detail": "go_to(...) のような仮関数を1個用意して『ここでロボが動く』場所を作る。今は print やスリープでよい。注意: 呼出が持つのは `seat_id`(=stop_points.id、ただの整数)で **座標ではない**。本物の Nav2 に渡すのは x,y,theta なので、将来は seat_id から stop_points を引いて座標化する橋渡しが要る。仮関数の引数も『将来 stop_points を引く前提』で設計しておく。"},
-          {"title": "6. arrived に進める", "detail": "Nav2(仮)が到着を返したら、robot_calls を arrived に、robot_status を state='arrived' に update(両方 updated_at=now())。到着の判定方法は本物では同期的に1行で返るとは限らない(下の研究セクション参照)ので、仮関数段階では『戻ってきたら到着とみなす』で進めてよい。"},
+          {"title": "6. arrived に進める", "detail": "Nav2(仮)が到着を返したら、robot_calls を arrived に、robot_status を state='arrived' に update(両方 updated_at=now())。到着の判定方法は本物では同期的に1行で返るとは限らない(本物では isTaskComplete で完了待ち→getResult が succeeded か、を観測する。下の研究セクション/姉妹ガイド robot-nav2-drive 参照)ので、仮関数段階では『戻ってきたら到着とみなす』で進めてよい。"},
           {"title": "7. LED 点灯を仮関数で挟む→done に進める", "detail": "led_on(...) のような仮関数で『着いたら光る』場所を作る。その後 robot_calls を **done** に update。"},
           {"title": "8. 後始末で robot_status を idle に戻す", "detail": "done になったら robot_status を **state='idle'、current_call_id=null**、updated_at=now() に戻す。これを忘れると『次の呼出が来ても処理中扱いのまま』になる。**robot_calls=done と robot_status=idle はセット。**"},
           {"title": "9. 異常系を1つだけ入れる", "detail": "途中で例外/タイムアウトが起きたケースを1つ拾い、チームで『リトライ or canceled にする』を決める。重要: どちらを選んでも **robot_status は必ず idle・current_call_id=null に戻す**(成功時と同じ後始末)。canceled にしたのに robot_status を戻し忘れると次が永久に動かない。robot_calls=canceled と robot_status=idle もセット。"},
@@ -61,7 +61,7 @@
           {"topic": "robot_calls と robot_status を整合して更新する(current_call_id)", "why": "2テーブルを別々に更新するので、片方だけ進んでズレると『status は done なのに robot_status は moving のまま』が起きる。current_call_id で『今どの呼出を処理中か』を結ぶ。", "where": "supabase/schema.sql の robot_status 定義(current_call_id は robot_calls(id) への外部キー=他テーブルの実在行を指す参照)。supabase-py の update: https://github.com/supabase/supabase-py と https://supabase.com/docs/reference/javascript/update (考え方は共通)。"},
           {"topic": "supabase-py で『対象を id で絞って』update する書き方", "why": "絞り込みを忘れると RLS が update 全員OKのため robot_calls 全件を書き換える事故になる。update に『どの行か』を必ず添える書き方を知る必要がある。", "where": "https://github.com/supabase/supabase-py の README(update の例)。考え方は Supabase JS の https://supabase.com/docs/reference/javascript/update も同じ(filter で対象を限定→update)。**更新対象を id で限定する書き方** を必ず確認。実バージョンは Pi 上のものに合わせ、現行 README を見る。"},
           {"topic": "Realtime 購読 vs ポーリング(まずポーリング推奨)", "why": "queued の検知方法。Realtime は便利だが supabase-py ではバージョン差・WebSocket 安定性で初心者にはハードルが高い。最小実装の延長ならポーリングが堅実。", "where": "**初心者はまずポーリング**(例: 3秒ごとに、schema にある idx_calls_queue を活かして created_at 古い順に queued を1件取得)から始めるのを推奨。動いてから Realtime に差し替える: https://supabase.com/docs/guides/realtime"},
-          {"topic": "Nav2(自走)を疎結合に呼ぶ連携点の設計", "why": "ブリッジの状態遷移とロボの自走を分けておくと、Nav2 がまだでもブリッジを完成・テストできる。仮関数→本物への差し替えが楽になる。", "where": "Nav2: https://docs.nav2.org/ 。呼び出しは nav2_simple_commander(BasicNavigator) が候補だが、到着判定は同期的に1行で返るとは限らず goToPose 後に完了をポーリング確認する形が一般的。実際の到着判定方法は docs.nav2.org で裏取りすること。seat_id→stop_points を引いて x,y,theta に変換してから渡す点も合わせて確認。"},
+          {"topic": "Nav2(自走)を疎結合に呼ぶ連携点の設計", "why": "ブリッジの状態遷移とロボの自走を分けておくと、Nav2 がまだでもブリッジを完成・テストできる。仮関数→本物への差し替えが楽になる。", "where": "Nav2: https://docs.nav2.org/ 。呼び出しは nav2_simple_commander(BasicNavigator) が候補だが、到着判定は同期的に1行で返るとは限らず goToPose 後に isTaskComplete で完了待ち→getResult が succeeded か、を観測する形が一般的(詳細は姉妹ガイド Nav2自走/robot-nav2-drive を参照)。実際の到着判定方法は docs.nav2.org で裏取りすること。seat_id→stop_points を引いて x,y,theta に変換してから渡す点も合わせて確認。"},
           {"topic": "LED(NeoPixel)を疎結合に呼ぶ連携点", "why": "『着いたら光る』を状態遷移から切り離しておくと、LED 担当と並行作業でき、配線前でも仮関数で進められる。", "where": "NeoPixel: https://learn.adafruit.com/neopixels-on-raspberry-pi 。今は led_on() の仮関数を置く場所だけ決めればよい。"},
           {"topic": "失敗時のリトライ/異常系とログの出し方", "why": "moving のまま固まると次の呼出が永久に処理されない。例外時に何が起きたかログで追えること、そして robot_status を必ず戻すことが復旧の鍵。", "where": "Python 標準の logging モジュール(print より時刻・レベル付きで残せる)。設計方針(リトライ回数 or canceled)は PM と相談して決める。"}
         ]}
@@ -96,7 +96,7 @@
           {"title": "3. ブリッジを実行", "detail": "PC か Pi でブリッジを起動。ログに moving→arrived→done と進むのが見えるはず。"},
           {"title": "4. テーブルの最終状態を確認", "detail": "robot_calls の status が done、robot_status の state が idle・current_call_id が null になっていれば成功。"}
         ]},
-        {"type": "code", "lang": "sql", "code": "-- 確認用: queued の呼出を1件入れる\n-- book_id も seat_id も実在する値に置き換える\n--   book_id : books に実在する uuid\n--   seat_id : stop_points に登録済みの id（無いと外部キー違反）\ninsert into robot_calls (book_id, seat_id, requested_by)\nvalues ('REPLACE_WITH_REAL_BOOK_UUID', 1, 'test');\n\n-- 進行を確認（status / state を見る。updated_at は自動更新されない点に注意）\nselect id, status from robot_calls order by created_at desc limit 3;\nselect id, state, current_call_id from robot_status;  -- 常に id=1 の1行"}
+        {"type": "code", "lang": "sql", "code": "-- 確認用: queued の呼出を1件入れる\n-- book_id も seat_id も実在する値に置き換える\n--   book_id : books に実在する uuid\n--   seat_id : stop_points に登録済みの id（無いと外部キー違反）\n--             seat_id は #3 のシード投入結果で決まり 1 が実在するとは限らない。\n--             先に `select id from stop_points;` で実在の id を確認して置き換える。\ninsert into robot_calls (book_id, seat_id, requested_by)\nvalues ('REPLACE_WITH_REAL_BOOK_UUID', REPLACE_WITH_REAL_SEAT_ID, 'test');\n\n-- 進行を確認（status / state を見る。updated_at は自動更新されない点に注意）\nselect id, status from robot_calls order by created_at desc limit 3;\nselect id, state, current_call_id from robot_status;  -- 常に id=1 の1行"}
       ]
     },
     {
@@ -126,11 +126,11 @@
       "heading": "困ったら・参照",
       "blocks": [
         {"type": "ul", "items": [
-          "要件: **F-09**(呼出を最後まで処理し状態を反映)。",
-          "前提タスク: 『ブリッジ最小実装』(番号は仮。Supabase 接続＋queued 1件取得まで)。現状 robot/ は README.md のプレースホルダのみなので、接続コードが無ければ本Issueでステップ2から作る。",
+          "要件: **F-09**(呼出まわり。正確な文言は基本設計で最終確認する。基本設計書.md は現状プレースホルダ)。",
+          "前提タスク: **#8 ブリッジ最小**(Supabase 接続＋queued 1件取得まで。まずポーリング、最終形は Realtime購読)。現状 robot/ は README.md のプレースホルダのみなので、接続コードが無ければ本Issueでステップ2から作る。",
           "関連: アプリ側『呼出』画面(robot_calls に insert する側)、LED 制御タスク、Nav2 ナビゲーションタスク。",
           "DBスキーマの一次情報: supabase/schema.sql(robot_calls / robot_status の check 制約・外部キーがここに書いてある)。",
-          "接続情報・キーの考え方: 同フォルダ **環境構築ガイド.html**(値はフロントと同じ publishable key、ロボ側の変数名は PM と決める)。",
+          "接続情報・キーの考え方: 環境構築ガイドはアプリ用 NEXT_PUBLIC_ キー(値はフロントと同じ publishable key)の説明のみで、**ロボ側 Python(supabase-py)で使う環境変数名は未記載**。正式な変数名は PM(水谷)に確認し、チーム内で1つに統一する(#8 の困ったら・参照も同様)。",
           "外部docs: supabase-py https://github.com/supabase/supabase-py / Nav2 https://docs.nav2.org/ / NeoPixel https://learn.adafruit.com/neopixels-on-raspberry-pi",
           "開発フロー: main 直 push 禁止→feature/ ブランチで PR→PM 承認後 Squash マージ。ロボ側は PC で書いて push→Pi で git pull。"
         ]}

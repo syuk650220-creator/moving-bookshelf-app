@@ -28,7 +28,7 @@
         {"type": "checklist", "items": [
           "S-6(`app/login/page.tsx`)に名前を入力できるテキスト入力欄がある",
           "入力した名前が画面の state に保持され、画面に反映される(打った文字が見える)",
-          "名前が空のときは『使う』で先に進めない(簡単なバリデーション)"
+          "名前が空のときは『使う』で先に進めない(簡単なバリデーション)。必須スコープでは画面遷移は作らなくてよく、空ならエラーメッセージを出す or ボタンを無効化する、で合格(実際の遷移は次段/#7 でよい)"
         ]},
         {"type": "p", "text": "■ 次段(任意 / #7『借りる・返す』で必要になる)"},
         {"type": "checklist", "items": [
@@ -44,10 +44,10 @@
           {"title": "ブランチを切る", "detail": "main に直接 push は禁止です。`feature/guest-name` のような名前でブランチを作ってから作業します(命名は CONTRIBUTING の `feature/◯◯` 形式)。"},
           {"title": "このページをクライアントコンポーネントにする", "detail": "入力欄やボタンのように『ユーザーと対話する』部品は、ファイルを『クライアントコンポーネント』にする必要があります。そのための宣言(use client)を、ファイルの一番上の行(import より前の最初の行)に置きます。正確な書式(クォートの種類など)は use-client.md で確認してください。"},
           {"title": "入力値を入れておく state を用意する", "detail": "React の state(useState)で『今入力されている名前』を1つ持ちます。考え方は📚の『Reactのstateで入力値を持つ』を参照。"},
-          {"title": "入力欄(input)と『使う』ボタン(button)を置く", "detail": "input に今の state を表示し、文字が変わるたびに state を更新します。見た目(Tailwind)は最低限でOK。例えば枠線=`border`、左右の余白=`px-3`、上下の余白=`py-2`、角丸=`rounded` などのユーティリティを付けると入力欄らしくなります。具体的な class 名は Tailwind 公式(v4系)で調べます。"},
+          {"title": "入力欄(input)と『使う』ボタン(button)を置く", "detail": "input に今の state を表示し、文字が変わるたびに state を更新します。見た目(Tailwind)は最低限でOK。枠線・左右の余白・上下の余白・角丸などのユーティリティを付けると入力欄らしくなります。具体的な class 名は Tailwind 公式(v4系)で自分で探します(この資料は答えのコードを載せない方針なので、クラス名も自分で確認してください)。"},
           {"title": "空チェック(バリデーション)を入れる", "detail": "『使う』を押したとき、名前が空(または空白だけ)なら先に進めないようにします。`trim()` で前後の空白を除いてから空判定する考え方を📚で確認。"},
           {"title": "名前を保持する(保存先を決める)", "detail": "まずは画面内 state で動作確認。次段として、#7 で別画面から読みたいので localStorage か Context に保存します。選び方は📚の『複数画面で値を使う考え方』を参照。"},
-          {"title": "次の画面へ進む処理を入れる(任意)", "detail": "『使う』を押したあと別画面へ飛ばす場合：単純なリンクなら `<Link>`(next/link)、今回のように『ボタンを押した後にコードで飛ばす』なら `useRouter().push(...)` を使います。判断基準は『クリックしてすぐ遷移=Link / 検証してから遷移=useRouter』。"}
+          {"title": "次の画面へ進む処理を入れる(任意)", "detail": "『使う』を押したあと別画面へ飛ばす場合：単純なリンクなら `<Link>`(next/link)、今回のように『ボタンを押した後にコードで飛ばす』なら `useRouter().push(...)` を使います。判断基準は『クリックしてすぐ遷移=Link / 検証してから遷移=useRouter』。docs は原則 `<Link>` を推奨で、useRouter は『特別な要件がある時だけ』(use-router.md 冒頭)なので、今回は検証してから遷移という要件があるので useRouter を検討する、という順で考えます。useRouter は App Router では必ず `next/navigation` から import します(`next/router` からだと動きません。use-router.md 参照)。"}
         ]}
       ]
     },
@@ -60,7 +60,7 @@
           {"topic": "React の state で入力値を持つ(useState / onChange)", "why": "入力欄に打った文字を『覚えておく』にはコンポーネントの state が要ります。これが今回の心臓部。React 19 を使っていますが useState の基本は同じです。", "where": "React 公式(React 19)https://react.dev/ の『useState』および入力フォーム(controlled input)の解説ページ。検索時は『React 19』を添えると古い情報を避けられます。"},
           {"topic": "複数画面で値を使う考え方(状態の持ち上げ / localStorage / Context)", "why": "画面内 state だけだと別画面で名前が消えます。#7『借りる/返す』ではここで保存した `guest_name` を取り出して `loans` テーブルに insert します。だから『どこに保存すれば別画面から読めるか』を選ぶ必要があります。", "where": "React 公式(React 19)https://react.dev/ の『状態の共有(lifting state up)』『Context』。ブラウザ保存は MDN https://developer.mozilla.org/ja/docs/Web/API/Window/localStorage 。判断材料:手軽さ重視ならlocalStorage、アプリ全体で型安全に持つならContext。#7 担当が読み出せる形にすることがゴール。"},
           {"topic": "簡単な入力バリデーション(空チェック / trim)", "why": "空の名前で貸出を作ると誰が借りたか分からなくなります。最低限『空なら進めない』を入れます。HTML の required 属性と、JS 側で `trim()` してから判定する方法の両方を知っておくと安心。", "where": "MDN『required 属性』https://developer.mozilla.org/ja/docs/Web/HTML/Reference/Attributes/required (旧 /Web/HTML/Attributes/required はリダイレクト。属性名 required で照合してもOK)。trim は MDN『String.prototype.trim』。"},
-          {"topic": "画面どうしの遷移(<Link> と useRouter().push の使い分け)", "why": "『使う』ボタンを押した後に別画面へ飛ばす場合、リンクとプログラム遷移のどちらを使うかで書き方が変わります。今回はボタン押下→検証→遷移の流れなので useRouter 寄りです。", "where": "node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md(<Link> 中心)と node_modules/next/dist/docs/01-app/03-api-reference/04-functions/use-router.md(useRouter().push のリファレンス)。"},
+          {"topic": "画面どうしの遷移(<Link> と useRouter().push の使い分け)", "why": "『使う』ボタンを押した後に別画面へ飛ばす場合、リンクとプログラム遷移のどちらを使うかで書き方が変わります。docs は原則 `<Link>` を推奨で、useRouter は特別な要件がある時だけ(use-router.md 冒頭)。今回はボタン押下→検証→遷移という要件があるので useRouter を検討します。なお useRouter は App Router では必ず `next/navigation` から import します(`next/router` ではない。use-router.md が最頻トラップとして明示)。", "where": "node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md(<Link> 中心)と node_modules/next/dist/docs/01-app/03-api-reference/04-functions/use-router.md(useRouter().push のリファレンス。import 元 next/navigation・Link 推奨スタンスもここ)。"},
           {"topic": "Tailwind CSS(v4系)で input / button に見た目を付ける", "why": "リポジトリ内のどの画面も今は `p-6` `text-2xl` 程度しか class を使っておらず、input/button のスタイル例がありません。真似る対象が無いので自分で調べます。", "where": "Tailwind 公式 https://tailwindcss.com/docs 。このプロジェクトは Tailwind v4(package.json: tailwindcss ^4 / @tailwindcss/postcss)なので、検索時は『v4』を意識してください(v3 前提の古い情報に注意)。枠=border、余白=px-/py-、角丸=rounded など語で探すと見つかります。"},
           {"topic": "なぜ今回 Supabase Auth を使わないのか(設計判断)", "why": "『ログイン無しで貸出が成立する根拠』を理解しておくと、#7 連携で迷いません。", "where": "supabase/schema.sql の RLS(insert/update が with check true / using true = 全員OK)と loans.guest_name 列を確認。将来ログインを足す時はゲスト貸出を borrower_type=\"guest\" / guest_name 使用 / user_id は空、で運用する想定。"}
         ]}
@@ -75,9 +75,9 @@
           "**use client をどこに書くか分からない** → ファイルの一番上の行(import より前)に書きます。関数の中ではありません。書式は use-client.md で確認。",
           "**別画面に移動したら名前が消えた** → 画面内 state だけだと正常な挙動です。別画面でも使うなら localStorage か Context に保存(step6 / 📚 参照)。",
           "**input に文字を打っても表示が変わらない** → state と onChange の結び付け(controlled input)を確認。React 公式のフォーム解説へ。",
-          "**input / button にどんな class を付ければいい？** → 現状どの画面も p-6 等しか無く真似る先がありません。Tailwind 公式(v4系)で border / px- / py- / rounded などを調べて付けます。"
+          "**input / button にどんな class を付ければいい？** → 現状どの画面も p-6 等しか無く真似る先がありません。Tailwind 公式(v4系)で枠線・余白・角丸などのユーティリティを自分で調べて付けます(クラス名も答えとして載せていないので公式で確認)。"
         ]},
-        {"type": "callout", "variant": "danger", "label": "main へ直接 push しない", "text": "必ずブランチを切ってから作業します。例: `feature/guest-name`。PR を出すときの本文には『何をしたか / Closes #6 / 動作確認』を書きます(テンプレは CONTRIBUTING.md)。マージは PM(水谷)承認後の Squash and merge です。"},
+        {"type": "callout", "variant": "danger", "label": "main へ直接 push しない", "text": "必ずブランチを切ってから作業します。例: `feature/guest-name`。PR を出すときの本文には『何をしたか / Closes #6 / 動作確認』を書きます(この本文テンプレは `.github/PULL_REQUEST_TEMPLATE.md` にあり、PR作成時に自動で本文へ挿入されます)。ブランチ命名・Squash and merge・PM(水谷)承認後のマージといったGitルールは CONTRIBUTING.md を参照。マージは PM(水谷)承認後の Squash and merge です。"},
         {"type": "callout", "variant": "warn", "label": "Next.js 16 ではエラーの見え方が違うことも", "text": "イベントハンドラやフック関連の赤いエラーが出たら、まず use client 漏れを疑ってください。正確なエラー文言は Next.js 16 で変わっている可能性があるので、docs(use-client.md)と実際の出力を突き合わせて確認しましょう。"}
       ]
     },
@@ -89,7 +89,7 @@
         {"type": "p", "text": "ブラウザで http://localhost:3000/login を開き、次を確認します。"},
         {"type": "checklist", "items": [
           "テキスト入力欄が表示され、文字を打つと打った内容が画面に反映される",
-          "名前を空のまま『使う』を押しても先に進めない(エラー表示 or 何も起きない)",
+          "名前を空のまま『使う』を押しても先に進めない。合格の目安は『エラーメッセージが出る or ボタンが押せない(無効化)』のどちらかが起きること(必須スコープでは遷移自体は作らなくてよい)",
           "名前を入れて『使う』を押すと、保持される(画面内 state なら state が更新される / 次段で localStorage を選んだ場合のみ、別画面でも読み出せる)",
           "ブラウザのコンソール(F12)に赤いエラーが出ていない"
         ]},
@@ -115,7 +115,7 @@
           ["controlled input", "入力欄の値を state で管理する作り方。打つたびに state を更新して表示も同期させる"],
           ["バリデーション", "入力チェックのこと。今回は『名前が空なら進めない』を実装する"],
           ["localStorage", "ブラウザに値を保存する仕組み。画面を移動しても消えない。別画面から読める"],
-          ["useRouter().push", "ボタン押下後などにコードで別画面へ遷移させる方法(対して <Link> は単純なリンク)"]
+          ["useRouter().push", "ボタン押下後などにコードで別画面へ遷移させる方法(対して <Link> は単純なリンク)。App Router では useRouter を next/navigation から import する(next/router ではない)"]
         ]}
       ]
     },
@@ -130,7 +130,7 @@
           "DB: supabase/schema.sql(loans テーブルの guest_name 列 / RLS は全員OK・DELETE 不可)",
           "Supabase 接続: lib/supabaseClient.ts の supabase を import して使う(#7 で使用)"
         ]},
-        {"type": "callout", "variant": "tip", "label": "PR を出すとき", "text": "本文テンプレに沿って『何をしたか / Closes #6 / 動作確認』を書きます。`Closes #6` を入れておくと、マージ時に自動で Issue #6 が閉じます。"}
+        {"type": "callout", "variant": "tip", "label": "PR を出すとき", "text": "PR本文テンプレ(`.github/PULL_REQUEST_TEMPLATE.md`)はPR作成時に自動で挿入されます。その『何をしたか / Closes #（Issue番号）/ 動作確認』の Issue番号を 6 にして埋めます。`Closes #6` を入れておくと、マージ時に自動で Issue #6 が閉じます。"}
       ]
     }
   ]

@@ -9,7 +9,7 @@
   "priority": "★★★",
   "status": "",
   "category": "ハード",
-  "stack": ["Raspberry Pi 5", "Ubuntu Server 24.04", "ROS2 Humble", "SSH"],
+  "stack": ["Raspberry Pi 5", "Ubuntu Server（22.04 が Humble 公式 / 24.04 案も可・PM確定待ち）", "ROS2 Humble", "SSH"],
   "oneLineGoal": "Pi 5 を起動して SSH で入れる状態にし、ROS2 のサンプル（talker/listener）が動くところまで持っていく。ロボ開発の土台づくり。",
   "sections": [
     {
@@ -30,6 +30,7 @@
           "`vcgencmd get_throttled` が `throttled=0x0`（電源警告なし）になっている",
           "自分の PC から `ssh ユーザー名@PiのIP` で Pi にログインできる",
           "ROS2 Humble が apt で入っている（`ros2 --help` が動く）",
+          "demo ノードを追加した（`sudo apt install ros-humble-demo-nodes-cpp`。ros-base には含まれないので別途必要）",
           "ターミナル2枚で `talker` と `listener` を動かし、メッセージのやり取りが流れる",
           "Pi の固定的なアクセス方法（IP もしくはホスト名）をチームで共有できている"
         ]}
@@ -48,9 +49,9 @@
           {"title": "7. Pi の IP を調べて SSH ログイン", "detail": "同じ Wi-Fi にいる PC のターミナルから `ssh 設定したユーザー名@ホスト名.local` を試す。**`.local` が引けないのは普通に起きます**（次のステップ参照）。引けない場合はルーターの管理画面で Pi の IP を探すか、一度モニタをつないで `ip a` / `hostname -I` で実 IP を確認し、`ssh ユーザー名@実IP` で直打ちする。"},
           {"title": "8. ログイン直後のチェック", "detail": "`uname -m` で `aarch64`（＝64bit）か確認。`vcgencmd get_throttled` で電源警告が出ていないか確認（`0x0` ならOK）。`sudo apt update && sudo apt upgrade` で OS を最新化（最初は時間がかかる）。"},
           {"title": "9. ROS2 Humble を apt でインストール", "detail": "**公式のインストールページ（Ubuntu deb）を開き、そこに書いてある手順を上から順にそのまま実行**します。リポジトリ（ソフトの配布元）の登録方法は近年更新されているので（後述）、古いブログのコピペではなく公式ページの最新コマンドを使うこと。パッケージは **`ros-humble-ros-base`** を入れる（理由は次ステップ）。"},
-          {"title": "10. ros-base を選ぶ（desktop ではない）", "detail": "今回はヘッドレス（画面なしの Server）構成なので、GUI ツール（RViz 等）を含む `ros-humble-desktop` は不要で重いだけ。**軽い `ros-humble-ros-base` を選ぶ**。後で Nav2 の可視化などが必要になれば、その時に追加で入れられます（名前が『desktop＝全部入りで安心』に見えても、画面の無い Pi では逆に無駄になる）。"},
+          {"title": "10. ros-base を選ぶ（desktop ではない）", "detail": "今回はヘッドレス（画面なしの Server）構成なので、GUI ツール（RViz 等）を含む `ros-humble-desktop` は不要で重いだけ。**軽い `ros-humble-ros-base` を選ぶ**。後で Nav2 の可視化などが必要になれば、その時に追加で入れられます（名前が『desktop＝全部入りで安心』に見えても、画面の無い Pi では逆に無駄になる）。**ただし次ステップの talker/listener（demo_nodes_cpp）は ros-base には含まれない**ので、動作確認の前に `sudo apt install ros-humble-demo-nodes-cpp` を別途入れておくこと（desktop を入れれば最初から含まれるが、ヘッドレスでは demo パッケージだけ足すのが軽い）。"},
           {"title": "11. 環境設定（source）を通す", "detail": "ROS2 のコマンドを使うには、毎回のターミナルで環境設定ファイルを読み込む（source する）必要があります。まずは手で source して動作確認 → 通ったら毎回自動で読まれるようにする方法（`.bashrc` への追記）を調べて設定する。やり方は『学ぶこと』参照。"},
-          {"title": "12. talker / listener で動作確認", "detail": "ターミナルを2枚開き、片方で talker、もう片方で listener を起動して、メッセージが流れることを確認する。具体的なコマンドは公式チュートリアル（Understanding nodes）で確認すること。これが本Issueの本命の合格確認です。"},
+          {"title": "12. talker / listener で動作確認", "detail": "**前提**: ros-base には demo ノードが含まれないので、ステップ10の `sudo apt install ros-humble-demo-nodes-cpp` を済ませておくこと（これが無いと `Package 'demo_nodes_cpp' not found` で詰まる）。ターミナルを2枚開き、片方で talker、もう片方で listener を起動して、メッセージが流れることを確認する。具体的なコマンドは公式チュートリアル（Understanding nodes）で確認すること。これが本Issueの本命の合格確認です。"},
           {"title": "13. アクセス方法をチームに共有", "detail": "Pi の IP（または安定して引けるホスト名）と、SSH のユーザー名をチームの連絡手段で共有。これで誰でも同じ Pi に入れるようになります。"}
         ]}
       ]
@@ -64,7 +65,7 @@
           {"topic": "ROS2 Humble の apt インストール手順（リポジトリ登録の現行方式）", "why": "本Issue最重要の手順。**現在の公式手順は `ros2-apt-source` パッケージを dpkg で入れる新方式**に変わっており、手動で GPG 鍵を curl する古いブログをコピペすると `apt update` でエラーになって詰まる。リポジトリ（＝ソフトの配布元）と GPG 鍵（＝配布元が本物か確認する署名）の登録は、必ず公式ページの最新コマンドを一行ずつ使うこと。", "where": "ROS2 Humble の deb インストール公式ページ（Humble は綴りが『Debians』）: https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html ／ 開けない/拒否ページが出るときは index.ros.org か GitHub https://github.com/ros2/ros2_documentation を見る。"},
           {"topic": "ros-base と desktop の違い（どちらを入れるか）", "why": "ヘッドレスの Pi では GUI ツール（RViz 等）入りの desktop は重く依存も増える。軽い ros-base を選ぶ判断の根拠を理解しておくと、後で必要なものだけ足せる。", "where": "上記 Ubuntu-Install-Debians.html の『Install ROS 2 packages』節（ros-humble-desktop と ros-humble-ros-base の説明がある）。"},
           {"topic": "ROS2 の環境設定 source と .bashrc 自動化", "why": "source していないと `ros2` コマンドが『command not found』になる初心者あるある。毎回打つのは面倒なので `.bashrc` に追記して自動化する流れまで理解する。", "where": "公式チュートリアル『Configuring environment』: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Configuring-ROS2-Environment.html"},
-          {"topic": "talker / listener（デモノード）の動かし方", "why": "本Issueの本命の動作確認。`ros2 run demo_nodes_cpp talker` と `listener` でノード間のメッセージ通信を体験する＝ROS2 が正しく動いている証拠。ノード/トピックという ROS2 の基本概念もここで掴める。", "where": "公式チュートリアル『Understanding nodes』（talker/listener＝demo_nodes_cpp を実際に扱う唯一の正参照）: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Understanding-ROS2-Nodes/Understanding-ROS2-Nodes.html ／ 一括起動したいだけなら talker_listener.launch.py の存在に触れる程度でOK。Turtlesim（亀の描画）は別概念なので混同しない。"},
+          {"topic": "talker / listener（デモノード）の動かし方", "why": "本Issueの本命の動作確認。`ros2 run demo_nodes_cpp talker` と `listener` でノード間のメッセージ通信を体験する＝ROS2 が正しく動いている証拠。ノード/トピックという ROS2 の基本概念もここで掴める。**注意**: demo_nodes_cpp は ros-base には含まれず desktop variant 側のパッケージ（REP 2001 の variant 定義）。ros-base で進めた場合は `sudo apt install ros-humble-demo-nodes-cpp` を先に入れないと `Package 'demo_nodes_cpp' not found` になる。", "where": "公式チュートリアル『Understanding nodes』（talker/listener＝demo_nodes_cpp を実際に扱う唯一の正参照）: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Understanding-ROS2-Nodes/Understanding-ROS2-Nodes.html ／ 一括起動したいだけなら talker_listener.launch.py の存在に触れる程度でOK。Turtlesim（亀の描画）は別概念なので混同しない。提供パッケージ名は `apt search ros-humble-demo` で調べられる。"},
           {"topic": "ネットワーク / IP の確認と SSH 接続（.local が効かない問題）", "why": "チームに Windows 利用者が多く、`ホスト名.local`（mDNS）は Windows では Bonjour 未導入だと引けず、学内 Wi-Fi で遮断されることもある。『SSH で入れない』の隠れ原因はこれが多い。実 IP を調べる手段を知っておく。", "where": "Pi 側で `ip a` / `hostname -I`、ルーターの管理画面の端末一覧。Windows の SSH/.local については OpenSSH クライアントの導入と、必要なら Bonjour（Apple）導入を確認。SSH 一般は https://www.raspberrypi.com/documentation/computers/remote-access.html"},
           {"topic": "Pi 5 の電源要件と under-voltage（throttled）確認", "why": "Pi5 は電源不足だと不安定になり、原因が『電源』なのに『SSH/ROS が壊れた？』と誤診して時間を溶かす最頻出ハマり。`vcgencmd get_throttled` で機械的に切り分けられると速い。", "where": "Raspberry Pi 公式 電源ドキュメント https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#power-supply 。コマンドは `vcgencmd get_throttled`（`0x0`＝正常）。"},
           {"topic": "OS バージョンと ROS2 ディストロの対応（PM相談の材料）", "why": "Humble の Tier1 対応 OS は Ubuntu 22.04、24.04 の Tier1 は Jazzy。もし『24.04＋Jazzy』に倒すなら後続Issue全部の Humble 記述が連鎖して変わる。また 24.04+Jazzy(arm64) には apt の依存問題（libzstd 絡み、ros2/ros2 #1789）が報告されており、ハマりどころも違う。事実を押さえて PM 相談すると判断が早い。", "where": "ROS2 ディストロ一覧 https://docs.ros.org/en/rolling/Releases.html （各ディストロの対応 Ubuntu バージョン）／ Jazzy インストール https://docs.ros.org/en/jazzy/Installation.html"}
@@ -82,6 +83,7 @@
           ["`ros2: command not found`", "環境設定を source していない", "ターミナルで source する → 通ったら `.bashrc` に追記して自動化"],
           ["動作が不安定・突然落ちる", "電源不足（under-voltage）", "公式 27W PD 電源に替える。`vcgencmd get_throttled` で確認"],
           ["32bit を選んでしまった", "Imager で 64bit Server 以外を選んだ", "`uname -m` が `aarch64` でなければ書き込みからやり直し（ROS2 は 64bit 前提）"],
+          ["`Package 'demo_nodes_cpp' not found`", "ros-base には demo ノードが含まれない（demo は desktop variant 側）", "`sudo apt install ros-humble-demo-nodes-cpp` を入れる。`apt search ros-humble-demo` で名前を確認できる"],
           ["公式 docs が開けない/拒否ページ", "docs.ros.org の bot 対策（Anubis）", "ブラウザを変える・少し待つ・index.ros.org や GitHub(ros2_documentation) のミラーを見る"]
         ]}
       ]
@@ -96,9 +98,10 @@
           "電源確認: `vcgencmd get_throttled` が **`throttled=0x0`**（under-voltage 警告なし）。`0x0` 以外なら電源を疑う。",
           "SSH: 自分の PC から `ssh ユーザー名@PiのIP` でログインできる。",
           "ROS2 導入: `ros2 --help` がヘルプを表示する（コマンドが認識されている）。",
+          "demo パッケージ: `ros2 run demo_nodes_cpp talker` を打って `Package 'demo_nodes_cpp' not found` が出る場合は `sudo apt install ros-humble-demo-nodes-cpp` を入れる（ros-base には含まれないため）。",
           "本命: ターミナル2枚で talker / listener を起動し、メッセージのやり取りが流れる（具体コマンドは公式 Understanding nodes 参照）。listener 側に talker からの文字列が連続表示されれば合格。"
         ]},
-        {"type": "code", "lang": "bash", "code": "# ログイン直後のチェック（確認系コマンドのみ）\nuname -m              # aarch64 と出れば 64bit でOK\nvcgencmd get_throttled # throttled=0x0 なら電源警告なし\nhostname -I           # この Pi の IP を確認（チーム共有用）\n\n# ROS2 を使う準備：まず手で source して動作確認 →\n# 通ったら .bashrc に追記して次回以降自動化（やり方は research の Configuring environment 参照）\n# source の対象ファイルや書式は公式チュートリアルどおりに。\nros2 --help           # コマンドが認識されているか確認\n\n# talker / listener の実行コマンドは丸写しせず、\n# 公式『Understanding nodes』を見て自分で打ってみること（ここが最大の学びどころ）"},
+        {"type": "code", "lang": "bash", "code": "# ログイン直後のチェック（確認系コマンドのみ）\nuname -m              # aarch64 と出れば 64bit でOK\nvcgencmd get_throttled # throttled=0x0 なら電源警告なし\nhostname -I           # この Pi の IP を確認（チーム共有用）\n\n# ROS2 を使う準備：まず手で source して動作確認 →\n# 通ったら .bashrc に追記して次回以降自動化（やり方は research の Configuring environment 参照）\n# source の対象ファイルや書式は公式チュートリアルどおりに。\nros2 --help           # コマンドが認識されているか確認\n\n# talker/listener（demo_nodes_cpp）は ros-base に含まれないので先に追加が必要\nsudo apt install ros-humble-demo-nodes-cpp\n\n# talker / listener の実行コマンドは丸写しせず、\n# 公式『Understanding nodes』を見て自分で打ってみること（ここが最大の学びどころ）"},
         {"type": "callout", "variant": "ok", "text": "listener 側に talker のメッセージが流れ続けたら、ROS2 のノード間通信が成立＝この Issue の Done 達成です。スクショを残してチームに共有しておくと後続Issueの担当が安心します。"}
       ]
     },
@@ -106,7 +109,7 @@
       "heading": "🤖 AIコーチの使い方",
       "blocks": [
         {"type": "p", "text": "AI には『答えのコマンドを書かせる』のではなく、『どこを見ればいいか・なぜそうするか』を引き出すコーチとして使います。下のプロンプトをコピペして使ってください。"},
-        {"type": "code", "lang": "text", "code": "あなたは ROS2 初心者の学習コーチです。私は Raspberry Pi 5 に Ubuntu Server と ROS2 Humble を入れ、SSH で入って talker/listener を動かそうとしています。\n\nお願い:\n- いきなり正解コマンドを全部書かないでください。まず「今やろうとしている目的」と「次に確認すべきこと」を質問してください。\n- 私が詰まったら、原因の切り分け方（何を確認すれば原因が分かるか）と、公式ドキュメントのどのページを見ればいいか（URL/章名）を教えてください。\n- ROS2 Humble の apt 手順は、手動でGPG鍵をcurlする古い方式ではなく、現行の公式ページ(ros2-apt-source方式)に沿っているか毎回確認してください。\n- talker/listener は demo_nodes_cpp のノードで、Turtlesim とは別物です。混同しないでください。\n\n今の状況: （ここに今やっていること・出たエラー・打ったコマンドを書く）"},
+        {"type": "code", "lang": "text", "code": "あなたは ROS2 初心者の学習コーチです。私は Raspberry Pi 5 に Ubuntu Server と ROS2 Humble を入れ、SSH で入って talker/listener を動かそうとしています。\n\nお願い:\n- いきなり正解コマンドを全部書かないでください。まず「今やろうとしている目的」と「次に確認すべきこと」を質問してください。\n- 私が詰まったら、原因の切り分け方（何を確認すれば原因が分かるか）と、公式ドキュメントのどのページを見ればいいか（URL/章名）を教えてください。\n- ROS2 Humble の apt 手順は、手動でGPG鍵をcurlする古い方式ではなく、現行の公式ページ(ros2-apt-source方式)に沿っているか毎回確認してください。\n- talker/listener は demo_nodes_cpp のノードで、Turtlesim とは別物です。混同しないでください。\n- demo_nodes_cpp は ros-base には含まれず、別途 `ros-humble-demo-nodes-cpp` の追加が必要な点を見落とさないでください。\n\n今の状況: （ここに今やっていること・出たエラー・打ったコマンドを書く）"},
         {"type": "callout", "variant": "warn", "text": "AI が古い手順（手動GPG鍵登録など）を出すことがあります。必ず公式ページ（Debians.html）の最新コマンドと突き合わせてから実行してください。docs.ros.org が拒否ページになる時はミラー（index.ros.org / GitHub の ros2_documentation）を案内するよう AI に頼むと良いです。"}
       ]
     },
@@ -134,7 +137,7 @@
       "heading": "困ったら・参照",
       "blocks": [
         {"type": "ul", "items": [
-          "**環境構築ガイド.html**（同フォルダ）: PC 側の開発環境やアプリ側のセットアップはこちら。",
+          "**環境構築ガイド.html**（同フォルダ）: PC 側（Windows/Mac）のアプリ用セットアップ専用で、**ROS2/Ubuntu は対象外**。ROS2（Ubuntu）環境はこの Issue で作ります。",
           "ROS2 Humble 公式 deb インストール: https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debians.html （Humble は綴りが Debians）",
           "ROS2 環境設定（Configuring environment）: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Configuring-ROS2-Environment.html",
           "talker/listener（Understanding nodes）: https://docs.ros.org/en/humble/Tutorials/Beginner-CLI-Tools/Understanding-ROS2-Nodes/Understanding-ROS2-Nodes.html",

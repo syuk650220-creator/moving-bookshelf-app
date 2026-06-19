@@ -87,8 +87,8 @@ select 'stop_points', count(*) from stop_points;</code></pre>
 
 <section id="sec-4">
   <h2 class="sec">つまずきポイントと対処</h2>
-  <div class="callout danger"><span class="label">本を二重に Run して10件になった</span><p>books には重複ガードが無いので、本シードを2回押すと10件に増えます。アプリからは消せません（DELETE ポリシーが無いため）。ただし <strong>SQL Editor は管理者権限なので、例外的に消せます</strong>。やり直したいときは PM(水谷) に相談のうえ、SQL Editor から条件を必ず付けて1件ずつ消す。例：<code>delete from books where title = 'こころ';</code>。<strong>条件なしの <code>delete from books;</code> は全消し事故になるので絶対NG。</strong> これは RLS の説明（SQL Editor は管理者権限で RLS を素通りする）と整合した、正規の復旧手順です。</p></div>
-  <ul><li><strong>check 制約で弾かれた</strong>：<code>shelf_level</code> に 0 や 6、<code>status</code> に <code>avilable</code> などのタイプミスを入れると INSERT がエラーで止まる。値を見直す。</li><li><strong>席を入れる前に robot_calls をいじろうとした</strong>：今回 robot_calls は触りません。robot_calls は #8 以降。今回は books と stop_points だけ。</li><li><strong>Table Editor から席を追加しようとして保存できない</strong>：stop_points には insert ポリシーが無い（schema.sql 行88は select のみ）ので、アプリ/通常権限からは席を追加できない仕様。席は今回の SQL Editor シードで入れます。</li><li><strong>列の並びと値がズレる</strong>：INSERT の列リストと values の順番は1対1。コピーした SQL の列順を勝手に変えない。</li></ul>
+  <div class="callout danger"><span class="label">本を二重に Run して10件になった</span><p>books には重複ガードが無いので、本シードを2回押すと10件に増えます。アプリからは消せません（DELETE ポリシーが無いため）。ただし <strong>SQL Editor は管理者権限なので、例外的に消せます</strong>。<strong>注意：<code>title</code> で消すと同じタイトルの行が2件とも消えてしまう</strong>（books は title/isbn に unique 制約が無く、二重投入だと同じタイトルが2行できているため。例：<code>delete from books where title = 'こころ';</code> は『こころ』を0件にしてしまい5件に戻せない）。DBは全員共有なので、やり直しは必ず PM(水谷) 主導で行い、いちばん安全なのは <strong>PM が <code>delete from books;</code>（全消し）してからシードSQLを1回だけ流し直す</strong>こと。どうしても1件だけ消したいときは <code>ctid</code> や <code>id</code> で対象の1行を指定する。これは RLS の説明（SQL Editor は管理者権限で RLS を素通りする）と整合した、正規の復旧手順です。</p></div>
+  <ul><li><strong>check 制約で弾かれた</strong>：<code>shelf_level</code> に 0 や 6、<code>status</code> に <code>avilable</code> などのタイプミスを入れると INSERT がエラーで止まる。値を見直す。</li><li><strong>席を入れる前に robot_calls をいじろうとした</strong>：今回 robot_calls は触りません。robot_calls は #8 以降。今回は books と stop_points だけ。</li><li><strong>アプリ画面から席が追加できない</strong>：stop_points には insert ポリシーが無い（schema.sql の insert ポリシーは books/loans/calls だけ。行88は select のみ）ので、アプリ画面(anon キー)経由では席を追加できない仕様。一方 Table Editor / SQL Editor は管理者権限で RLS を素通りするため席も追加できますが、本Issueでは全員が同じ手順で再現できるよう SQL Editor のシードSQLで入れます。</li><li><strong>列の並びと値がズレる</strong>：INSERT の列リストと values の順番は1対1。コピーした SQL の列順を勝手に変えない。</li></ul>
   <div class="callout warn"><span class="label">迷ったら止まる</span><p>DB は全員共有。『とりあえず Run』を繰り返さない。1回 Run したら必ず件数確認 → おかしければ PM に相談、が鉄則です。</p></div>
 </section>
 
@@ -112,7 +112,7 @@ select 'stop_points', count(*) from stop_points;</code></pre>
 お願い:
 1) 私が書いた INSERT 文を貼るので、列と値の対応・check 制約に合っているかを指摘してください（直したコードは書かず、どこを見直すべきかを質問で）。
 2) on conflict do nothing をなぜ books に付けられず stop_points には付けられるのか、私に説明させてヒントで補ってください。
-3) 二重投入で10件になった場合の正しい復旧手順（SQL Editor からの条件付き DELETE と、条件なし DELETE の危険）を、私が手順を言えるよう問いかけてください。</code></pre>
+3) 二重投入で10件になった場合の正しい復旧手順（title での DELETE は同じタイトルが2件とも消える点、いちばん安全なのは PM 主導で全消し→シード1回流し直しである点）を、私が手順を言えるよう問いかけてください。</code></pre>
 </section>
 
 <section id="sec-7">

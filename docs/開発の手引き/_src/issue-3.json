@@ -64,11 +64,11 @@
     {
       "heading": "つまずきポイントと対処",
       "blocks": [
-        {"type": "callout", "variant": "danger", "label": "本を二重に Run して10件になった", "text": "books には重複ガードが無いので、本シードを2回押すと10件に増えます。アプリからは消せません（DELETE ポリシーが無いため）。ただし **SQL Editor は管理者権限なので、例外的に消せます**。やり直したいときは PM(水谷) に相談のうえ、SQL Editor から条件を必ず付けて1件ずつ消す。例：`delete from books where title = 'こころ';`。**条件なしの `delete from books;` は全消し事故になるので絶対NG。** これは RLS の説明（SQL Editor は管理者権限で RLS を素通りする）と整合した、正規の復旧手順です。"},
+        {"type": "callout", "variant": "danger", "label": "本を二重に Run して10件になった", "text": "books には重複ガードが無いので、本シードを2回押すと10件に増えます。アプリからは消せません（DELETE ポリシーが無いため）。ただし **SQL Editor は管理者権限なので、例外的に消せます**。**注意：`title` で消すと同じタイトルの行が2件とも消えてしまう**（books は title/isbn に unique 制約が無く、二重投入だと同じタイトルが2行できているため。例：`delete from books where title = 'こころ';` は『こころ』を0件にしてしまい5件に戻せない）。DBは全員共有なので、やり直しは必ず PM(水谷) 主導で行い、いちばん安全なのは **PM が `delete from books;`（全消し）してからシードSQLを1回だけ流し直す**こと。どうしても1件だけ消したいときは `ctid` や `id` で対象の1行を指定する。これは RLS の説明（SQL Editor は管理者権限で RLS を素通りする）と整合した、正規の復旧手順です。"},
         {"type": "ul", "items": [
           "**check 制約で弾かれた**：`shelf_level` に 0 や 6、`status` に `avilable` などのタイプミスを入れると INSERT がエラーで止まる。値を見直す。",
           "**席を入れる前に robot_calls をいじろうとした**：今回 robot_calls は触りません。robot_calls は #8 以降。今回は books と stop_points だけ。",
-          "**Table Editor から席を追加しようとして保存できない**：stop_points には insert ポリシーが無い（schema.sql 行88は select のみ）ので、アプリ/通常権限からは席を追加できない仕様。席は今回の SQL Editor シードで入れます。",
+          "**アプリ画面から席が追加できない**：stop_points には insert ポリシーが無い（schema.sql の insert ポリシーは books/loans/calls だけ。行88は select のみ）ので、アプリ画面(anon キー)経由では席を追加できない仕様。一方 Table Editor / SQL Editor は管理者権限で RLS を素通りするため席も追加できますが、本Issueでは全員が同じ手順で再現できるよう SQL Editor のシードSQLで入れます。",
           "**列の並びと値がズレる**：INSERT の列リストと values の順番は1対1。コピーした SQL の列順を勝手に変えない。"
         ]},
         {"type": "callout", "variant": "warn", "label": "迷ったら止まる", "text": "DB は全員共有。『とりあえず Run』を繰り返さない。1回 Run したら必ず件数確認 → おかしければ PM に相談、が鉄則です。"}
@@ -90,7 +90,7 @@
       "heading": "🤖 AIコーチの使い方",
       "blocks": [
         {"type": "p", "text": "AI には『答えの SQL を書かせる』のではなく、『自分の SQL や考え方をチェックさせる・つまずきを言語化させる』使い方をします。下のプロンプトをコピペして使ってください。"},
-        {"type": "code", "lang": "text", "code": "あなたは初心者プログラマーの学習コーチです。答えのコードを丸ごと書かず、私が自分で書けるようヒントと問いかけで導いてください。\n\n前提:\n- 移動本棚ロボというプロジェクトで、Supabase の SQL Editor に『本5冊・席3つ』のシードデータを INSERT で入れる作業をしています（GitHub Issue #3）。\n- DBスキーマは supabase/schema.sql にあります。books は shelf_level が 1..5、status が available か on_loan の check 制約付き。stop_points は id が primary key。\n- このプロジェクトの Next.js は 16系で、私の知っている書き方と違う可能性があります。Next.js 関連を答える前に node_modules/next/dist/docs/ の該当ガイドを確認するよう私に促してください。\n\nお願い:\n1) 私が書いた INSERT 文を貼るので、列と値の対応・check 制約に合っているかを指摘してください（直したコードは書かず、どこを見直すべきかを質問で）。\n2) on conflict do nothing をなぜ books に付けられず stop_points には付けられるのか、私に説明させてヒントで補ってください。\n3) 二重投入で10件になった場合の正しい復旧手順（SQL Editor からの条件付き DELETE と、条件なし DELETE の危険）を、私が手順を言えるよう問いかけてください。"}
+        {"type": "code", "lang": "text", "code": "あなたは初心者プログラマーの学習コーチです。答えのコードを丸ごと書かず、私が自分で書けるようヒントと問いかけで導いてください。\n\n前提:\n- 移動本棚ロボというプロジェクトで、Supabase の SQL Editor に『本5冊・席3つ』のシードデータを INSERT で入れる作業をしています（GitHub Issue #3）。\n- DBスキーマは supabase/schema.sql にあります。books は shelf_level が 1..5、status が available か on_loan の check 制約付き。stop_points は id が primary key。\n- このプロジェクトの Next.js は 16系で、私の知っている書き方と違う可能性があります。Next.js 関連を答える前に node_modules/next/dist/docs/ の該当ガイドを確認するよう私に促してください。\n\nお願い:\n1) 私が書いた INSERT 文を貼るので、列と値の対応・check 制約に合っているかを指摘してください（直したコードは書かず、どこを見直すべきかを質問で）。\n2) on conflict do nothing をなぜ books に付けられず stop_points には付けられるのか、私に説明させてヒントで補ってください。\n3) 二重投入で10件になった場合の正しい復旧手順（title での DELETE は同じタイトルが2件とも消える点、いちばん安全なのは PM 主導で全消し→シード1回流し直しである点）を、私が手順を言えるよう問いかけてください。"}
         ]
       },
     {

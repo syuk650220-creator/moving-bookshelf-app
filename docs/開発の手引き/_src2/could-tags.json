@@ -74,7 +74,7 @@
             },
             {
               "title": "Supabase に練習用のタグを直接入れて、表示から作る",
-              "detail": "いきなり入力UIを作らず、まず Supabase の SQL Editor で既存の本に tags を入れてみる（下のSQL例）。これで『DBに入ったタグをアプリで読んで表示する』だけに集中できる。"
+              "detail": "いきなり入力UIを作らず、まず Supabase の SQL Editor で既存の本に tags を直接入れてみる。text[] の配列リテラルは波カッコで書く（例: update books set tags = '{\"AI\",\"論文\"}' where id = '対象のid'; ／ id は Table Editor で確認）。これで『DBに入ったタグをアプリで読んで表示する』だけに集中できる。なお SQL Editor は管理者権限で動くので RLS に関係なく入れられる（アプリ側の anon キー経由とは別）。"
             },
             {
               "title": "本詳細でタグを表示する",
@@ -125,7 +125,7 @@
             {
               "topic": "タグ入力UI（チップ入力）と 'use client'",
               "why": "入力して配列に足す・×で消す、という操作は useState と onClick が必要。Next.js 16 では state やイベントを使うコンポーネントには 'use client' 宣言が要る。なぜサーバー/クライアントを分けるのか、どこに 'use client' を書くのかを現行の書き方で確認する（学習データと挙動が違う可能性があるので必ず同梱docsを見る）。",
-              "where": "node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md と node_modules/next/dist/docs/03-api-reference/01-directives/use-client.md。"
+              "where": "node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md と node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md（先頭の 01-app/ を忘れない。03-api-reference 単体のパスは存在しない）。"
             },
             {
               "topic": "Next.js 16 でのデータ取得・更新の現行の書き方",
@@ -153,7 +153,7 @@
           "type": "callout",
           "variant": "warn",
           "label": "削除の操作を先に覚える",
-          "text": "×で消す＝その本のtags配列から『その要素を除いた新しい配列』を作って update する（本そのものは消さない）。タグの追加も削除も毎回『新しい配列を作ってまるごと上書き』が基本。下の表はその再確認。"
+          "text": "×で消す＝その本のtags配列から『その要素を除いた新しい配列』を作って update する（本そのものは消さない）。タグの追加も削除も毎回『新しい配列を作ってまるごと上書き』が基本。これは行の delete ではなく books 行の update（tags列の上書き）。そもそも schema.sql には delete ポリシーが1つも無く、アプリ(anonキー)からは誰も行を削除できない設定なので、タグを外しても本そのものが消える事故は起きない。下の表はその再確認。"
         },
         {
           "type": "table",
@@ -181,7 +181,7 @@
             [
               "onClick / useState でエラーになる",
               "'use client' が無い",
-              "そのコンポーネント先頭に 'use client' を書く（use-client.md で確認）"
+              "そのコンポーネント先頭に 'use client' を書く（node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md で確認）"
             ],
             [
               "日本語タグの表記ゆれが揃わない",

@@ -14,7 +14,7 @@
       "heading": "このIssueは何？",
       "blocks": [
         {"type": "p", "text": "アプリ（Web）とロボ（Raspberry Pi）は**直接つながりません**。間に Supabase のテーブルを置き、アプリは「呼んで！」を `robot_calls` に1行 `insert` し、ロボはそのテーブルを**見張って**動きます。この「テーブルを見張ってロボの仕事に変える係」が**ブリッジ（橋渡し役）**です。このIssueはその最小版を作ります。"},
-        {"type": "p", "text": "今回のゴールは1つだけ：**`robot_calls` に `status='queued'`（順番待ち）の行が入ったらPythonで検知し、その行の `status` を `moving`（移動中）→ `arrived`（到着）→ `done`（完了）と順に書き換えながらログを出す**。Nav2（ロボの自律移動）との連携は次の #9 でやるので、今回は「検知してログ＋status更新」まででOKです。"},
+        {"type": "p", "text": "今回のゴールは1つだけ：**`robot_calls` に `status='queued'`（順番待ち）の行が入ったらPythonで検知し、その行の `status` を `moving`（移動中）→ `arrived`（到着）→ `done`（完了）と順に書き換えながらログを出す**。Nav2（ロボの自律移動）との連携は #9（席座標→Nav2ゴール変換）でやり、robot_status の更新やRealtime化は次段階の『ブリッジ完全版』が担当します。今回は「検知してログ＋robot_calls の status更新」まででOKです。"},
         {"type": "callout", "variant": "study", "label": "「ブリッジ＝橋渡し役」の出どころ", "text": "この役割は実在ファイル `robot/README.md` の「持ち場」と「つなぎ目（疎結合の原則）」に書かれています：『アプリとロボは直接やり取りせず、Supabase のテーブル（robot_calls / robot_status など）を介してつながる』。※`docs/基本設計書.md` は現時点ではプレースホルダ（4行のみ・中身は補遺で確定予定）なので、仕様の出どころは `robot/README.md` と `supabase/schema.sql` を正典にしてください。"},
         {"type": "callout", "variant": "tip", "label": "Piが無くても大丈夫", "text": "このIssueはPCだけで完結できます（やることはSupabaseに繋いでテーブルを読み書きするだけ）。Pi実機での実行確認は #9 以降でOKです。"}
       ]
@@ -28,11 +28,12 @@
           "`robot_calls` を見張る（ポーリング or Realtime購読）コードが robot/ 配下に置いてある（例: robot/bridge_node.py）",
           "アプリ or SQLで robot_calls に1件 insert すると、ブリッジ側のログにその行が出る",
           "検知した行の status を queued→moving→arrived→done と更新でき、各段階がログに出る（実機なしでOK）",
+          "status を更新するときは `robot_calls.updated_at = now()` も一緒にセットしている（自動更新トリガが無いので、updateしても updated_at は勝手に変わらない）",
           "FIFO（先に来た順）で1件だけ掴んでいる（created_at 昇順で先頭1件）",
           "接続キー・URLを直書きしておらず、git status に .env が出てこない（コミットされない）ことを確認した",
           "ブランチ（feature/◯◯）を切ってPRを出した（Pi実機での実行確認は #9 以降でOK。Piが手元にある人は git pull→実行まで試す）"
         ]},
-        {"type": "callout", "variant": "tip", "label": "robot_status は今回のスコープ外", "text": "スキーマには `robot_status`（id=1固定・ロボの現在状態を1行で持つ表）もありますが、**今回の最小実装では robot_calls の status のみ更新**し、robot_status.state / current_call_id の更新は**次段階（#9以降）の対象**とします（範囲をわざと絞ります）。robot_status を誰がいつ更新するかは設計確定待ちなので、迷ったらPM(水谷)に確認を。"}
+        {"type": "callout", "variant": "tip", "label": "robot_status は今回のスコープ外", "text": "スキーマには `robot_status`（id=1固定・ロボの現在状態を1行で持つ表）もありますが、**今回の最小実装では robot_calls の status のみ更新**し、robot_status.state / current_call_id の更新は**次段階＝『ブリッジ完全版』（状態遷移＋robot_status更新）の対象**とします（範囲をわざと絞ります。#9 は座標→Nav2ゴール変換で robot_status は扱いません）。robot_status を誰がいつ更新するかの細部は設計確定待ちなので、迷ったらPM(水谷)に確認を。"}
       ]
     },
     {
@@ -41,12 +42,12 @@
         {"type": "steps", "items": [
           {"title": "Python仮想環境(venv)を作る", "detail": "robot/ で作業用の仮想環境を作ります。venv＝そのプロジェクト専用のPython部屋（他と汚し合わないため）。コマンドは `python -m venv .venv` → 有効化(Win: `.venv\\Scripts\\activate` / Mac: `source .venv/bin/activate`)。詳しい意味は下の『調べる・学ぶこと』の venv 項目へ。"},
           {"title": "supabase-py を入れる", "detail": "有効化した状態で `pip install supabase`。これがPythonからSupabaseを操作するライブラリ。`pip freeze > requirements.txt` で何を入れたか記録しておくとチーム共有が楽。"},
-          {"title": "使うSupabaseキーの種別を決める（重要）", "detail": "今回は publishable key（旧 anon に相当する読み書き可キー）で十分です。理由：RLSで select/insert/update は全員OK設計なので、最小権限で足ります。**service_role キーは使いません**（RLSを無視する強権キーで、漏れると全データ操作可能になるため）。ロボ側で使う具体的なキー名は環境構築ガイドにまだ記載が無いので、**正式なキー名はPM(水谷)に確認**してください。"},
-          {"title": "接続情報を環境変数で渡す準備", "detail": "URLとキーをコードに直書きせず、robot/ に `.env` を作って読み込む方針にします。キー名は仮に SUPABASE_URL / SUPABASE_KEY のように NEXT_PUBLIC_ 接頭辞**なし**で。NEXT_PUBLIC_ はブラウザに公開する用の名前なので、サーバー的に動くロボ側Pythonでは付けません。実際のキー名はPM確認の結果に合わせること。"},
+          {"title": "使うSupabaseキーの種別を決める（重要）", "detail": "今回は publishable key（従来の anon キーに代わる、RLS適用の公開可・読み書きキー。形式は `sb_publishable_...`）で十分です。理由：RLSで select/insert/update は全員OK設計なので、最小権限で足ります。**service_role キーは使いません**（RLSを無視する強権キーで、漏れると全データ操作可能になるため）。publishable キーの値・名前は環境構築ガイドのステップ4（.env.local）に記載があります（`NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` ＝ `sb_publishable_...`）。ただしそれは**Next.jsアプリ用**の名前なので、**ロボ側Pythonで使う環境変数名（NEXT_PUBLIC_ を外す等）の正式な命名だけは未定＝PM(水谷)に確認**してください。"},
+          {"title": "接続情報を環境変数で渡す準備", "detail": "URLとキーをコードに直書きせず、robot/ に `.env` を作って読み込む方針にします。値そのもの（URLと `sb_publishable_...`）は環境構築ガイドのステップ4にあるものを使います。環境変数名は仮に SUPABASE_URL / SUPABASE_KEY のように NEXT_PUBLIC_ 接頭辞**なし**で。NEXT_PUBLIC_ はブラウザに公開する用の名前なので、サーバー的に動くロボ側Pythonでは付けません。**未定なのは値ではなくPython側の環境変数の正式な命名だけ**なので、最終的な変数名はPM確認の結果に合わせること。"},
           {"title": "Supabaseに繋いでみる（疎通テスト）", "detail": "環境変数からURL/キーを読み、クライアントを作って `robot_calls` を select するだけの短いコードで『繋がるか』を先に確認。エラーが出たらまずキー名・値・RLSを疑う。"},
           {"title": "検知の方式を選ぶ：まずはポーリング", "detail": "見張り方は2通り：(A)ポーリング＝数秒ごとに自分でテーブルを見に行く、(B)Realtime購読＝変化が来たら通知される。最小実装は実装が単純な(A)ポーリングを推奨。※注意：robot/README.md の最終的な持ち場は『Realtime購読』なので、これは“まず動かすための暫定”。後でRealtimeに差し替える前提で進めます。違いは下の研究項目で。"},
           {"title": "FIFOで先頭1件だけ掴む", "detail": "`robot_calls` から status='queued' の行を created_at 昇順で並べ、先頭の1件だけ取得（order by created_at + limit 1 の考え方）。複数あっても一度に1件だけ処理するのがロボ1台の前提。"},
-          {"title": "status を順に進める：moving→arrived→done", "detail": "掴んだ行の id を指定して update。実機が無いので各段階の間は『擬似的に少し待つ(sleep数秒)』か『キー入力で1段階ずつ進める』どちらかでOK。各更新の前後で print ログを出し、3段階が見えるようにする。canceled（取消）は今回の範囲外＝来ても掴まない程度の認識でOK。"},
+          {"title": "status を順に進める：moving→arrived→done", "detail": "掴んだ行の id を指定して update。**status を更新するときは `updated_at = now()` も一緒にセットすること**（schema には updated_at の自動更新トリガが無く、default now() は insert 時だけ。updateしても updated_at は勝手に変わらず初期値のまま残る）。実機が無いので各段階の間は『擬似的に少し待つ(sleep数秒)』か『キー入力で1段階ずつ進める』どちらかでOK。各更新の前後で print ログを出し、3段階が見えるようにする。canceled（取消）は今回の範囲外＝来ても掴まない程度の認識でOK。"},
           {"title": "robot/ に置いてブランチ→PR", "detail": "ファイルは robot/bridge_node.py など robot/ 配下へ。feature/◯◯ ブランチを切って push → PR（本文に Closes #8 と動作確認を書く）。Piがある人は別マシンで git pull→実行まで確認。"}
         ]}
       ]
@@ -59,9 +60,9 @@
           {"topic": "Python仮想環境(venv)の作り方と有効化", "why": "Git/Python初心者が最初に必ずぶつかる関門。venvを使わないとPCのPython本体を汚し、ライブラリ衝突の原因になる。", "where": "Python公式 venv: https://docs.python.org/ja/3/library/venv.html / pip入門: https://packaging.python.org/ja/latest/tutorials/installing-packages/"},
           {"topic": "supabase-py のセットアップと使い方（create_client / select / update）", "why": "PythonからSupabaseを操作する土台。クライアントの作り方とテーブル操作の書き方を知らないと一歩も進めない。", "where": "supabase-py 公式リポジトリ: https://github.com/supabase/supabase-py / JS版だがメソッド名の対応が分かる select: https://supabase.com/docs/reference/javascript/select"},
           {"topic": "Realtime購読 と ポーリング の違い", "why": "今回はポーリング採用だが、robot/README.md の最終形はRealtime購読。違いと『なぜ最小実装ではポーリングか／いつ差し替えるか』を理解しておくと後の #9 がスムーズ。", "where": "Supabase Realtime: https://supabase.com/docs/guides/realtime / ポーリングは『一定間隔でselectを繰り返す』だけなので supabase-py の select を time.sleep と組むイメージ"},
-          {"topic": "FIFOで先頭1件を取る（order by created_at limit 1）", "why": "queuedが複数あってもロボは1台。先に来た順（FIFO）で1件だけ処理しないと割り込み・取りこぼしが起きる。schema にも専用インデックス idx_calls_queue（created_at, status='queued'）がある。", "where": "supabase-py の order/limit の書き方（公式リポジトリのREADME/サンプル）: https://github.com/supabase/supabase-py / 根拠は supabase/schema.sql 73行（FIFO処理用インデックス）"},
-          {"topic": "status の update（行を特定して書き換える）", "why": "検知だけでなく moving→arrived→done と状態を進めるのがブリッジの仕事。どの行を更新するかを id で絞る eq の使い方が肝。", "where": "supabase-py 公式リポジトリ: https://github.com/supabase/supabase-py / 更新の考え方（JS版update）: https://supabase.com/docs/reference/javascript/update"},
-          {"topic": "PythonでSupabaseに繋ぐ環境変数の扱い（どのキーを使うか）", "why": "キーをコードに直書きすると漏洩→全データ操作のリスク。さらに『どの種別のキーを使うか』を間違えると権限不足や権限過大になる。", "where": "ロボ側のキー名は環境構築ガイドにまだ記載が無いため、まず**PM(水谷)に確認**。方針：publishable key（読み書き可・RLS適用）で足り、service_role は使わない/コミットしない。環境構築ガイド5-3が service_role の共有・コミットを固く禁じている点を参照。Pythonでの.env読み込みは python-dotenv: https://pypi.org/project/python-dotenv/"},
+          {"topic": "FIFOで先頭1件を取る（order by created_at limit 1）", "why": "queuedが複数あってもロボは1台。先に来た順（FIFO）で1件だけ処理しないと割り込み・取りこぼしが起きる。schema にも専用インデックス idx_calls_queue があり、これは `created_at` をキーに `status='queued'` の行だけを対象にした部分インデックス（partial index）。created_at と status の複合インデックスではない点に注意。", "where": "supabase-py の order/limit の書き方（公式リポジトリのREADME/サンプル）: https://github.com/supabase/supabase-py / 根拠は supabase/schema.sql 73行 `create index idx_calls_queue on robot_calls (created_at) where status='queued';`（FIFO処理用の部分インデックス）"},
+          {"topic": "status の update（行を特定して書き換える）", "why": "検知だけでなく moving→arrived→done と状態を進めるのがブリッジの仕事。どの行を更新するかを id で絞る eq の使い方が肝。**注意：robot_calls.updated_at は手動更新**＝update のたびに自分で `updated_at = now()` を一緒にセットする（schema に自動更新トリガが無く、default now() は insert 時だけ）。", "where": "supabase-py 公式リポジトリ: https://github.com/supabase/supabase-py / 更新の考え方（JS版update）: https://supabase.com/docs/reference/javascript/update / updated_at が自動で変わらない根拠は supabase/schema.sql 59行（default now() のみ・トリガ無し）"},
+          {"topic": "PythonでSupabaseに繋ぐ環境変数の扱い（どのキーを使うか）", "why": "キーをコードに直書きすると漏洩→全データ操作のリスク。さらに『どの種別のキーを使うか』を間違えると権限不足や権限過大になる。", "where": "publishable キーの値・名前は環境構築ガイドのステップ4（.env.local）に記載あり（Next.jsアプリ用の `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` ＝ `sb_publishable_...`）。**ロボ側Pythonで使う環境変数名（NEXT_PUBLIC_ を外す等）の正式な命名だけ未定なのでPM(水谷)に確認**。方針：publishable key（読み書き可・RLS適用）で足り、service_role は使わない/コミットしない。環境構築ガイドの「セキュリティの超重要ルール」節（md=4-3 / html=5-3）が service_role の共有・コミットを固く禁じている点を参照。Pythonでの.env読み込みは python-dotenv: https://pypi.org/project/python-dotenv/"},
           {"topic": "robot_calls の status 遷移の意味", "why": "queued/moving/arrived/done/canceled が何を表すかを取り違えると、アプリ側の表示や次のロボ動作とズレる。", "where": "出どころは `supabase/schema.sql` 55-56行の check 制約（status in queued|moving|arrived|done|canceled）。意味は下の用語ミニ辞典に整理済み。robot_status の state（idle|moving|arrived|returning）は同 65-66行（※今回は更新対象外）。"}
         ]}
       ]
@@ -113,8 +114,8 @@
           ["FIFO", "First In First Out。先に来たものから順に処理。created_at昇順で先頭1件を取る"],
           ["queued / moving / arrived / done", "robot_calls.status の値。順番待ち / 移動中 / 到着 / 完了（schema.sql 55-56行）"],
           ["canceled", "robot_calls.status の取消値。今回は範囲外（来ても掴まない認識でOK）"],
-          ["robot_status", "ロボの現在状態を1行で持つ表（id=1固定）。今回は更新しない（次段階）"],
-          ["publishable key", "RLSが効く読み書き可の接続キー。今回これを使う。service_role（強権・RLS無視）は使わない"],
+          ["robot_status", "ロボの現在状態を1行で持つ表（id=1固定）。今回は更新しない（更新するのは次段階の『ブリッジ完全版』。#9は座標変換で robot_status は扱わない）"],
+          ["publishable key", "従来の anon キーに代わる、RLSが効く公開可・読み書き可の接続キー（形式は sb_publishable_...）。今回これを使う。service_role（強権・RLS無視）は使わない"],
           ["venv", "そのプロジェクト専用のPython環境。ライブラリ衝突を防ぐ"]
         ]}
       ]
@@ -127,8 +128,8 @@
           "テーブル列・status の取り得る値・RLS（削除不可）の正典：`supabase/schema.sql`（robot_calls 50-60行 / status 55-56行 / robot_status 63-69行 / FIFO index 73行）",
           "※`docs/基本設計書.md` は現状プレースホルダ（補遺で確定予定）。仕様の出どころにはせず、上の2ファイルを見ること",
           "前提Issue：#2 テーブル作成（これが済んでいないと robot_calls が無い）/ #3 サンプル投入（books・stop_points のデータが無いと insert がFKエラー）",
-          "次につながるIssue：#9 座標変換（robot_calls → Nav2 ゴール。Realtime化や robot_status 更新もこの先）",
-          "環境変数の考え方の参考：環境構築ガイド.html（※Next.jsアプリ用 NEXT_PUBLIC_ キーの説明。ロボ側Pythonのキー名は別途PM(水谷)確認）",
+          "次につながる段階：『ブリッジ完全版』（状態遷移＋robot_status更新。Realtime化への差し替えもここ）→ その先に #9 座標変換（robot_calls の seat_id → stop_points の座標 → Nav2 ゴール）。robot_status 更新やRealtime化は #9 ではなく『ブリッジ完全版』が担当する点に注意（ロードマップ：#8 ブリッジ最小 → ブリッジ完全版 →（#9 座標変換 → Nav2自走））",
+          "環境変数の考え方の参考：環境構築ガイド（※キーの値はステップ4に記載あり。ただし NEXT_PUBLIC_ キーはNext.jsアプリ用の名前。ロボ側Pythonで使う環境変数名だけは別途PM(水谷)確認）",
           "番号より画面名・タスク名で照合を：古い資料はIssue番号がズレている場合あり"
         ]}
       ]

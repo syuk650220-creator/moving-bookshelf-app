@@ -24,7 +24,7 @@
       "blocks": [
         {"type": "checklist", "items": [
           "URL の id（`/books/[id]` の [id]）で `books` を**1件** select して、タイトル/著者/段/状態を表示できる",
-          "『借りる』で `loans` に **book_id・borrower_type(今回は \"guest\")・guest_name・borrowed_at** を入れて1行 insert できる（必須列が埋まっていること）",
+          "『借りる』で `loans` に1行 insert できる（**NOT NULL の必須列は book_id と borrower_type の2つ**。今回は borrower_type=\"guest\" + guest_name に仮名を入れる。guest_name は DB 上は任意、borrowed_at は `default now()` があるので insert で省略してもよい）",
           "『借りる』成功後に `books.status` を `on_loan` に update でき、画面の状態表示も最新になる",
           "『返す』で**未返却の loan**（`returned_at` が null）に `returned_at` と `returned_by` を入れて update できる",
           "『返す』成功後に `books.status` を `available` に戻し、画面の状態表示も最新になる",
@@ -32,7 +32,7 @@
           "更新が**失敗したとき**、画面にエラーメッセージが出る（onClick 内なので try/catch + useState で出す。error.tsx では出ない）",
           "PRを出して Closes #7 を本文に書く"
         ]},
-        {"type": "callout", "variant": "ok", "label": "Done の確認は Table Editor でも", "text": "『insert できた』は画面の見た目だけでなく、Supabase ダッシュボード → Table Editor → loans を開いて、book_id・borrower_type・borrowed_at が**実際に埋まった行**ができているかを目で確認しましょう。必須列が空のまま『できた』と思い込むのを防げます。"}
+        {"type": "callout", "variant": "ok", "label": "Done の確認は Table Editor でも", "text": "『insert できた』は画面の見た目だけでなく、Supabase ダッシュボード → Table Editor → loans を開いて、**必須列の book_id・borrower_type が埋まった行**ができているかを目で確認しましょう。borrowed_at は `default now()` があるので省略しても自動で入ります。必須列(book_id/borrower_type)が空のまま『できた』と思い込むのを防げます。"}
       ]
     },
     {
@@ -47,7 +47,7 @@
           {"title": "ステップ4：本1件と貸出履歴を表示する", "detail": "取れた本のタイトル/著者/段/状態を表示。loans は新しい順（`borrowed_at` 降順など）で一覧に並べる。0件なら『履歴なし』等を出す。"},
           {"title": "ステップ5：『借りる』ボタンの処理を書く", "detail": "onClick の中で順に：(1) `loans` に insert（**book_id・borrower_type=\"guest\"・guest_name（仮名でOK）・borrowed_at**）→ (2) その error を if で確認 → (3) 成功していれば `books` を `status='on_loan'` に update（**id で eq して対象を絞る**）。⚠ #6(ゲスト名) が未実装の今は **borrower_type=\"guest\" + guest_name に仮の名前**を決め打ちで入れて動かす（理由は下の研究参照）。"},
           {"title": "ステップ6：成功したら表示を最新化する", "detail": "借りる/返すが成功したら、**ステップ3で作った取得関数を呼び直す**。これで status と履歴が最新になる。『再描画』とは具体的にこれ＝前ステップの取得関数の再呼び出し、と覚える。"},
-          {"title": "ステップ7：『返す』ボタンの処理を書く", "detail": "onClick の中で：(1) この本の**未返却 loan**（`book_id` 一致 ＆ `returned_at` が null）を `.is('returned_at', null)` で絞る → (2) 通常は1件のはずだが、複数あり得るので **まず select で対象を1件特定 → その loan の id で update** の2段が安全（または borrowed_at 降順で1件に絞る）→ (3) `returned_at`(今の時刻) と `returned_by` を update → (4) 成功したら `books` を `status='available'` に update（**id で eq**）→ (5) ステップ6の最新化。"},
+          {"title": "ステップ7：『返す』ボタンの処理を書く", "detail": "onClick の中で：(1) この本の**未返却 loan**（`book_id` 一致 ＆ `returned_at` が null）を `.is('returned_at', null)` で絞る → (2) 通常は1件のはずだが、複数あり得るので **まず select で対象を1件特定 → その loan の id で update** の2段が安全（または borrowed_at 降順で1件に絞る）→ (3) `returned_at`(今の時刻) と `returned_by` を update → (4) 成功したら `books` を `status='available'` に update（**id で eq**）→ (5) ステップ6の最新化。⚠ `returned_by` は自由テキストで本人確認の厳密さは後回しでよいので、今は #6 前として **借りたときの仮名 or 'guest' を入れておけば十分**（本人確認の仕組みは後のIssueで差し替え）。"},
           {"title": "ステップ8：失敗時のエラー表示を入れる", "detail": "⚠ onClick 内のエラーは **error.js / エラー境界では捕まりません**（公式docsに明記）。各 supabase 呼び出しの `error` を if で見て、try/catch で囲み、`useState` に持ったエラーメッセージを画面に出す。これがクライアント方式での正しい失敗表示。"},
           {"title": "ステップ9：動作確認して PR を出す", "detail": "下の『動作確認のしかた』で借りる→返すを通しで確認 → コミット → push → PR。本文に『何をしたか / Closes #7 / 動作確認』。マージは PM(水谷) 承認後 Squash and merge。"}
         ]}
@@ -62,8 +62,8 @@
           {"topic": "Supabase の select で1件だけ取る／履歴を並べて取る", "why": "id で books を1件、book_id で loans を複数（履歴）取る。1件取得・並び替え（order）・null 絞り込みの文法を知る必要がある。", "where": "https://supabase.com/docs/reference/javascript/select 。1件なら id で eq、履歴は borrowed_at の降順で order。戻り値は `{ data, error }`（error は throw されず戻り値に入る点に注意）。"},
           {"topic": "Supabase の insert に何を入れるか（loans の必須列を schema に即して）", "why": "loans は `borrower_type` が **NOT NULL かつ CHECK(in 'user','guest')**、`book_id` も NOT NULL。これを入れずに insert すると『null value in column』や『violates check constraint』という原因の分かりにくいエラーで詰まる。誰が借りるかで guest_name か user_id のどちらを使うかも変わる。", "where": "supabase/schema.sql の loans 定義（41〜47行）で必須列を確認。insert 文法は https://supabase.com/docs/reference/javascript/insert 。⚠**#6(ゲスト名)が未実装の今は、borrower_type=\"guest\" ＋ guest_name に仮の名前を決め打ち**で入れて動かす（user_id はログイン機能後の話なので今は使わない）。"},
           {"topic": "Supabase の update で対象を eq/is で絞る（borrow=on_loan, return=available）", "why": "books の status を変えるとき、必ず**その本だけ**に絞らないと全件書き換えてしまう。返却では『未返却の loan』を null 判定で絞る必要がある。", "where": "https://supabase.com/docs/reference/javascript/update 。books は `.eq('id', 本のid)`。未返却 loan は `.eq('returned_at', null)` では効かず **`.is('returned_at', null)`** を使う（null は eq でなく is）。複数該当時は『まず select で1件の id を特定 → その id で update』の2段、または borrowed_at 降順で1件に絞る。"},
-          {"topic": "2つのテーブルを続けて更新するときの考え方と、片方失敗時の注意", "why": "借りる/返すは loans と books を**続けて**変える。1つ目が成功して2つ目が失敗すると、データがちぐはぐ（loans は入ったのに status が変わっていない等）になる。学生プロジェクトでは完全な取り消し(トランザクション)までは求めず、『各 error を必ず確認 → 失敗を検知してユーザーに知らせる』で十分。", "where": "考え方の参照として node_modules/next/dist/docs/01-app/01-getting-started/07-mutating-data.md。⚠ただしこの docs は **Server Functions / Server Actions（'use server'）+ revalidatePath / router.refresh の世界**で、このプロジェクトの『クライアントから Supabase JS を直接叩く方式』とは噛み合いません。docs からは『更新後にデータを最新化するという発想(Refresh data)』だけ拾い、Server Function 部分はそのまま使わないこと。最新化は次の項目（取得関数の呼び直し）で行う。"},
-          {"topic": "更新後に画面を最新化する（クライアント方式の具体）", "why": "insert/update しても、画面の useState は自動では変わらない。『再描画』が何を指すのか分からず止まりやすい。", "where": "具体策：**ステップ3で作った取得関数（books 1件＋loans 一覧を取り直す関数）を、借りる/返す成功後に呼び直す**。これで status と履歴が最新になる。docs(07-mutating-data.md)の `router.refresh()` の“更新後に取り直す”という考え方が近いが、サーバー関数/revalidatePath ではなく**クライアントで select を呼び直して useState を更新**するのがこの構成の基本。"},
+          {"topic": "2つのテーブルを続けて更新するときの考え方と、片方失敗時の注意", "why": "借りる/返すは loans と books を**続けて**変える。1つ目が成功して2つ目が失敗すると、データがちぐはぐ（loans は入ったのに status が変わっていない等）になる。学生プロジェクトでは完全な取り消し(トランザクション)までは求めず、『各 error を必ず確認 → 失敗を検知してユーザーに知らせる』で十分。", "where": "考え方の参照として node_modules/next/dist/docs/01-app/01-getting-started/07-mutating-data.md。⚠ただしこの docs は **Server Functions / Server Actions（'use server'）の世界**で、その『Refresh data』節も `next/cache` の `refresh()`（Server Action 専用。`router.refresh()` ではない）を使う前提です。このプロジェクトの『クライアントから Supabase JS を直接叩く方式』では `refresh()` も `router.refresh()` も使いません。docs からは『更新後にデータを最新化するという発想(Refresh data)』だけ拾い、Server Function 部分はそのまま使わないこと。最新化は次の項目（取得関数の呼び直し）で行う。"},
+          {"topic": "更新後に画面を最新化する（クライアント方式の具体）", "why": "insert/update しても、画面の useState は自動では変わらない。『再描画』が何を指すのか分からず止まりやすい。", "where": "具体策：**ステップ3で作った取得関数（books 1件＋loans 一覧を取り直す関数）を、借りる/返す成功後に呼び直す**。これで status と履歴が最新になる。docs(07-mutating-data.md)の『Refresh data』＝“更新後に取り直す”という考え方が近い（ただし docs の手段は `next/cache` の `refresh()` で Server Action 専用。`router.refresh()` は useRouter フックの API でこの docs には載っておらず、いずれもこのクライアント方式では使えない）。サーバー関数ではなく**クライアントで select を呼び直して useState を更新**するのがこの構成の基本。"},
           {"topic": "onClick 内のエラーをどう画面に出すか（error.js では捕まらない）", "why": "借りる/返すは onClick（イベントハンドラ）の中で動く。**Error boundary / error.js はイベントハンドラ内のエラーを捕まえない**ので、error.js で失敗を見せようとしても動かず混乱する。", "where": "node_modules/next/dist/docs/01-app/01-getting-started/10-error-handling.md の『Error boundaries don't catch errors inside event handlers』の節（手動で catch して useState/useReducer に入れUIに出す、と明記）。つまり try/catch ＋ useState でメッセージを表示するのが正解。"},
           {"topic": "未返却 loan の絞り込み（returned_at is null）と複数該当への対処", "why": "返却対象は『まだ返していない loan』＝ returned_at が null の行。同じ本を何度も借りた履歴があると、null の行が複数になり得る。order/limit が無いと該当全行を書き換える危険がある。", "where": "https://supabase.com/docs/reference/javascript/using-filters の `.is()`（null 判定は **.is('returned_at', null)**、.eq では効かない）。複数対策は『select で borrowed_at 降順 → 先頭1件の id を取り → その id で update』。通常は貸出中=1件の前提だが、安全のため id 特定の2段がおすすめ。"},
           {"topic": "books に本当にその id の本があるか自分で確認する", "why": "詳細が表示されないとき『バグなのか、id が存在しないだけか』を自分で切り分けるため。", "where": "Supabase ダッシュボード → Table Editor → books で対象の id を探す。URL の id とコピー一致しているか確認。前提 #1（本一覧）の行から正しい id でリンクされているかも見る。"}
@@ -93,7 +93,7 @@
         {"type": "checklist", "items": [
           "詳細画面に本1冊のタイトル/著者/段/状態が出る",
           "『借りる』を押すと status が on_loan になり、履歴に1行増える（画面が最新化される）",
-          "Table Editor → loans に book_id・borrower_type=\"guest\"・guest_name・borrowed_at が埋まった行ができている",
+          "Table Editor → loans に行ができている（必須列の book_id・borrower_type=\"guest\" が埋まっている。guest_name=仮名も入る。borrowed_at は省略しても default now() で自動的に入る）",
           "『返す』を押すと status が available に戻り、その loan に returned_at/returned_by が入る",
           "未返却 loan が無い状態で『返す』を押しても全件書き換え等が起きない（対象を絞れている）",
           "わざと失敗させると（例：通信を切る／必須列をわざと抜く）画面にエラーメッセージが出る（error.js でなく useState 表示）"
