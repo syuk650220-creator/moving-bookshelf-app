@@ -230,6 +230,35 @@ function renderIndex(numbered, extras) {
   </div>
 
   <section>
+    <h2 class="sec">🧭 この手引きの歩き方（最初に読む順番）</h2>
+    <ol class="steps">
+      <li><span class="st-title"><a href="環境構築ガイド.html">環境構築ガイド</a> でアプリを動かせるようにする</span><div class="st-detail">clone → npm install → .env.local → npm run dev。新メンバーは必ずここから。</div></li>
+      <li><span class="st-title"><a href="../ロードマップ.md">ロードマップ</a> で全体像と自分の担当を把握</span><div class="st-detail">どのIssueがいつ・誰の担当で・何の後にやるか（依存関係＆ガント）。GitHubで開くと図で表示。</div></li>
+      <li><span class="st-title">下の一覧から <strong>自分のIssueカード</strong> を開いて着手</span><div class="st-detail">進め方・調べ方・AIコーチの使い方つき。作業はブランチを切って → PR。</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2 class="sec">📁 資料マップ（どこに何があるか）</h2>
+    <p class="section-intro">このプロジェクトの資料の置き場と役割の一覧です。<code>.md</code> は GitHub 上で開くと整形表示されます。</p>
+    <table>
+      <tr><th>資料</th><th>何の資料か</th><th>場所</th></tr>
+      <tr><td><a href="環境構築ガイド.html"><strong>環境構築ガイド</strong></a></td><td>アプリを自分のPCで動かす手順（最初に読む）</td><td>この手引き内</td></tr>
+      <tr><td><a href="index.html"><strong>各Issueの進め方ガイド</strong></a></td><td>#1〜#9＋追加23件の進め方・調べ方（このページの下に一覧）</td><td>この手引き内</td></tr>
+      <tr><td><a href="../ロードマップ.md"><strong>ロードマップ</strong></a></td><td>全Issueの依存関係マップ＋ガントチャート＋担当表</td><td>docs/</td></tr>
+      <tr><td><a href="../基本設計書.md">基本設計書</a></td><td>画面・データ・通信・ロボ制御の設計（※整備中）</td><td>docs/</td></tr>
+      <tr><td><a href="../要件定義書.md">要件定義書</a></td><td>機能・非機能・制約（MoSCoW）（※整備中）</td><td>docs/</td></tr>
+      <tr><td><a href="../構想書.md">構想書</a></td><td>ビジョン・コンセプト・ユーザー像（※整備中）</td><td>docs/</td></tr>
+      <tr><td><a href="../開発の進め方.md">開発の進め方</a></td><td>実装フェーズの流れ（※整備中）</td><td>docs/</td></tr>
+      <tr><td><a href="../Git早見表.html">Git早見表</a></td><td>よく使う Git コマンドの早見</td><td>docs/</td></tr>
+      <tr><td><a href="../進捗報告.html">進捗報告</a></td><td>プロジェクトの現状報告</td><td>docs/</td></tr>
+      <tr><td><a href="../../README.md">README</a></td><td>プロジェクト概要・技術スタック・セットアップ</td><td>リポジトリ直下</td></tr>
+      <tr><td><a href="../../CONTRIBUTING.md">CONTRIBUTING</a></td><td>Git・PR のルール（ブランチ運用）</td><td>リポジトリ直下</td></tr>
+    </table>
+    <div class="callout tip"><p>困ったら：技術の「進め方・調べ方」は各Issueカード、Gitの操作は <a href="../../CONTRIBUTING.md">CONTRIBUTING</a> と <a href="../Git早見表.html">Git早見表</a>、全体スケジュールは <a href="../ロードマップ.md">ロードマップ</a>。</p></div>
+  </section>
+
+  <section>
     <h2 class="sec">まず最初に</h2>
     <div class="cards">
       ${envCard}
