@@ -27,7 +27,7 @@
           "`pg_policies` を見て、各テーブルのポリシーが下の「期待ポリシー早見表」と一致している（足りない・余分が無い）",
           "delete 系ポリシーがどのテーブルにも1件も無いことを確認した",
           "代表として `books` と `robot_calls` の2テーブルで、publishable キー側から delete しても行が消えないことを確認した",
-          "アプリが実際に行う操作（books の追加/更新・robot_calls の insert・robot_status の購読）が今まで通り動く",
+          "（アプリ実装後）アプリが実際に行う操作（books の追加/更新・robot_calls の insert・robot_status の参照）が動く。※現状 app 配下は全てプレースホルダで Supabase 呼び出しが無いため、未実装の段階では pg_policies 照合＋REST/スクリプト経由の挙動確認で代替する",
           "`service_role` キーがソース・ドキュメント・コミット履歴のどこにも露出していない",
           "`.env.local` が git に追跡されていない（`git ls-files` に出ない）",
           "`.gitignore` の `!.env.local.example` 行を削除し、`.env*` が確実に全部無視される状態にした",
@@ -47,12 +47,12 @@
           ["stop_points", "○ あるのが正", "✗ 無いのが正", "✗ 無いのが正", "✗ 無いのが正"],
           ["users", "✗ 無いのが正(現状)", "✗ 無いのが正(現状)", "✗ 無いのが正(現状)", "✗ 無いのが正"]
         ]},
-        {"type": "callout", "variant": "tip", "label": "早見表の読み方", "text": "○=この操作のポリシーがあるべき／✗=無いのが正しい。users はポリシーが1つも無い（RLS有効だが誰も読み書きできない）のが現状の設計。stop_points と robot_status に insert ポリシーが無いのは AGENTS.md の『アプリからは robot_status/stop_points に insert 不可』と整合しています。"},
+        {"type": "callout", "variant": "tip", "label": "早見表の読み方", "text": "○=この操作のポリシーがあるべき／✗=無いのが正しい。users はポリシーが1つも無い（RLS有効だが誰も読み書きできない）のが現状の設計。stop_points と robot_status に insert ポリシーが無いのは 設計どおりです（schema.sql に robot_status/stop_points の insert ポリシーが無い）。"},
         {"type": "steps", "items": [
           {"title": "1. schema.sql で設計の意図を読む", "detail": "`supabase/schema.sql` の `RLS` 以降を上から読み、どのテーブルに sel_/ins_/upd_ ポリシーが書かれているかを上の早見表と突き合わせる。delete のポリシーが1つも書かれていないことも確認。"},
           {"title": "2. 本番DBの pg_policies で実状を一覧する", "detail": "Supabase の SQL Editor を開き、`pg_policies` から全ポリシーを一覧表示して、schema.sql どおりに本番にも反映されているか照合する（クエリは下のcodeブロック参照）。schema.sql を一度も流していなければここで差が出る。"},
-          {"title": "3. delete が本当に効かないか試す（代表2テーブル）", "detail": "アプリと同じ立場＝publishable キー側から delete を投げて、行が消えないことを確認する。具体手段は『動作確認のしかた』に。代表として books と robot_calls で試せば十分（全テーブル同方針のため）。"},
-          {"title": "4. 普段の操作が動くか確認する", "detail": "アプリが実際に行う操作（books 追加=insert／タグ更新=books update／ロボ呼出=robot_calls insert／robot_status は購読=select）が成功するか確認。stop_points・robot_status への insert は失敗するのが正常なので、混同しないこと。"},
+          {"title": "3. delete が本当に効かないか試す（代表2テーブル）", "detail": "アプリと同じ立場＝publishable キー側から delete を投げて、行が消えないことを確認する。手段は『動作確認のしかた』②を参照（小さな .mjs スクリプト、または REST に curl で DELETE を投げる方法。本番ブラウザの devtools から `import` で supabase を呼ぶことはできない点に注意）。代表として books と robot_calls で試せば十分（全テーブル同方針のため）。"},
+          {"title": "4. 普段の操作が動くか確認する（アプリ実装後）", "detail": "アプリが実際に行う操作（books 追加=insert／タグ更新=books update／ロボ呼出=robot_calls insert／robot_status の参照=select）が成功するか確認。ただし現状 app 配下は全てプレースホルダで Supabase 呼び出しが無いため、未実装の段階ではこの確認は飛ばし、pg_policies 照合と REST/スクリプト経由の挙動確認で代替してよい。stop_points・robot_status への insert は失敗するのが正常なので、混同しないこと。robot_status の Realtime 購読は別タスクの範疇なので、ここでは select で読めることだけ確認する。"},
           {"title": "5. service_role キーの露出を調べる", "detail": "作業ツリーとコミット履歴の両方を全文検索して、管理者キーが紛れ込んでいないか確認する（調べ方は『進めながら調べる・学ぶこと』）。"},
           {"title": "6. .env と .gitignore を点検する", "detail": "`.env.local` が git に追跡されていないことを確認し、`.gitignore` の `!.env.local.example` 行（廃止済みファイルの例外指定）を削除する。"},
           {"title": "7. （任意）旧キー名の残骸を直す", "detail": "`scripts/check-supabase.mjs` は今も旧名 `NEXT_PUBLIC_SUPABASE_ANON_KEY` を参照している。正キー名 `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` に直すと、キー名の最終統一が完了する。"}
@@ -64,8 +64,8 @@
       "blocks": [
         {"type": "research", "items": [
           {"topic": "pg_policies でポリシー一覧を出す方法", "why": "本番DBに実際どんなRLSポリシーが効いているかは、コードを見るだけでは分からない。本番で `select * from pg_policies` 相当を実行し、早見表と照合するのが点検の核心。", "where": "Supabase 管理画面の SQL Editor。RLSの考え方は https://supabase.com/docs/guides/database/postgres/row-level-security 、PostgreSQL公式の `pg_policies` ビューは https://www.postgresql.org/docs/current/view-pg-policies.html"},
-          {"topic": "publishable キーと service_role キーの違い", "why": "publishable（旧anon）はブラウザに置いてよい『RLSに従うキー』、service_role はRLSを無視できる『管理者キー＝絶対に公開してはいけない』。この違いを理解しないと事故の重大度が判断できない。", "where": "Supabase の API Keys 解説 https://supabase.com/docs/guides/api/api-keys 。本プロジェクトの正キー名は `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`（AGENTS.md 参照）。"},
-          {"topic": "管理画面 SQL Editor とアプリで権限が違う理由（ロール）", "why": "SQL Editor からは delete できるのにアプリからはできない。これはロール（role＝DB上の権限の種類）が違うため。SQL Editor は管理者ロール、アプリは anon/authenticated ロールで動く。この仕組みを知らないと『SQL Editorで消せた＝RLSが壊れている』と誤解する。", "where": "RLSとロールの関係 https://supabase.com/docs/guides/database/postgres/row-level-security 。PostgreSQLのロール https://www.postgresql.org/docs/current/user-manag.html"},
+          {"topic": "publishable キーと service_role キーの違い", "why": "publishable（旧anon）はブラウザに置いてよい『RLSに従うキー』、service_role はRLSを無視できる『管理者キー＝絶対に公開してはいけない』。この違いを理解しないと事故の重大度が判断できない。", "where": "Supabase の API Keys 解説 https://supabase.com/docs/guides/api/api-keys 。本プロジェクトの正キー名は `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`（環境構築ガイド参照）。"},
+          {"topic": "管理画面 SQL Editor とアプリで権限が違う理由（ロール）", "why": "SQL Editor からは delete できるのにアプリからはできない。これはロール（role＝DB上の権限の種類）が違うため。SQL Editor は管理者（postgres）ロールで RLS をバイパスし、アプリは anon/authenticated ロールで動く。なお service_role キーも RLS を無視できるが、これは『キー由来の別経路』であって SQL Editor の postgres ロールとは別物（どちらも RLS をすり抜ける点は同じ）。この仕組みを知らないと『SQL Editorで消せた＝RLSが壊れている』と誤解する。", "where": "RLSとロールの関係 https://supabase.com/docs/guides/database/postgres/row-level-security 。PostgreSQLのロール https://www.postgresql.org/docs/current/user-manag.html"},
           {"topic": "RLS違反時に delete がどう返るか", "why": "DELETEポリシーが無いテーブルへ delete を投げても、多くの場合エラーは出ず『0行削除（=何も消えない）』になる。『エラーが出ない＝許可されている』ではない点を知らないと検証結果を誤読する。", "where": "Supabase JS の delete 仕様 https://supabase.com/docs/reference/javascript/delete 。返り値（data/error/count）の見方を確認する。"},
           {"topic": "service_role キーをコミット履歴から探す方法", "why": "今のファイルに無くても、過去に一度コミットして後で消したケースがある。その場合 GitHub 上に履歴として残り続けるので、作業ツリーだけでなく履歴も調べる必要がある。", "where": "作業ツリーは `git grep`（node_modules を自動除外）、履歴は `git log -p -S` で文字列が出入りしたコミットを追える。Git公式 https://git-scm.com/docs/git-log と https://git-scm.com/docs/git-grep"},
           {"topic": ".gitignore の否定パターン（!）の意味", "why": "`!.env.local.example` は『この1ファイルだけは無視しない（=コミット対象に戻す）』という例外指定。例外ファイルは廃止済みなので、この行が残ると意図がぼやける。否定パターンの挙動を理解して安全に消す。", "where": "Git公式 gitignore 仕様 https://git-scm.com/docs/gitignore （Patterns / `!` prefix の節）"}
@@ -94,9 +94,9 @@
           "robot_status は `SELECT`・`UPDATE` のみ（INSERT が無いのが正）",
           "stop_points は `SELECT` のみ（INSERT・UPDATE が無いのが正）",
           "users は1行も出てこない（ポリシー無しが現状）",
-          "`DELETE`（cmd が `d`）の行がどのテーブルにも無い"
+          "`DELETE`（pg_policies の cmd 列が `DELETE`）の行がどのテーブルにも無い（cmd 列は SELECT/INSERT/UPDATE/DELETE/ALL の語で返る。単一文字 `d` は基盤カタログ pg_policy.polcmd の値であって pg_policies.cmd には出ない）"
         ]},
-        {"type": "p", "text": "**② delete が効かないことの確認（代表2テーブル）。** publishable キー側から delete を投げる。一番手軽なのはブラウザの devtools コンソール。本番サイトを開き、コンソールで supabase クライアントを使って `supabase.from('books').delete().eq('id', 'ダミーID').select()` 相当を実行する（クライアントの呼び方は `lib/supabaseClient.ts` の `supabase` を import する設計。調べ方は Supabase JS の delete ドキュメント）。"},
+        {"type": "p", "text": "**② delete が効かないことの確認（代表2テーブル）。** publishable キー側から delete を投げる。注意：ビルド後の本番ブラウザでは ESM の `import` は使えず、バンドルされた `supabase` インスタンスにもコンソールから到達できないので、devtools コンソールで `import` する方法は実行できない。実際に動く手段は次のどちらか。(a) publishable キーで小さな `.mjs`（`scripts/check-supabase.mjs` と同型）を1本作り、`supabase.from('books').delete().eq('id','ダミーID').select()` 相当を実行して0行/拒否を確認する。(b) Supabase の REST エンドポイント（`.../rest/v1/books?id=eq.ダミーID`）に `apikey` と `Authorization: Bearer <publishableキー>` ヘッダを付けて curl で `DELETE` を投げる。delete の返り値（data/error/count）の見方は Supabase JS の delete ドキュメントで確認する。"},
         {"type": "ul", "items": [
           "返り値の data が空配列（消えた行が0）／または error が返る → どちらでも『消えていない』ならOK",
           "実行後にそのIDの行を select し直して、まだ存在することを確認する",
@@ -107,11 +107,12 @@
           ["本を追加", "books（insert）", "成功する"],
           ["タグを更新", "books（update）", "成功する"],
           ["ロボを呼ぶ", "robot_calls（insert）", "成功する"],
-          ["ロボ状態を見る", "robot_status（select/購読）", "成功する（insert はしない）"],
+          ["ロボ状態を見る", "robot_status（select で参照）", "成功する（insert はしない。Realtime 購読＝サーバ側の変更をリアルタイム受信する仕組みは別タスクの範疇で、ここでは select で読めることだけ確認）"],
           ["停車点を追加", "stop_points（insert）", "失敗するのが正常（アプリからは入れない）"]
         ]},
         {"type": "p", "text": "**④ キー・env の確認。** 下のコマンドで service_role キーと .env の追跡状況を点検する。"},
-        {"type": "code", "lang": "bash", "code": "# 作業ツリーに管理者キーが紛れていないか（node_modules は自動除外）\ngit grep -i service_role\ngit grep -i NEXT_PUBLIC_SUPABASE_ANON_KEY\n\n# 履歴に過去混入していないか（文字列の出入りを追う）\ngit log -p -S service_role\n\n# .env.local が追跡されていないこと（何も出なければOK）\ngit ls-files | grep -i env"}
+        {"type": "code", "lang": "bash", "code": "# 作業ツリーに管理者キーが紛れていないか（node_modules は自動除外）\ngit grep -i service_role\ngit grep -i NEXT_PUBLIC_SUPABASE_ANON_KEY\n# キー本体は『service_role』という単語ではなく特徴的なプレフィックスで混入することが多いので併せて探す\ngit grep -iE 'eyJ|sb_secret_'\n\n# 履歴に過去混入していないか（文字列の出入りを追う）\ngit log -p -S service_role\n\n# .env.local が追跡されていないこと（何も出なければOK）\ngit ls-files | grep -i env"},
+        {"type": "callout", "variant": "warn", "label": "単語 service_role が無い＝安全、ではない", "text": "service_role キーの実値は『service_role』という単語ではなく、JWT 形式（`eyJ...`）や `sb_secret_...` 形式で混入することが多い。単語 service_role だけの検索ではキー本体を取りこぼす恐れがあるので、これらの特徴的なプレフィックスも合わせて探すこと。"}
       ]
     },
     {
@@ -130,7 +131,7 @@
           ["pg_policies", "今どんなポリシーが効いているかを一覧できる、PostgreSQL の確認用ビュー。"],
           ["publishable キー", "ブラウザに置いてよいキー(旧 anon)。RLSに必ず従う。本プロジェクトの正式名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。"],
           ["service_role キー", "RLSを無視して何でもできる管理者キー。絶対に公開・コミットしてはいけない。"],
-          ["ロール / role", "DB上の権限の種類。anon=未ログイン相当、postgres=管理者。SQL Editor は管理者、アプリは anon で動く。"],
+          ["ロール / role", "DB上の権限の種類。anon=未ログイン相当、postgres=管理者。SQL Editor は管理者(postgres)ロールで RLS をバイパスし、アプリは anon で動く。service_role キーも RLS を無視できるが、これは postgres ロールとは別経路（キー由来）。"],
           ["anon", "未ログインの匿名ユーザーに相当するロール。publishable キーはこのロールで動く。"],
           ["REST", "APIを URL で叩く仕組み。Supabase はテーブル操作を REST でも提供している。"],
           [".gitignore の ! ", "否定パターン。『このファイルだけは無視しない』という例外指定。"]

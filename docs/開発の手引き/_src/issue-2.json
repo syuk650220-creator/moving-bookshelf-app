@@ -72,7 +72,7 @@
           "**RLSがONなのにデータがいじれて当然と思い込む**：『ポリシーが無い操作は全部禁止』が原則。テーブルごとにできる操作が違うのが正しい状態。",
           "**robot_status の1行が消えた／無い**：このテーブルは id=1 の1行固定が前提。万一行が無い場合は schema.sql の該当1行（`insert into robot_status ...`）を“自分で探して”SQL Editor で実行すると復活する。SQL Editor は管理者権限なので insert ポリシーが無くても実行できる（アプリ経由では insert ポリシーが無いため不可、という違いに注意）。"
         ]},
-        {"type": "callout", "variant": "danger", "label": "作り直し（再実行）は安易にやらない", "text": "テーブルには外部キーの依存（books←loans/robot_calls、stop_points←robot_calls、robot_calls←robot_status）があるため、素朴な drop table books; は『他から参照されている』と順序エラーになります。作り直しは原則 PM（水谷）に依頼してください。どうしても自分の練習環境で消すときだけ、SQL Editor で drop table ... cascade;（依存ごと消す）を使う、という方針です。リポジトリに reset 用 SQL は同梱されていないため、再実行は慎重に。"}
+        {"type": "callout", "variant": "danger", "label": "作り直し（再実行）は安易にやらない", "text": "テーブルには外部キーの依存（books←loans/robot_calls、users←loans（loans.user_id が users.id を参照）、stop_points←robot_calls、robot_calls←robot_status）があるため、素朴な drop table books; は『他から参照されている』と順序エラーになります。なお users 自身も auth.users(id) を on delete cascade で参照しています。作り直しは原則 PM（水谷）に依頼してください。どうしても自分の練習環境で消すときだけ、SQL Editor で drop table ... cascade;（依存ごと消す）を使う、という方針です。リポジトリに reset 用 SQL は同梱されていないため、再実行は慎重に。"}
       ]
     },
     {
@@ -103,7 +103,7 @@
         {"type": "table", "headers": ["言葉", "かんたんな意味"], "rows": [
           ["テーブル", "データを入れる『表』。列（項目）と行（1件分のデータ）でできている"],
           ["主キー (primary key)", "その行を1つに特定する列。例: books.id。重複・空が許されない"],
-          ["外部キー (foreign key)", "別テーブルの行を指す列。例: loans.book_id は books.id を指す。だから参照中の本は消せない"],
+          ["外部キー (foreign key)", "別テーブルの行を指す列。例: loans.book_id は books.id を指す。本がアプリから消せない主因は delete ポリシーが1つも無いこと（RLSで全削除を拒否）。外部キーは、それとは別に『参照中（貸出履歴のある）の本を消そうとした時に限り追加で弾く』仕組み"],
           ["RLS (行レベルセキュリティ)", "テーブルごとに『誰がどの操作をしてよいか』を制御する仕組み。ポリシーが無い操作は全部禁止される"],
           ["policy (ポリシー)", "RLSの許可ルール。for select/insert/update/delete 単位で作る。無い操作は禁止＝delete は誰も作っていないので削除不可"],
           ["check 制約", "列に入れてよい値の制限。例: shelf_level は 1〜5、status は available か on_loan のみ"],
@@ -122,7 +122,7 @@
           "関連Issue：『本一覧』(#1) … ここで作った books テーブルを select して画面に出す。users が読めない件の理解が活きる。",
           "関連Issue：『本登録』(#5) / 『借りる・返す』(#7) … books/loans への insert・update を使う。今回読んだポリシー構成が前提。",
           "関連Issue：『ブリッジ』(#8) / 『座標変換』(#9) … robot_calls / robot_status / stop_points をロボ側から使う。",
-          "設計の基本：同フォルダの基本設計の『DBスキーマ』章、リポジトリの supabase/schema.sql（一次情報。迷ったらこれを読む）。",
+          "設計の一次情報は supabase/schema.sql。迷ったらまずこれを読む（docs/基本設計書.md は現状プレースホルダで中身が無いため、DBスキーマ章は存在しない）。",
           "環境変数のキー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正。.env.local は各自手作り。詳しくは同フォルダの『環境構築ガイド.html』。"
         ]}
       ]

@@ -110,7 +110,7 @@
             {
               "topic": "クライアントコンポーネントとは（'use client' / useState）",
               "why": "検索ボックスは入力でリアルタイムに状態が変わる。サーバーコンポーネントのままでは useState が使えないので、このページはクライアント側で動かす必要がある。",
-              "where": "node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md と 03-api-reference/01-directives/use-client.md"
+              "where": "node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md と node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md"
             },
             {
               "topic": "クライアントでの非同期データ取得をどこに置くか（useEffect の中 + async 関数）",
@@ -297,8 +297,9 @@
           "items": [
             "要件 C-01（タイトル/著者で本を絞り込む）。S-7 の正式名は『検索・タグ』だが、タグ検索は今回スコープ外（将来の別タスク）",
             "編集ファイルは `app/search/page.tsx` の1枚のみ。現状は S-7 のプレースホルダ（『タイトル/著者/タグで絞り込み(COULD)』）が入っている",
-            "共通の一覧UI部品について: 現時点で `components/` ディレクトリは未作成、`app/books/` には `[id]/page.tsx`（本詳細 S-2 のプレースホルダ）しか無い。本一覧 (S-1) の `app/books/page.tsx` も未作成。→ このIssueでは最小のリスト表示を自分で作る前提。もし先に S-1 が完成して共通部品ができていれば、それを import して再利用してよい",
+            "共通の一覧UI部品について: `components/` ディレクトリは存在するが中身は空（.gitkeep のみ）で、共通の一覧UI部品はまだ無い。`app/books/` には `[id]/page.tsx`（本詳細 S-2 のプレースホルダ）しか無い。本一覧 (S-1) は `app/page.tsx`（ルート /）で、`app/books/page.tsx` は存在しない。→ このIssueでは最小のリスト表示を自分で作る前提。もし先に S-1 が完成して共通部品ができていれば、それを import して再利用してよい",
             "関連Issue: 本一覧表示（S-1）／本の詳細（S-2）。一覧UIが共通化されたら、この検索画面の表示部分もそれに寄せると良い",
+            "タグ検索（今回スコープ外）をやるときは、同フォルダの『could-tags.html（タグ検索ガイド）』を参照。tags は text[] 配列型で contains / overlaps を使うなど書き方が異なる",
             "Supabase接続は `lib/supabaseClient.ts` の `supabase` を import して使う（URL/キーの2環境変数が前提）",
             "環境変数の作り方・トラブルは同フォルダの『環境構築ガイド.html』。DB列定義は `supabase/schema.sql`"
           ]

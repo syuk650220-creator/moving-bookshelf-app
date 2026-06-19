@@ -36,13 +36,13 @@
     {
       "heading": "進め方ステップ",
       "blocks": [
-        { "type": "p", "text": "まず現状把握から。`app/history/page.tsx` を開くと、いまは見出しだけのスタブ（`<h1>貸出履歴 / S-5</h1>`）で、データ取得コードも `\"use client\"` も付いていません。ここに少しずつ機能を足していきます。" },
+        { "type": "p", "text": "まず現状把握から。`app/history/page.tsx` を開くと、いまは見出しと説明文だけの簡易スタブ（`<h1>貸出履歴 / S-5</h1>` と、担当者が実装する旨の `<p>` のみ）で、データ取得コードも `\"use client\"` も付いていません。ここに少しずつ機能を足していきます。" },
         { "type": "steps", "items": [
           { "title": "1. テストデータを仕込む（土台）", "detail": "Supabase の SQL Editor を開き、まず books から1件 id をコピーする（select id, title from books limit 1;）。その id を使って loans に「20日前に借りて、まだ返していない」行を1件作る。ポイントは2つ: returned_at を入れない（=NULL=未返却）、borrowed_at に過去の日時を入れる。過去日時は now() - interval '20 days' のように書く（このSQL書き方は次の code ブロック参照）。これが無いと何を作っても警告が出ず、入口で詰まるので最優先。" },
           { "title": "2. 未返却データを取る（タイトル付き）", "detail": "S-5 で supabase から loans を取得する。条件は returned_at が NULL の行だけ（.is(\"returned_at\", null) のような絞り込みを調べる）。さらに loans は book_id で books を参照している（schema.sql の references books(id)）ので、select の文字列の中に books をネストして書くとタイトルも一緒に取れる。どう取得するかは下の research と「動作確認」を参照。" },
           { "title": "3. 経過日数としきい値を計算（置き場所も決める）", "detail": "lib/ に小さいファイルを新規作成する（例: lib/overdue.ts。supabaseClient.ts と同じ lib/ 配下）。そこに OVERDUE_DAYS = 14 のような定数と、isOverdue(borrowedAt: string): boolean のような判定関数を export し、history/page.tsx から import して使う。判定は『今 − borrowed_at が OVERDUE_DAYS 日を超えているか』。日時の比較方法は research のタイムゾーン項目を読んでから書く。" },
           { "title": "4. 画面に警告を出す（S-5）", "detail": "取得した各行を一覧表示し、isOverdue が true の行に「返却忘れかも」バッジや赤色を付ける。このプロジェクトの lib/supabaseClient.ts は NEXT_PUBLIC キーで作った『ブラウザ用クライアント』なので、まずは history/page.tsx の先頭に \"use client\" を付けたクライアントコンポーネントで取得するのが今ある仕組みに一番素直。useEffect で取得→useState に入れて表示、という流れを調べる。" },
-          { "title": "5. （余力で）全画面共通バッジへ昇格", "detail": "app/layout.tsx に直接フェッチを足すとレイアウト全体がクライアント化したり全ページで毎回取得が走る副作用がある。なので『未返却 N件』だけを表示する小さなクライアントコンポーネント（例: components/OverdueBadge.tsx を新規作成。現状 components/ ディレクトリはまだ無いので自分で作る）を用意し、layout から呼ぶ形に分離する。" }
+          { "title": "5. （余力で）全画面共通バッジへ昇格", "detail": "app/layout.tsx は現状 Server Component。ここに `\"use client\"` を付けてフェッチするとレイアウト全体がクライアント化してしまう（fetch を足しただけでクライアント化するわけではなく、クライアント化の原因は `\"use client\"`）。さらに Server のまま取得しても全ページで毎回取得が走るという副作用がある。なので『未返却 N件』だけを表示する小さなクライアントコンポーネント（例: components/OverdueBadge.tsx を新規作成。現状 components/ ディレクトリはまだ無いので自分で作る）を用意し、layout から呼ぶ形に分離する。" }
         ] },
         { "type": "code", "lang": "sql", "code": "-- ① books から本を1件確認して id をコピーする\nselect id, title from books limit 1;\n\n-- ② コピーした id を <BOOK_ID> に貼り、20日前の未返却 loans を1件作る\n--    returned_at を入れない＝未返却。borrowed_at に過去日時を入れるのがミソ\ninsert into loans (book_id, borrower_type, borrowed_at)\nvalues ('<BOOK_ID>', 'guest', now() - interval '20 days');\n\n-- 確認: 未返却（returned_at が NULL）の行が取れるか\nselect id, book_id, borrowed_at, returned_at from loans where returned_at is null;" },
         { "type": "callout", "variant": "tip", "label": "ブランチ名", "text": "作業ブランチは `feature/overdue-warning` に統一しましょう（main へ直 push 禁止 → ブランチで PR）。カードの id（`could-overdue`）は資料上の識別子で、ブランチ名とは別物です。" }
@@ -112,7 +112,7 @@
       "heading": "困ったら・参照",
       "blocks": [
         { "type": "ul", "items": [
-          "対象画面: S-5（貸出履歴）= `app/history/page.tsx`（現状は見出しだけのスタブ）。",
+          "対象画面: S-5（貸出履歴）= `app/history/page.tsx`（現状は見出し `<h1>` と説明文 `<p>` だけの簡易スタブで、データ取得も `\"use client\"` も無い）。",
           "DB スキーマ: `supabase/schema.sql` の loans（book_id references books(id) / borrowed_at timestamptz / returned_at timestamptz）。",
           "Supabase クライアント: `lib/supabaseClient.ts` の `supabase` を import（NEXT_PUBLIC キー＝ブラウザ用）。",
           "環境変数キーは `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` が正。`.env.local` は各自手作り。詳細は同フォルダ 環境構築ガイド.html。",

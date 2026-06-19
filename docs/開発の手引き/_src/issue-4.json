@@ -36,9 +36,9 @@
       "heading": "進め方ステップ",
       "blocks": [
         { "type": "steps", "items": [
-          { "title": "リポジトリを clone する", "detail": "ターミナルでプロジェクトを置きたいフォルダに移動し、`git clone <PMから共有されたURL>` を実行します。URL は PM（水谷）から共有されます。GitHub Desktop での Clone 手順や、`Permission denied` / `Repository not found` が出たときの対処は『環境構築ガイド.md』のステップ3に具体的に載っています。" },
+          { "title": "リポジトリを clone する", "detail": "ターミナルでプロジェクトを置きたいフォルダに移動し、`git clone <PMから共有されたURL>` を実行します。URL は PM（水谷）から共有されます。GitHub Desktop での Clone を含む clone 手順は『環境構築ガイド.md』の「3. ソースコードを自分のPCに持ってくる（clone）」に、`Permission denied` / `Repository not found` が出たときの対処は同ガイドの「7. うまくいかないとき（トラブルシューティング）」に載っています。" },
           { "title": "依存パッケージを入れる", "detail": "clone したフォルダに入って `npm install` を実行。`node_modules/`（ライブラリ本体）が作られます。これは Git 管理外なので各自で入れます。" },
-          { "title": "`.env.local` を手作りする", "detail": "プロジェクト直下（`package.json` と同じ場所）に `.env.local` という名前のファイルを新規作成し、`NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` の2行を書きます（値は Supabase の管理画面からコピー）。先頭のドットを忘れずに。書き終えたら次のステップへ。※`.env.local` を編集したら必ず再起動が必要（次のcalloutを参照）。詳しい手順と貼り付ける2行の中身は『環境構築ガイド.md』のステップ4にあります。" },
+          { "title": "`.env.local` を手作りする", "detail": "プロジェクト直下（`package.json` と同じ場所）に `.env.local` という名前のファイルを新規作成し、`NEXT_PUBLIC_SUPABASE_URL` と `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` の2行を書きます（値は Supabase の管理画面からコピー）。先頭のドットを忘れずに。書き終えたら次のステップへ。※`.env.local` を編集したら必ず再起動が必要（次のcalloutを参照）。詳しい手順と貼り付ける2行の中身は『環境構築ガイド.md』の「ステップ4. 設定ファイル `.env.local` を作る」の節にあります（同ガイドには npm install を指す「4.」という見出しも別にあるので、番号だけでなく見出し名で探してください）。" },
           { "title": "開発サーバーを起動して確認", "detail": "`npm run dev` を実行し、`http://localhost:3000` をブラウザで開く。トップに『本一覧（ホーム） / S-1』の見出しと説明文が出れば成功です。" },
           { "title": "フォルダ構成を“読む”", "detail": "`app/` の各 page.tsx、`lib/supabaseClient.ts`、`supabase/schema.sql`、`components/`、`docs/`、`robot/`、`.github/` をエディタで開いて、それぞれの役割を確認します。各 page.tsx は今は短いプレースホルダなので、構成を掴むのに最適です。" },
           { "title": "ルーティングの仕組みを理解する", "detail": "App Router では『フォルダ＝URL』です。`app/register/page.tsx` が `/register` になる、`app/books/[id]/page.tsx` の `[id]` は動的ルート（本ごとのID）、という対応を実物のフォルダと URL を見比べて確かめます。" },
@@ -51,7 +51,7 @@
       "heading": "📚 進めながら調べる・学ぶこと",
       "blocks": [
         { "type": "research", "items": [
-          { "topic": "`.env.local` の作り方・中身・再起動の落とし穴", "why": "`.env.local.example` は廃止済みで各自手作りするため。置き場所・キー名・再起動を1つでも外すと接続エラーになり、初心者が最もハマる場所だから。", "where": "`docs/開発の手引き/環境構築ガイド.md`（GitHub/VS Code で読む。整形済みをブラウザで読むなら同フォルダの `.html`）のステップ4。キー名は `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` が正（`..._ANON_KEY` は古い誤り）。" },
+          { "topic": "`.env.local` の作り方・中身・再起動の落とし穴", "why": "`.env.local.example` は廃止済みで各自手作りするため。置き場所・キー名・再起動を1つでも外すと接続エラーになり、初心者が最もハマる場所だから。", "where": "`docs/開発の手引き/環境構築ガイド.md`（GitHub/VS Code で読む。整形済みをブラウザで読むなら同フォルダの `.html`）の「ステップ4. 設定ファイル `.env.local` を作る」の節（番号だけでなく見出し名で探す。npm install の「4.」とは別物）。キー名は `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` が正（`..._ANON_KEY` は古い誤り）。" },
           { "topic": "`create-next-app` とは／対話で何を選ぶと何が入るか", "why": "この雛形がどう生成されたかを知ると、フォルダ構成や入っているライブラリの理由が腑に落ちるから。選択(TypeScript/Tailwind/App Router 等)自体が学びになる。", "where": "Next.js 入門の同梱docs `node_modules/next/dist/docs/01-app/01-getting-started/` 一式。create-next-app 専用ガイドが無い場合は、`package.json` の依存と実際に生成されたファイルの対応づけで確認する。最新16系は対話が変わっている可能性があるので必ず実物で確認。" },
           { "topic": "App Router のフォルダ構成（`app/` `layout.tsx` `page.tsx`）", "why": "どのファイルが画面になり、共通の枠（レイアウト）がどこかを理解しないと、画面実装Issueで手が止まるから。", "where": "画面とルーティング: `node_modules/next/dist/docs/01-app/01-getting-started/03-layouts-and-pages.md`。page.tsx の規約: `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/page.md`。" },
           { "topic": "ルーティングの仕組み（フォルダ＝URL）と動的ルート `[id]`", "why": "`/register` や `/books/<本のID>` がどのファイルに対応するかが分かると、リンクや遷移、本詳細画面の実装に直結するから。", "where": "フォルダ＝URLの本命: `03-layouts-and-pages.md` と `page.md`。動的ルート `[id]` の受け取り: `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/dynamic-routes.md`。画面間の移動(Link/遷移): `node_modules/next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md`。" },
@@ -63,7 +63,7 @@
     {
       "heading": "つまずきポイントと対処",
       "blocks": [
-        { "type": "callout", "variant": "warn", "label": ".env.local.example はもう無い", "text": "古い README には `cp .env.local.example .env.local` と書いてありますが、この example ファイルは廃止済みです。`.env.local` は『環境構築ガイド.md』のステップ4を見て自分で新規作成してください。コピー元ファイルはありません。" },
+        { "type": "callout", "variant": "warn", "label": ".env.local.example はもう無い", "text": "古いNext.jsテンプレや過去の資料では `cp .env.local.example .env.local` のようにコピー元ファイルから作るのが一般的でしたが、このプロジェクトには example ファイルの実体がありません（現行 README.md にもこのコマンドの記述は無い）。`.env.local` は『環境構築ガイド.md』の「ステップ4. 設定ファイル `.env.local` を作る」を見て各自で手作りしてください。なお `.gitignore` には名残の `!.env.local.example` 行が残っていますが、対応する実体ファイルは存在しません。" },
         { "type": "p", "text": "**接続エラー（undefined になる）**：原因の多くは ①`.env.local` が `package.json` と違う場所にある ②キー名が違う（正解は `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`、`..._ANON_KEY` は誤り）③編集後に再起動していない、の3つです。上から順に確認してください。" },
         { "type": "p", "text": "**README に `shadcn/ui` とあるが入っていない**：`package.json` の `dependencies` / `devDependencies` を開くと、入っているのは `tailwindcss` だけで `shadcn` 系のパッケージはありません。README の技術スタック欄は構想が先行した記述です。**実際に入っているライブラリは `package.json` が正**。迷ったら README ではなく `package.json` と環境構築ガイドを信じてください。" },
         { "type": "callout", "variant": "warn", "label": "資料の番号より画面名(S-◯)で照合", "text": "Issue番号や画面番号は古い資料だと食い違うことがあります（例: 旧資料の #4=本一覧 は誤り、現行は #4=リポジトリ雛形）。画面はファイルパスと S番号（S-1〜S-7、S-4は欠番）で照合するのが安全です。" }
@@ -113,7 +113,7 @@
           "Next.js 同梱docs（最新16系の現行仕様の確認先）: `node_modules/next/dist/docs/01-app/01-getting-started/`",
           "Supabase JS リファレンス: https://supabase.com/docs/reference/javascript/select"
         ]},
-        { "type": "callout", "variant": "study", "label": "READMEより package.json と環境構築ガイドが正", "text": "README は構想段階の記述（shadcn/ui、`.env.local.example` など）が残っています。実態と食い違うときは、入っているライブラリは `package.json`、環境構築の手順は `環境構築ガイド.md` を優先してください。" }
+        { "type": "callout", "variant": "study", "label": "READMEより package.json と環境構築ガイドが正", "text": "README には構想段階の記述（例: `shadcn/ui`）が残っており、実際に入っているライブラリと食い違うことがあります。また `.env.local.example` は過去のテンプレ慣習で、このプロジェクトには実体がありません（現行 README.md にコピーコマンドの記述は無い）。実態と食い違うときは、入っているライブラリは `package.json`、環境構築の手順は `環境構築ガイド.md` を優先してください。" }
       ]
     }
   ]

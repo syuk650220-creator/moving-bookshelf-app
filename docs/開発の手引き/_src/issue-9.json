@@ -14,9 +14,10 @@
       "heading": "このIssueは何？",
       "blocks": [
         {"type": "p", "text": "本を借りたい席が決まると、ロボはその席まで自走します。席の場所は DB の `stop_points`（停車ポイントの座標表）に `x, y, theta`（位置と向き）で入っています。このIssueは、その座標を **Nav2（ROS2 のナビゲーション基盤）が理解できる「ゴール」の形に変換する関数の素案** を作るのがゴールです。"},
-        {"type": "p", "text": "全体の流れは `#8 ブリッジ`（Supabase の `robot_calls` を Realtime 購読してロボに伝える）→ **このIssue #9 で座標をゴールに変換** → Nav2 がそこまで走る、という順番です。#9 は #8 の続きの「変換」部分だけを担当します。"},
+        {"type": "p", "text": "全体の流れは `#8 ブリッジ`（最小実装では Supabase の `robot_calls` の queued 行を**ポーリングで検知**してロボに伝える。Realtime 化は後段）→ **このIssue #9 で座標をゴールに変換** → Nav2 がそこまで走る、という順番です。robot/README ではブリッジに変換も含めて記述されていますが、本プロジェクトでは #8＝検知・状態更新、#9＝座標→PoseStamped 変換、と分担します（最終的な担当境界は PM 確認）。"},
         {"type": "callout", "variant": "study", "label": "これは下調べ中心のIssue", "text": "実機にマップを作らせて座標を確定させる工程（資料では W5＝プロジェクト第5週の『実機マッピング』と呼びます。具体的な日付はスケジュール表を参照）より前なので、いまは「実際の座標値」はまだありません。なので #9 は『仕組みを調べて、値が決まったらすぐ動かせる関数の雛形を用意しておく』のが目的です。完璧な実装より、考え方を整理してメモと素案を残すことを重視してください。"},
-        {"type": "callout", "variant": "warn", "label": "AGENTS.md の大前提", "text": "このプロジェクトの Next.js は最新版(16系)で学習データと挙動が違う可能性があります。今回はロボ側(Python/ROS2)中心なので Next.js には触れませんが、『答えを丸写しせず、必ず公式 docs を自分で開いて現行のやり方を確認する』という姿勢はロボ側でも同じです。"}
+        {"type": "callout", "variant": "warn", "label": "AGENTS.md の大前提", "text": "このプロジェクトの Next.js は最新版(16系)で学習データと挙動が違う可能性があります。今回はロボ側(Python/ROS2)中心なので Next.js には触れませんが、『答えを丸写しせず、必ず公式 docs を自分で開いて現行のやり方を確認する』という姿勢はロボ側でも同じです。"},
+        {"type": "callout", "variant": "warn", "label": "⚠️要確認(PM): OS/ディストロは未確定", "text": "このIssueは資料群と同じく ROS2 **Humble** 前提で書いています。ただし Humble の公式対応OSは Ubuntu 22.04(Jammy)で、24.04 に正式対応するのは Jazzy です。Pi5 セットアップガイド(hw-pi5-setup)の通り『24.04＋Humble / 22.04＋Humble / 24.04＋Jazzy のどれで行くか』は着手前に PM 確定待ちです。Jazzy に倒れると、tf_transformations の有無や Gazebo の版差など本Issueの記述も連動して変わる点に注意してください。"}
       ]
     },
     {
@@ -43,8 +44,8 @@
           {"title": "Nav2 のゴール送信の形を調べる", "detail": "Nav2 へは NavigateToPose というアクションでゴールを送ります。ゴールは PoseStamped 型（header に座標系名 frame_id と時刻 stamp、pose に位置と向き）。frame_id は通常 \"map\" です。型の構造をメモします。"},
           {"title": "theta → quaternion 変換の方法を調べる", "detail": "平面ヨー1軸なら数式は `qz = sin(theta/2)`, `qw = cos(theta/2)`, `qx = qy = 0` だけです。tf_transformations の quaternion_from_euler を使う手もありますが、入っているか先に確認します（つまずきポイント参照）。"},
           {"title": "stop_points から座標を引く方法を #8 と決める", "detail": "座標を DB から取る役を #8（ブリッジ）側にするか #9 側にするかを相談します。このIssueの既定は『取得は #8、#9 は x,y,theta を受け取って PoseStamped を返す純粋関数』です。違う結論なら理由をコメントに残します。"},
-          {"title": "(6a) 関数の雛形だけ書く", "detail": "robot/nav_goal.py に、関数名・引数(x,y,theta)・戻り値の型(PoseStamped)・docstring・中身は `# TODO` だけを書きます。まず『形』を先に作ります。中身はまだ空でOK。"},
-          {"title": "(6b) 数値変換部分だけ実装して単体確認", "detail": "theta → qz,qw の計算だけを標準ライブラリ(math)で書き、手元PC（ROS2 無し）で値を出して確認します。PoseStamped を組み立てる部分は Pi/ROS2 環境で後から埋めます。"},
+          {"title": "関数の雛形だけ書く（形を先に）", "detail": "robot/nav_goal.py に、関数名・引数(x,y,theta)・戻り値の型(PoseStamped)・docstring・中身は `# TODO` だけを書きます。まず『形』を先に作ります。中身はまだ空でOK。"},
+          {"title": "数値変換部分だけ実装して単体確認", "detail": "theta → qz,qw の計算だけを標準ライブラリ(math)で書き、手元PC（ROS2 無し）で値を出して確認します。PoseStamped を組み立てる部分は Pi/ROS2 環境で後から埋めます。"},
           {"title": "調べたことをメモにまとめてPRに添える", "detail": "座標系・NavigateToPose・quaternion変換・入力の決め方を箇条書きでまとめ、素案コードと一緒にPRを出します。Done のチェックと突き合わせます。"}
         ]}
       ]
@@ -60,7 +61,7 @@
           {"topic": "theta → quaternion の変換ユーティリティの有無を確認", "why": "tf_transformations の quaternion_from_euler は便利ですが、ROS2 Humble では標準で入っておらず別途インストール（python3-transforms3d 依存）が要ることがあります。知らずに import すると ModuleNotFoundError で必ず詰まります。", "where": "ros-humble-tf-transformations の有無は ROS Index（https://index.ros.org/p/tf_transformations/）と GitHub（https://github.com/DLu/tf_transformations）で確認。`apt list --installed | grep tf-transformations` で導入済みかも確認。入っていなければ apt で追加するか、平面ヨー1軸なら `qz=sin(theta/2), qw=cos(theta/2)` を自前計算します。"},
           {"topic": "stop_points から座標を引く方法（DB取得の担当分け）", "why": "座標を DB から取る役を #8 と #9 のどちらが持つかを決めないと、関数の入力が seat_id か x/y/theta かが定まらず Done 判定がぶれます。", "where": "Supabase JS は使わずロボ側は supabase-py（https://github.com/supabase/supabase-py）で `stop_points` を select します。列名は schema.sql（supabase/schema.sql の stop_points: id, label, x, y, theta）で正確に確認。既定は『取得は #8、#9 は x,y,theta を受け取る純粋関数』。"},
           {"topic": "実機が無い段階でシミュレータ(Gazebo)で試す選択肢", "why": "W5 の実機マッピングより前でも、シミュレータ上で NavigateToPose にゴールを送る一連を体験しておくと、本番で慌てません。ただしバージョン差で手順が変わります。", "where": "Nav2 公式の Getting Started（https://docs.nav2.org/getting_started/index.html）。TurtleBot3 + Gazebo の例が現行の Humble 版で Gazebo Classic / Ignition のどちらの手順かを確認してから始めます（版違いで詰まりやすいので、自分の環境の docs の版に合わせる）。"},
-          {"topic": "ロボ側コードの運用ルール（PCで書いて Pi で git pull）", "why": "AGENTS.md の方針では『PCの VS Code で書いて push → Pi で git pull して実行』ですが、この具体ルールは現状どの公式文書にも明文化されていません（CONTRIBUTING.md はアプリ向けの npm run dev 前提、robot/README.md は疎結合の原則のみ）。指示どおり開いても見つからず混乱します。", "where": "まず PM(水谷)に『この運用をどこに明文化するか』を確認。このIssueの作業の一部として robot/README.md に運用手順（PCで編集 → git push → Pi で git pull → 実行）を追記するのがおすすめです。CONTRIBUTING.md の基本サイクル（アプリ用）と混同しないこと。"}
+          {"topic": "ロボ側コードの運用ルール（PCで書いて Pi で git pull）", "why": "ロボ側は『PCの VS Code で書いて push → Pi で git pull して実行』という流れになります。CONTRIBUTING.md はアプリ向けの npm run dev 前提なので、この Pi 運用と混同しないことだけ注意します。", "where": "この運用は Pi5 セットアップガイド(hw-pi5-setup の『この先のワークフロー』)と #8(ブリッジ最小)で既に説明されています。まずそれらを読んでください。robot/README.md にはこの運用への1行リンクを足すと親切ですが、二重記述になるので本文の作り込みは不要です。"}
         ]}
       ]
     },
@@ -72,7 +73,7 @@
         {"type": "callout", "variant": "warn", "label": "frame_id の設定漏れでゴールが効かない", "text": "PoseStamped の header.frame_id を空のまま送ると、Nav2 はどの座標系のゴールか分からずゴールが無視されます。通常は \"map\" を入れ、stamp には現在時刻を入れます。これは初心者の最頻つまずきです。"},
         {"type": "callout", "variant": "warn", "label": "手元PC(Windows・ROS2無し)で関数全体を動かそうとする", "text": "PoseStamped など ROS2 の型を使う部分は ROS2 環境が無いと import できず ModuleNotFoundError になります。手元で確認できるのは theta→qz,qw の純粋な数値計算だけ。型を組み立てる部分は Pi/ROS2 環境で確認します（動作確認の節を参照）。"},
         {"type": "ul", "items": [
-          "Pi で直接コードを書いてしまう → 運用は『PCで書いて push → Pi で git pull』が基本（ただし現状は未明文化なので PM に確認しつつ robot/README.md に追記する）。",
+          "Pi で直接コードを書いてしまう → 運用は『PCで書いて push → Pi で git pull』が基本（Pi5 セットアップガイド hw-pi5-setup と #8 に明文化済み）。",
           "x と y を取り違える / 向きと位置を混同する → x,y は位置、theta は向き、と図を描いて整理する。",
           "quaternion の順番ミス → ライブラリやメッセージで (x,y,z,w) の並びが決まっている。型定義で順番を必ず確認する。"
         ]}
@@ -116,12 +117,12 @@
       "heading": "困ったら・参照",
       "blocks": [
         {"type": "ul", "items": [
-          "前提Issue: #8 ブリッジ（Supabase robot_calls を Realtime 購読 → ロボへ）。座標取得の担当分けは #8 と相談する。",
+          "前提Issue: #8 ブリッジ（最小実装では robot_calls の queued をポーリングで検知してロボへ渡す。Realtime 化は後段）。座標取得の担当分けは #8 と相談する。",
           "DBスキーマ: supabase/schema.sql の stop_points（id, label, x, y, theta）。列名は必ずここで確認。",
-          "ロボ側の置き場と方針: robot/README.md（疎結合の原則）。※『PCで書いて Pi で git pull』の具体運用はまだ未明文化なので、このIssueで robot/README.md に追記するのがおすすめ。PM(水谷)に確認のうえ進める。",
+          "ロボ側の置き場と方針: robot/README.md（疎結合の原則）。※『PCで書いて Pi で git pull』の具体運用は Pi5 セットアップガイド(hw-pi5-setup の『この先のワークフロー』)と #8 に明文化済み。robot/README.md へはその運用への1行リンクを足す程度でよい。",
           "Git の基本ルール: CONTRIBUTING.md（ただしこれはアプリ向けの npm run dev 前提サイクル。ロボ側の Pi 運用はここには無い点に注意）。",
           "Nav2 公式: https://docs.nav2.org/ / 座標規約 REP-103: https://www.ros.org/reps/rep-0103.html / supabase-py: https://github.com/supabase/supabase-py",
-          "環境変数や各自の .env.local の作り方は同フォルダの『環境構築ガイド.html』を参照（キー名は NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正）。"
+          "環境変数の考え方は『環境構築ガイド.html』を参照。ただしそこに載る NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY は Next.js アプリ用の命名で、NEXT_PUBLIC_ 接頭辞はブラウザ公開用。このIssueはロボ側Python(supabase-py)なので、使うキー名(NEXT_PUBLIC_ を外す等)は環境構築ガイド未記載のため PM(水谷)に確認する。値(publishable key)は同じでよい。"
         ]},
         {"type": "callout", "variant": "tip", "text": "Issue番号より『タスク名・画面名(S-◯)』で照合してください。古い資料は番号がずれていることがあります（このIssueは #9 席座標→Nav2ゴール変換）。"}
       ]

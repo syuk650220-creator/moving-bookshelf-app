@@ -57,12 +57,12 @@
         {"type": "callout", "variant": "study", "label": "ここが核心", "text": "答えのコードを写すのではなく、下の『何を/なぜ/どこで』を自分でたどって書くこと。AIには答えでなく道案内を頼む（AIコーチの使い方参照）。"},
         {"type": "research", "items": [
           {"topic": "stop_points を select して席選択UIを作る", "why": "席を選ばせるには、まずDBから席の一覧（id, label）を取ってくる必要がある。これがキュー insert の seat_id の元になる。", "where": "Supabase JS の select 公式: https://supabase.com/docs/reference/javascript/select （.select('id,label') の書き方・戻り値の data/error）。座標やラベルの列名は supabase/schema.sql の stop_points（id, label, x, y, theta）で確認。"},
-          {"topic": "robot_calls に insert する（book_id, seat_id, status, requested_by）", "why": "このIssューの本体。アプリ→ロボは『robot_calls に1行足す』だけで成立する（疎結合）。列名・値を間違えると入らない。", "where": "Supabase JS の insert 公式: https://supabase.com/docs/reference/javascript/insert 。入れる列の正解は supabase/schema.sql の robot_calls（seat_id は int で stop_points.id、book_id は uuid で books.id、status は queued/moving/arrived/done/canceled のいずれか、requested_by は text・NULL可・FK無し）。"},
+          {"topic": "robot_calls に insert する（book_id, seat_id, status, requested_by）", "why": "このIssueの本体。アプリ→ロボは『robot_calls に1行足す』だけで成立する（疎結合）。列名・値を間違えると入らない。", "where": "Supabase JS の insert 公式: https://supabase.com/docs/reference/javascript/insert 。入れる列の正解は supabase/schema.sql の robot_calls（seat_id は int で stop_points.id、book_id は uuid で books.id、status は queued/moving/arrived/done/canceled のいずれか、requested_by は text・NULL可・FK無し）。"},
           {"topic": "選んだ席を state に保存し、本＋席が揃うまでボタンを無効にする", "why": "React 未経験だと『クリックや選択でデータを覚える』『揃うまでボタンを押せなくする』のやり方で必ず詰まる。フォーム入力と state を繋ぐのが今回の山。", "where": "useState: https://react.dev/learn/state-a-components-memory 。イベントで state を更新: https://react.dev/learn/responding-to-events 。<select> など制御コンポーネント入門: https://react.dev/learn/reacting-to-input-with-state 。disabled は React の <button> に disabled 属性を渡すだけ（条件は『本と席が両方ある』）。"},
           {"topic": "キューを status で絞り created_at 昇順で取得（F-09）", "why": "『今並んでいる呼出』だけ見せたい＝queued/moving に絞り、古い順に並べる。絞り込みと並べ替えの書き方を知る必要がある。", "where": "Supabase JS のフィルタ（.in('status',[...])）と並べ替え（.order('created_at', { ascending: true })）: https://supabase.com/docs/reference/javascript/select と https://supabase.com/docs/reference/javascript/order 。スキーマの idx_calls_queue も created_at 順なので昇順で正しい。"},
-          {"topic": "データ更新時の今どきの作法（mutating data）を知る", "why": "Next.js 16 では『データを変える操作』の流儀（Server Actions など）が学習データと違う可能性。今の正解の形を一度見ておく。", "where": "node_modules/next/dist/docs/ の 01-app/.../07-mutating-data.md を開く。**ただし**: このIssューは学習目的で、まず**クライアント側（'use client' + supabase JS で insert/再select）で完結させてよい**。07-mutating-data.md は Server Actions 中心だが『今の流儀を知る』ための参考であって、必ず Server Actions に置き換える必要はない。どちらでやるか迷ったら、まずクライアント側で動かす。"},
-          {"topic": "'use client'（クライアントコンポーネント）", "why": "useState・onClick・onChange・ブラウザでの supabase 呼び出しはクライアント側でしか動かない。ファイル先頭の宣言が要る。", "where": "node_modules/next/dist/docs/ の 03-api-reference/01-directives/use-client.md と 01-app/.../05-server-and-client-components.md 。"},
-          {"topic": "（任意）Realtime で呼出キューを自動更新", "why": "他の人が呼んだ呼出も、リロードせず一覧に出せると気持ちいい。F-09 の発展。", "where": "Supabase Realtime: https://supabase.com/docs/guides/realtime 。**重要な前提**: 対象テーブル robot_calls を supabase_realtime パブリケーションに追加しないとイベントが一切飛ばない（Dashboard → Database → Replication で robot_calls を有効化）。コードを書くだけでは届かない、最頻出のつまずき。"}
+          {"topic": "データ更新時の今どきの作法（mutating data）を知る", "why": "Next.js 16 では『データを変える操作』の流儀（Server Actions など）が学習データと違う可能性。今の正解の形を一度見ておく。", "where": "node_modules/next/dist/docs/ の 01-app/.../07-mutating-data.md を開く。**ただし**: このIssueは学習目的で、まず**クライアント側（'use client' + supabase JS で insert/再select）で完結させてよい**。07-mutating-data.md は Server Actions 中心だが『今の流儀を知る』ための参考であって、必ず Server Actions に置き換える必要はない。どちらでやるか迷ったら、まずクライアント側で動かす。"},
+          {"topic": "'use client'（クライアントコンポーネント）", "why": "useState・onClick・onChange・ブラウザでの supabase 呼び出しはクライアント側でしか動かない。ファイル先頭の宣言が要る。", "where": "node_modules/next/dist/docs/01-app/03-api-reference/01-directives/use-client.md と node_modules/next/dist/docs/01-app/01-getting-started/05-server-and-client-components.md （どちらも 01-app/ 配下。先頭の 01-app/ を省くと実在しない）。"},
+          {"topic": "（任意）Realtime で呼出キューを自動更新", "why": "他の人が呼んだ呼出も、リロードせず一覧に出せると気持ちいい。F-09 の発展。", "where": "Supabase Realtime: https://supabase.com/docs/guides/realtime と Postgres Changes: https://supabase.com/docs/guides/realtime/postgres-changes 。**重要な前提その1（パブリケーション）**: 対象テーブル robot_calls を supabase_realtime パブリケーションに追加しないとイベントが一切飛ばない。UIは時期で変わるので**探し方ベース**で当てる（Table Editor のテーブル設定の Realtime トグル／ `Database > Publications` の `supabase_realtime` に `robot_calls` を追加。`Database > Replication` は古い名称で現行UIには無い/改称されていることがある。上部検索で「Realtime/Publications」を探すのが確実）。コードを書くだけでは届かない、最頻出のつまずき。**重要な前提その2（RLS）**: robot_calls は schema.sql で RLS が有効。postgres_changes は RLSで select できる行・テーブルだけ配信される。robot_calls には `sel_calls`（全員 select OK）があるので publishable(anon) キーでも届く。届かない場合はまずパブリケーションへの追加漏れを疑う。条件は https://supabase.com/docs/guides/realtime/postgres-changes の Authorization（認可）節で確認。"}
         ]}
       ]
     },
@@ -76,7 +76,7 @@
             ["robot_status や stop_points に insert しようとしてエラー", "この2つには insert ポリシーが無く、アプリ（匿名キー）からは追加できない仕様。アプリが insert するのは robot_calls だけ。"],
             ["でもシードSQLでは stop_points に入った？矛盾では？", "矛盾ではない。SQL Editor からの insert は管理者権限で実行されRLSを通り抜けて入る。アプリ（匿名キー）からは RLS に弾かれて入らない、という違い。"],
             ["insert は通った気がするのに data が空/エラーが分からない", "supabase の戻り値は { data, error }。error を必ず受けて画面に出す。何も表示しないと成功も失敗も分からない。"],
-            ["Realtime を購読したのに何も来ない", "robot_calls が supabase_realtime パブリケーションに未追加なのが定番原因。Dashboard → Database → Replication で robot_calls を有効化する。コードだけでは届かない。"],
+            ["Realtime を購読したのに何も来ない", "robot_calls が supabase_realtime パブリケーションに未追加なのが定番原因。Table Editor のテーブル設定の Realtime トグル、または `Database > Publications` の `supabase_realtime` に robot_calls を追加する（`Database > Replication` は古い名称で現行UIには無い/改称されていることがある。上部検索で「Realtime/Publications」を探す）。なお robot_calls は RLS 有効だが `sel_calls`（全員 select OK）があるので anon キーでも本来届く。コードだけでは届かない。"],
             ["onChange/onClick が動かない・useState が使えない", "ファイル先頭に 'use client' が無い／サーバーコンポーネントのまま書いている。クライアント宣言を確認。"]
           ]
         }
@@ -134,7 +134,7 @@
           "環境変数・Supabase接続でつまずいたら、同フォルダの『環境構築ガイド.html』を参照（キーは NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正）。",
           "DBの列名・値の正解は supabase/schema.sql を見る（推測しない）。"
         ]},
-        {"type": "callout", "variant": "ok", "label": "このIssュー単体で完成できる", "text": "S-2 もロボ側も未実装でOK。book_id は手で用意し、状態確認は Supabase の手入力で代用できる。まず専用ページで『選ぶ→呼ぶ→キューに出る』を完成させよう。"}
+        {"type": "callout", "variant": "ok", "label": "このIssue単体で完成できる", "text": "S-2 もロボ側も未実装でOK。book_id は手で用意し、状態確認は Supabase の手入力で代用できる。まず専用ページで『選ぶ→呼ぶ→キューに出る』を完成させよう。"}
       ]
     }
   ]

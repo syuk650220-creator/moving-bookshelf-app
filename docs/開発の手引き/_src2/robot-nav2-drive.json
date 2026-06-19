@@ -44,7 +44,7 @@
           {"title": "1. ROS2環境を用意してシミュを起動する", "detail": "Ubuntu 22.04（WSL2でも可）に ROS2 Humble・Nav2・TurtleBot3 を apt で入れる（パッケージ名は公式で確認）。つまずき所: ①新しいターミナルごとに `source /opt/ros/humble/setup.bash` を実行する ②`export TURTLEBOT3_MODEL=burger` を毎回設定する（未設定だとモデルが分からず起動しない） ③apt で入れるパッケージ群（Nav2 / TurtleBot3 / シミュ用）は版で名前が違うので公式の該当ページで確認。まず公式の Gazebo + Nav2 起動例どおりに動かす。"},
           {"title": "2. RVizで地図上に初期位置を与える", "detail": "Nav2 は今ロボがどこに居るかを AMCL（地図の上で自己位置を推定する仕組み）で推定する。起動直後はズレているので RViz の「2D Pose Estimate」（地図上で現在地と向きを手で教えるボタン）で実際の位置に合わせる。これをしないとゴールを送っても動かない／変な経路になる。"},
           {"title": "3. まず Simple Commander でゴールを1つ送る", "detail": "実装方式は **nav2_simple_commander の BasicNavigator（goToPose / isTaskComplete / getResult）に一本化** する。これは生のアクションを直接叩くより桁違いに易しい高レベルAPI。まずは座標をベタ書きで1つ送り、ロボが走って止まり getResult が succeeded になることを確認する。生のアクションクライアント(NavigateToPose)は仕組み理解用の参考にとどめる。"},
-          {"title": "4. 席座標→ゴール(PoseStamped)変換を組み込む", "detail": "ベタ書きを卒業し、`stop_points` の x,y,theta からゴールを作る。**この theta→quaternion 変換は下調べIssue(#9)の成果物**。#9 で作った変換関数を import して使う（無ければ平面ヨーの最小版 `qz=sin(theta/2), qw=cos(theta/2)` を自作）。frame_id は \"map\"、stamp は現在時刻を入れる。同じ変換を本格的に作り直さないこと。"},
+          {"title": "4. 席座標→ゴール(PoseStamped)変換を組み込む", "detail": "ベタ書きを卒業し、`stop_points` の x,y,theta からゴールを作る。**この theta→quaternion 変換は下調べIssue(#9)の成果物**。#9 で作った変換関数を import して使う（無ければ平面ヨーの最小版 `qx=0, qy=0, qz=sin(theta/2), qw=cos(theta/2)` の4成分すべてを自作）。frame_id は \"map\"、stamp は現在時刻を入れる。同じ変換を本格的に作り直さないこと。"},
           {"title": "5. DBから席座標を読んで送る（橋渡しと接続）", "detail": "supabase-py で `stop_points` から対象席の x,y,theta を取得 → 変換 → goToPose で送る、という流れにする。呼び出しの検知は別タスク「ブリッジ最小実装(#8)」が担当なので、本Issueは「席を1つ指定したら走る」が動けばよい。"},
           {"title": "6. 実機に進む（ストレッチ・マッピング完了後）", "detail": "実機マッピング（SLAMで地図を作る別作業）が終わっていることが前提。bringup（Nav2一式をまとめて起動する起動ファイル）で地図を読み込み、初期位置を合わせ、任意の1席へ送って自走・停止を確認する。安全のため最初は速度を落とし、緊急停止できる体制で。"}
         ]}
@@ -55,10 +55,10 @@
       "blocks": [
         {"type": "callout", "variant": "study", "text": "ここが核心。Nav2 は概念が多いので「何を・なぜ・どこで調べるか」を押さえてから手を動かすと迷子にならない。"},
         {"type": "research", "items": [
-          {"topic": "ROS2 Humble / Nav2 / TurtleBot3 のシミュ環境セットアップ（OS前提込み）", "why": "本Issュー最大の詰まり所。Ubuntu 22.04 前提で、apt パッケージ名・source・TURTLEBOT3_MODEL の export を正しくやらないと何も起動しない。Windows勢はWSL2方針も要確認。", "where": "TurtleBot3 e-Manual の Quick Start と Simulation（https://emanual.robotis.com/docs/en/platform/turtlebot3/quick-start/ と /simulation/）／ Nav2 Getting Started（https://docs.nav2.org/getting_started/index.html）／ ROS2 Humble インストール（https://docs.ros.org/en/humble/）。同フォルダの 環境構築ガイド.html はアプリ用でROS2は範囲外なので頼らない。"},
+          {"topic": "ROS2 Humble / Nav2 / TurtleBot3 のシミュ環境セットアップ（OS前提込み）", "why": "本Issue最大の詰まり所。Ubuntu 22.04 前提で、apt パッケージ名・source・TURTLEBOT3_MODEL の export を正しくやらないと何も起動しない。Windows勢はWSL2方針も要確認。", "where": "TurtleBot3 e-Manual の Quick Start と Simulation（https://emanual.robotis.com/docs/en/platform/turtlebot3/quick-start/ と /simulation/）／ Nav2 Getting Started（https://docs.nav2.org/getting_started/index.html）／ ROS2 Humble インストール（https://docs.ros.org/en/humble/）。同フォルダの 環境構築ガイド.html はアプリ用でROS2は範囲外なので頼らない。"},
           {"topic": "Nav2 Simple Commander API（BasicNavigator の goToPose / isTaskComplete / getResult）", "why": "初心者の入口を一本化するため。これでゴール送信・完了待ち・結果取得が短く書ける。内部で NavigateToPose アクションが呼ばれていることも理解する。", "where": "Nav2 公式 commander_api（https://docs.nav2.org/commander_api/index.html）。メソッドの現行シグネチャはこのページで最終確認する。"},
           {"topic": "地図(map)と自己位置推定(AMCL)・costmap の役割", "why": "ゴールを送っても動かない原因の多くは「初期位置を与えていない」「地図が無い」。AMCL=自己位置推定、costmap=障害物を避けるためのコスト地図、という役割を知ると原因切り分けができる。", "where": "Nav2 Concepts（https://docs.nav2.org/concepts/index.html）／ RViz の 2D Pose Estimate は Getting Started 内の手順。"},
-          {"topic": "theta（ヨー角・ラジアン）→ quaternion 変換と PoseStamped の組み立て", "why": "席の向きを正しく送るのに必須。ただしこの変換は下調べIssue(#9)の担当範囲なので、本Issueは成果物を使うのが基本。重複作業を避ける判断のために仕組みは理解しておく。", "where": "下調べIssue「席座標→Nav2ゴール変換の下調べ(#9)」の成果物をまず参照。式・APIは tf_transformations の quaternion_from_euler（**ROS2 Humbleでは要インストール: `sudo apt install ros-humble-tf-transformations`、環境により python3-transforms3d も**。入らない場合は平面ヨーの自前関数で代替可）。角度はROS2の規約(REP-103)で常にラジアン。"},
+          {"topic": "theta（ヨー角・ラジアン）→ quaternion 変換と PoseStamped の組み立て", "why": "席の向きを正しく送るのに必須。ただしこの変換は下調べIssue(#9)の担当範囲なので、本Issueは成果物を使うのが基本。重複作業を避ける判断のために仕組みは理解しておく。", "where": "下調べIssue「席座標→Nav2ゴール変換の下調べ(#9)」の成果物をまず参照。**平面ヨーだけなら `qx=0, qy=0, qz=sin(theta/2), qw=cos(theta/2)` の自前変換で十分（本Issueはこれを主導線にしてよい）**。tf_transformations の quaternion_from_euler を使う場合は apt に `ros-humble-tf-transformations` が無い環境もあり、transforms3d 依存で pip 導入が要ることもある（正確な導入手順は #9 の成果物・ROS2公式で要確認）。角度はROS2の規約(REP-103)で常にラジアン。"},
           {"topic": "ゴール到達/失敗の判定と許容誤差", "why": "「着いた」を自分で判定できないと合格基準が曖昧になる。結果が succeeded か、xy_goal_tolerance の範囲で止まったかを観測手段にする。", "where": "Nav2 commander_api の getResult / TaskResult（https://docs.nav2.org/commander_api/index.html）／ 許容誤差は goal_checker の設定（Nav2 Configuration）。"},
           {"topic": "Gazebo シミュで先に検証する流れ（TurtleBot3）", "why": "実機より安全・速く試行錯誤できる。シミュで成功してから実機に進むのが鉄則。", "where": "TurtleBot3 e-Manual Simulation（https://emanual.robotis.com/docs/en/platform/turtlebot3/simulation/）／ Nav2 Getting Started のシミュ手順。"}
         ]}
@@ -73,7 +73,7 @@
           ["シミュは起動するがロボが動かない", "起動直後は自己位置がズレている。RVizの 2D Pose Estimate で現在地と向きを与える。"],
           ["TurtleBot3 が起動しない", "`export TURTLEBOT3_MODEL=burger` の設定漏れが定番。毎ターミナルで必要。"],
           ["ゴールを送っても無視される", "PoseStamped の frame_id が空。\"map\" を入れ、stamp に現在時刻を入れる。"],
-          ["`import tf_transformations` でエラー", "Humble標準では入っていないことが多い。`sudo apt install ros-humble-tf-transformations`。代替は平面ヨーの自前計算 `qz=sin(theta/2), qw=cos(theta/2)`。"],
+          ["`import tf_transformations` でエラー", "apt に `ros-humble-tf-transformations` が無い環境も多く、transforms3d 依存で pip 導入が要るケースもある。**まずは平面ヨーの自前計算 `qx=0, qy=0, qz=sin(theta/2), qw=cos(theta/2)`（4成分すべて）で代替するのが確実**（本Issueはこれで十分）。tf_transformations を使う場合の apt/pip 手順は #9 の成果物・ROS2公式で要確認。"],
           ["theta の単位で事故る", "ROS2はラジアン統一（REP-103）。stop_points.theta も **ROS2と揃えるためラジアンで持つ想定（単位は #9 で確定）**。度で入れない。"],
           ["生アクションとSimple Commanderを混ぜて混乱", "初心者はまず Simple Commander(goToPose)一本で。生のアクションクライアントは仕組み理解用の参考。"]
         ]},
