@@ -72,9 +72,6 @@ if (errorMsg) {
 
   return (
     <main className="p-6">
-      {errorMsg && (
-  <p className="mb-4 text-red-500">{errorMsg}</p>
-)}
       <h1 className="text-2xl font-bold">{book.title}</h1>
       <p className="mt-1 text-gray-600">{book.author}</p>
       <p className="mt-1">{book.shelf_level}段目</p>
