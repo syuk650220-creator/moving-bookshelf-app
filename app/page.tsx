@@ -26,15 +26,17 @@ export default async function Home() {
       </nav>
 
       {(data ?? []).map((book) => (
-        <div key={book.id} className="border p-2 mt-2">
-          <p>{book.title}</p>
-          <p>{book.author}</p>
-          <p>{book.shelf_level}段目</p>
-          <p className={book.status === "available" ? "text-green-600" : "text-red-500"}>
-            {book.status === "available" ? "在庫あり" : "貸出中"}
-          </p>
-        </div>
-      ))}
+  <div key={book.id} className="border p-2 mt-2">
+    <a href={`/books/${book.id}`} className="font-bold text-blue-600 underline">
+      {book.title}
+    </a>
+    <p>{book.author}</p>
+    <p>{book.shelf_level}段目</p>
+    <p className={book.status === "available" ? "text-green-600" : "text-red-500"}>
+      {book.status === "available" ? "在庫あり" : "貸出中"}
+    </p>
+  </div>
+))}
     </main>
   );
 }
