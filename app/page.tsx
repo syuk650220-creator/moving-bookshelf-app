@@ -1,9 +1,17 @@
-import { supabase } from "@/lib/supabaseClient";
+import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
 
 export default async function Home() {
   const { data, error } = await supabase.from("books").select("*");
-  
+
+  if (error) {
+    return <p className="text-red-500">エラーが発生しました</p>;
+  }
+
+  if (!data || data.length === 0) {
+    return <p className="p-6 text-gray-500">本が登録されていません</p>;
+  }
+
   return (
     <main className="p-6">
       <h1 className="text-2xl font-bold">本一覧（ホーム） / S-1</h1>
@@ -17,28 +25,18 @@ export default async function Home() {
         </Link>
       </nav>
 
-      {error && (
-        <p className="mt-4 text-red-600">エラーが発生しました</p>
-      )}
-
-      {!error && data && data.length === 0 && (
-        <p className="mt-4 text-gray-600">本がありません</p>
-      )}
-
-      {!error && data && data.length > 0 && (
-      <ul className="mt-4 space-y-2">
-        {data?.map((book) => (
-          <li key={book.id} className="border p-3 rounded">
-            <div className="font-bold">{book.title}</div>
-            <div>{book.author}</div>
-            <div>{book.shelf_level}段目</div>
-            <div className={book.status === 'available' ? 'text-green-600' : 'text-orange-600'}>
-              {book.status === 'available' ? '在庫あり' : '貸出中'}
-            </div>
-          </li>
-        ))}
-      </ul>
-      )}
+      {(data ?? []).map((book) => (
+  <div key={book.id} className="border p-2 mt-2">
+    <a href={`/books/${book.id}`} className="font-bold text-blue-600 underline">
+      {book.title}
+    </a>
+    <p>{book.author}</p>
+    <p>{book.shelf_level}段目</p>
+    <p className={book.status === "available" ? "text-green-600" : "text-red-500"}>
+      {book.status === "available" ? "在庫あり" : "貸出中"}
+    </p>
+  </div>
+))}
     </main>
   );
 }
