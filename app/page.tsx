@@ -1,50 +1,26 @@
-'use client'
-import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
+import SearchBox from './searchbox'
 
-type Book = {
-  id: string
-  title: string
-  author: string
-  shelf_level: number
-  status: string
-}
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>
+}) {
+  const { q } = await searchParams
 
-export default function Home() {
-  const [books, setBooks] = useState<Book[]>([])
-const [errorMsg, setErrorMsg] = useState<string | null>(null)
-const [loading, setLoading] = useState(true)
-const [keyword, setKeyword] = useState('')
+  let query = supabase.from('books').select('*')
 
-useEffect(() => {
-  async function fetchBooks() {
-    const { data, error } = await supabase.from("books").select("*")
-    if (error) {
-      setErrorMsg("エラーが発生しました")
-    } else {
-      setBooks(data ?? [])
-    }
-    setLoading(false)
+  if (q) {
+    // タイトルまたは著者名で部分一致検索
+    query = query.or(`title.ilike.%${q}%,author.ilike.%${q}%`)
   }
-  fetchBooks()
-}, [])
 
-  if (errorMsg) {
-  return <p className="p-6 text-red-500">{errorMsg}</p>;
-}
+  const { data, error } = await query
 
-if (loading) {
-  return <p className="p-6 text-gray-500">読み込み中...</p>;
-}
-
-if (books.length === 0) {
-  return <p className="p-6 text-gray-500">本が登録されていません</p>;
-}
-
-const filteredBooks = books.filter((book) =>
-  book.title.includes(keyword) || book.author.includes(keyword)
-)
+  if (error) {
+    return <p className="text-red-500">エラーが発生しました</p>
+  }
 
   return (
     <main className="p-6">
@@ -59,26 +35,28 @@ const filteredBooks = books.filter((book) =>
         </Link>
       </nav>
 
-      <input
-  type="text"
-  placeholder="タイトル・著者で検索"
-  value={keyword}
-  onChange={(e) => setKeyword(e.target.value)}
-  className="mt-4 border rounded px-3 py-2 w-full"
-/>
+      <div className="mt-4">
+        <SearchBox />
+      </div>
 
-      {filteredBooks.map((book) => (
-  <div key={book.id} className="border p-2 mt-2">
-    <a href={`/books/${book.id}`} className="font-bold text-blue-600 underline">
-      {book.title}
-    </a>
-    <p>{book.author}</p>
-    <p>{book.shelf_level}段目</p>
-    <p className={book.status === "available" ? "text-green-600" : "text-red-500"}>
-      {book.status === "available" ? "在庫あり" : "貸出中"}
-    </p>
-  </div>
-))}
+      {(!data || data.length === 0) ? (
+        <p className="mt-4 text-gray-500">
+          {q ? '該当する本が見つかりませんでした' : '本が登録されていません'}
+        </p>
+      ) : (
+        data.map((book) => (
+          <div key={book.id} className="border p-2 mt-2">
+            <a href={`/books/${book.id}`} className="font-bold text-blue-600 underline">
+              {book.title}
+            </a>
+            <p>{book.author}</p>
+            <p>{book.shelf_level}段目</p>
+            <p className={book.status === 'available' ? 'text-green-600' : 'text-red-500'}>
+              {book.status === 'available' ? '在庫あり' : '貸出中'}
+            </p>
+          </div>
+        ))
+      )}
     </main>
-  );
+  )
 }
