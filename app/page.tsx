@@ -1,16 +1,50 @@
+'use client'
+import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
 
-export default async function Home() {
-  const { data, error } = await supabase.from("books").select("*");
+type Book = {
+  id: string
+  title: string
+  author: string
+  shelf_level: number
+  status: string
+}
 
-  if (error) {
-    return <p className="text-red-500">エラーが発生しました</p>;
-  }
+export default function Home() {
+  const [books, setBooks] = useState<Book[]>([])
+const [errorMsg, setErrorMsg] = useState<string | null>(null)
+const [loading, setLoading] = useState(true)
+const [keyword, setKeyword] = useState('')
 
-  if (!data || data.length === 0) {
-    return <p className="p-6 text-gray-500">本が登録されていません</p>;
+useEffect(() => {
+  async function fetchBooks() {
+    const { data, error } = await supabase.from("books").select("*")
+    if (error) {
+      setErrorMsg("エラーが発生しました")
+    } else {
+      setBooks(data ?? [])
+    }
+    setLoading(false)
   }
+  fetchBooks()
+}, [])
+
+  if (errorMsg) {
+  return <p className="p-6 text-red-500">{errorMsg}</p>;
+}
+
+if (loading) {
+  return <p className="p-6 text-gray-500">読み込み中...</p>;
+}
+
+if (books.length === 0) {
+  return <p className="p-6 text-gray-500">本が登録されていません</p>;
+}
+
+const filteredBooks = books.filter((book) =>
+  book.title.includes(keyword) || book.author.includes(keyword)
+)
 
   return (
     <main className="p-6">
@@ -25,7 +59,15 @@ export default async function Home() {
         </Link>
       </nav>
 
-      {(data ?? []).map((book) => (
+      <input
+  type="text"
+  placeholder="タイトル・著者で検索"
+  value={keyword}
+  onChange={(e) => setKeyword(e.target.value)}
+  className="mt-4 border rounded px-3 py-2 w-full"
+/>
+
+      {filteredBooks.map((book) => (
   <div key={book.id} className="border p-2 mt-2">
     <a href={`/books/${book.id}`} className="font-bold text-blue-600 underline">
       {book.title}
