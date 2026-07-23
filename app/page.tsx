@@ -24,7 +24,7 @@ export default async function Home({
 
   return (
     <main className="p-6">
-      <h1 className="text-2xl font-bold">本一覧（ホーム） / S-1</h1>
+      <h1 className="text-2xl font-bold">本一覧（ホーム）</h1>
 
       <nav className="mt-2 flex gap-4">
         <Link href="/register/auth" className="text-blue-600 underline">
