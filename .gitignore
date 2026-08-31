@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# 生成物（docs監査レポート）
+docs/開発の手引き/_audit.json
+
 # debug
 npm-debug.log*
 yarn-debug.log*

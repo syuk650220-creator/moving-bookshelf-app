@@ -12,7 +12,7 @@ for (const line of readFileSync(".env.local", "utf8").split(/\r?\n/)) {
 }
 
 const url = env.NEXT_PUBLIC_SUPABASE_URL;
-const key = env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const key = env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 console.log("URL:", url);
 console.log("KEY:", key ? key.slice(0, 16) + "…(" + key.length + " chars)" : "(なし)");
 if (!url || !key) {

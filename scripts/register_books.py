@@ -1,11 +1,39 @@
 import os
+import sys
+from pathlib import Path
+
 import requests
 from supabase import create_client, Client
 
-# Supabaseの接続情報（実際の値に書き換えてください）
-# 本番運用時は環境変数（os.environ）から取得することを推奨します
-SUPABASE_URL = "https://zljswppciglhvwjyquow.supabase.co"
-SUPABASE_KEY = "sb_publishable_Ebl1Rfth5d2_Kikh6nK2wA_PEM75NnJ"
+
+def load_env_local():
+    """プロジェクト直下の .env.local を読み、未設定の環境変数だけ取り込む"""
+    env_path = Path(__file__).resolve().parent.parent / ".env.local"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+# Supabaseの接続情報は環境変数から取得（アプリ本体と同じ .env.local を共用）
+load_env_local()
+SUPABASE_URL = os.environ.get("NEXT_PUBLIC_SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print(
+        "エラー：Supabaseの接続情報が見つかりません。\n"
+        "プロジェクト直下の .env.local に以下を設定してください（環境構築ガイド参照）：\n"
+        "  NEXT_PUBLIC_SUPABASE_URL=...\n"
+        "  NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=..."
+    )
+    sys.exit(1)
 
 # Supabaseクライアントの初期化
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
