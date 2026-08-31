@@ -1,6 +1,8 @@
 'use client'
 import { use, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
+import { getGuestName } from '@/lib/guestName'
 import Link from 'next/link'
 
 type Book = {
@@ -41,6 +43,7 @@ export default function BookDetailPage({
   params: Promise<{ id: string }>
 }) {
   const { id } = use(params)
+  const router = useRouter()
   const [book, setBook] = useState<Book | null>(null)
   const [loans, setLoans] = useState<Loan[]>([])
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -125,6 +128,14 @@ export default function BookDetailPage({
   // 「借りる」処理
   async function handleBorrow() {
     if (isProcessing) return
+
+    // S-6で保存したゲスト名を読み出す。未設定なら入力画面へ誘導する
+    const guestName = getGuestName()
+    if (!guestName) {
+      router.push('/login')
+      return
+    }
+
     setIsProcessing(true)
     setErrorMsg(null)
 
@@ -135,7 +146,7 @@ export default function BookDetailPage({
         .insert({
           book_id: id,
           borrower_type: 'guest',
-          guest_name: '仮の利用者',
+          guest_name: guestName,
         })
 
       if (insertError) {

@@ -1,11 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { getGuestName, setGuestName } from "@/lib/guestName";
 
 export default function Login() {
+  const router = useRouter();
+
   // 入力された名前と、エラーメッセージを管理する state
   const [name, setName] = useState("");
   const [error, setError] = useState("");
+
+  // 前回入力した名前が保存されていれば、入力欄にあらかじめ入れておく
+  // localStorage はサーバー側では読めないため、マウント後に1回だけ読む必要がある
+  useEffect(() => {
+    const saved = getGuestName();
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- 外部ストア(localStorage)からの初期値読み込みのため
+    if (saved) setName(saved);
+  }, []);
 
   // 名前が空（空白文字だけの場合も含む）かどうかを判定
   const isButtonDisabled = name.trim() === "";
@@ -20,11 +32,12 @@ export default function Login() {
     }
 
     setError("");
-    
-    // 今回のスコープでは画面遷移は作らないため、仮の動作としてコンソール出力とアラートを表示します
-    // ※実際の遷移処理や保存処理は次段（#7）で実装します
-    console.log("入力されたゲスト名:", name);
-    alert(`「${name}」として利用を開始します（※実際の画面遷移は次のIssueで実装）`);
+
+    // ゲスト名を localStorage に保存（借りる/返す(#7)でこの名前を使う）
+    setGuestName(name);
+
+    // 本一覧（ホーム）へ移動
+    router.push("/");
   };
 
   return (
