@@ -228,11 +228,13 @@ class Nav2Navigator:
 # =====================================================================
 
 class Bridge:
-    def __init__(self, supa: Supa, navigator, live: bool, arrive_hold: float):
+    def __init__(self, supa: Supa, navigator, live: bool, arrive_hold: float,
+                 arrive_timeout: float = 0.0):
         self.supa = supa
         self.nav = navigator
         self.live = live
         self.arrive_hold = arrive_hold
+        self.arrive_timeout = arrive_timeout
         self.seen: set[str] = set()      # Realtime とポーリングの二重処理を防ぐ
         self.current: dict | None = None
         self.busy = False
@@ -282,12 +284,7 @@ class Bridge:
             if ok:
                 self.set_call(cid, "arrived")
                 self.set_status("arrived", cid)
-                # TODO: ★未決事項★ 設計メモ §11 #8
-                #   arrived → done を「アプリの受取ボタン」で進めるのか、
-                #   一定時間で自動にするのか。S-2 の画面設計と関わるので、
-                #   アプリ担当が動き出す前に決めること。いまは時間で進めています。
-                time.sleep(self.arrive_hold)
-                self.set_call(cid, "done")
+                self.wait_for_receipt(cid)
                 self.set_status("returning", cid)
                 self.set_status("idle", None)
             else:
@@ -296,6 +293,45 @@ class Bridge:
         finally:
             self.busy = False
             self.current = None
+
+    # ---------------- 受取待ち ----------------
+
+    def wait_for_receipt(self, call_id: str):
+        """
+        到着後、アプリ(S-4)の「受け取った」ボタンで status='done' になるのを待つ。
+        （ゼミ決定 2026-09-01: arrived→done はアプリの受取ボタンで進める。設計メモ §11 #8）
+
+        ・dry-run では DB に arrived を書いていない＝アプリからボタンを押せないため、
+          arrive_hold 秒待って完了扱いにする
+        ・--arrive-timeout N を指定すると、押し忘れ対策として N 秒で自動 done にできる
+          （既定 0 = 無効。ロボはボタンが押されるまで席で待つ）
+        """
+        if not self.live:
+            print(f"    [受取] dry-run なので {self.arrive_hold:.0f} 秒後に完了扱いにします")
+            time.sleep(self.arrive_hold)
+            return
+
+        print("    [受取] アプリの「受け取った」ボタンを待っています…")
+        t0 = time.time()
+        while True:
+            try:
+                rows = self.supa.select("robot_calls", f"id=eq.{call_id}&select=status")
+                st = rows[0]["status"] if rows else None
+            except requests.RequestException as e:
+                print(f"    [warn] 受取確認の通信エラー（続行します）: {e}")
+                st = None
+
+            if st == "done":
+                print("    [受取] 受け取りを確認しました")
+                return
+            if st == "canceled":
+                print("    [受取] アプリ側でキャンセルされました")
+                return
+            if self.arrive_timeout > 0 and time.time() - t0 > self.arrive_timeout:
+                print(f"    [受取] {self.arrive_timeout:.0f} 秒待ちました → 自動で完了にします")
+                self.set_call(call_id, "done")
+                return
+            time.sleep(1.0)
 
     # ---------------- ポーリング ----------------
 
@@ -393,7 +429,10 @@ def main():
     ap.add_argument("--simulate", type=float, default=0.0,
                     help="走行を N 秒かかったことにする（Nav2 未接続のとき）")
     ap.add_argument("--arrive-hold", type=float, default=3.0,
-                    help="arrived → done までの待ち時間 [s]（未決事項）")
+                    help="dry-run 時のみ: arrived → 完了扱いまでの待ち [s]")
+    ap.add_argument("--arrive-timeout", type=float, default=0.0,
+                    help="到着後、受取ボタンをこの秒数待っても押されなければ自動で done にする"
+                         "（0=無効。既定はボタンが押されるまで待つ）")
     ap.add_argument("--nav2", action="store_true",
                     help="本物の Nav2 にゴールを送る（ラズパイ上でのみ）")
     ap.add_argument("--nav-timeout", type=float, default=180.0,
@@ -421,7 +460,7 @@ def main():
     else:
         navigator = LoggingNavigator(args.simulate)
 
-    bridge = Bridge(supa, navigator, args.live, args.arrive_hold)
+    bridge = Bridge(supa, navigator, args.live, args.arrive_hold, args.arrive_timeout)
 
     print(f"接続先 : {url}")
     print(f"モード : {'★LIVE（DBを書き換えます）★' if args.live else 'dry-run（ログのみ）'}")

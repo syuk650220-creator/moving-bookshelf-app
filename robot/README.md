@@ -82,4 +82,6 @@ sudo apt install -y python3-requests
 
 - Pi に置くのは **publishable（anon）キーだけ**。`service_role` キーは絶対に置かない
 - `robot_calls` には delete ポリシーが無いため、入れた行は API からは消せません（テスト行の掃除はダッシュボードから）
-- `arrived → done` の遷移条件（受取ボタン or 時間）は未決事項。現状は `--arrive-hold` 秒（既定3秒）で自動で進みます
+- `arrived → done` は**アプリ（S-4）の「受け取った」ボタン**で進みます（ゼミ決定 2026-09-01）。
+  押し忘れ対策で `--arrive-timeout N` を付けると N 秒で自動 done にできます（既定は無効）。
+  dry-run 時のみ `--arrive-hold` 秒（既定3秒）で自動的に完了扱いになります
