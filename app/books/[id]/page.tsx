@@ -292,6 +292,12 @@ export default function BookDetailPage({
 
       {/* 借りる・返すボタン（statusで出し分け） */}
       <div className="mt-4 flex gap-4">
+        <Link
+          href={`/robot-call?book=${id}`}
+          className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+        >
+          🤖 ロボを呼ぶ
+        </Link>
         {book.status === 'available' ? (
           <button
             className="bg-blue-500 text-white px-4 py-2 rounded disabled:opacity-50"
