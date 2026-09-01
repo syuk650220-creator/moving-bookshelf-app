@@ -1,0 +1,15 @@
+# 依存パッケージ
+#
+# ★ラズパイ（Ubuntu 24.04）では pip ではなく apt を使ってください★
+#     sudo apt install -y python3-serial python3-requests
+#   理由: PEP 668 によりシステム Python への pip install が拒否されること、
+#         ROS 2 のノードはシステム Python で動くため venv だと rclpy と同居できないこと。
+#
+# このファイルは Windows や venv で動かす人向けの参考です。
+#   python -m pip install -r requirements.txt
+
+pyserial>=3.5          # Arduino との USB シリアル通信
+requests>=2.31         # Supabase (PostgREST) への読み書き
+
+# 任意 ─ Realtime 購読を試すときだけ。無くてもポーリングで動きます。
+# supabase>=2.6
