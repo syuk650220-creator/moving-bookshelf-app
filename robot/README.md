@@ -16,8 +16,10 @@
 | ファイル | 役割 |
 |---|---|
 | `bookshelf_bridge.py` | ブリッジ本体（Issue #8 / #9）。`robot_calls` を1秒ポーリング（`--realtime` で購読も併用）し、席座標を Nav2 ゴールに変換、status を queued→moving→arrived→done と進める |
+| `manual_control.py` | 管理者画面（/admin）のラジコンモードの受け側。`robot_manual` を0.2秒ポーリングし、指令が1.2秒更新されなければ自動停止（デッドマン）。`--serial` で実機接続 |
 | `.env.example` | Supabase 接続情報のひな形。`.env` にコピーして値を入れる（`.env` はコミットされない） |
 | `sql/01_realtime_と_updated_at.sql` | schema.sql に足りない2つ（Realtime publication / updated_at 自動更新トリガ）を補う。SQL Editor で1回実行 |
+| `sql/02_manual_control.sql` | 手動操作用の `robot_manual` テーブル・RPC・ビュー。SQL Editor で1回実行 |
 | `requirements.txt` | 依存パッケージ（PC/venv 用の参考。**Pi では apt を使う**こと） |
 
 > メカナム走行系（`pi_controller.py` / `mecanum_node.py` など実機用ツール一式）は
@@ -50,6 +52,22 @@ python bookshelf_bridge.py --live --simulate 5   # 走行の代わりに5秒待�
 ```bash
 python3 bookshelf_bridge.py --live --nav2
 ```
+
+## 手動操作（管理者画面のラジコンモード）
+
+アプリの `/admin`（暗証番号つき）からロボを十字キーで動かせます。連携確認用です。
+
+```bash
+cd robot
+python manual_control.py            # PC: 受信した指令をログ表示（実機なし）
+python manual_control.py --serial   # Pi: 実機（Arduino 2枚）を動かす
+```
+
+- 事前に `sql/02_manual_control.sql` を SQL Editor で1回実行しておくこと
+- 安全設計: アプリはボタンを押している間だけ指令を更新し続け、Pi側は
+  「指令が1.2秒更新されなければ停止」（経過秒はDBの時計で判定＝クロックずれ無関係）。
+  実機側はさらに MecanumLink の0.5秒タイムアウトと Arduino のウォッチドッグが控える三重構え
+- ★`bookshelf_bridge.py --nav2` と同時に実機へつながないこと（指令の取り合いになる）
 
 ## Pi でのインストールについて
 

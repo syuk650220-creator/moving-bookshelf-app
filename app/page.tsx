@@ -33,6 +33,9 @@ export default async function Home({
         <Link href="/history" className="text-blue-600 underline">
           履歴を見る
         </Link>
+        <Link href="/admin/auth" className="text-blue-600 underline">
+          管理者画面
+        </Link>
       </nav>
 
       <div className="mt-4">
