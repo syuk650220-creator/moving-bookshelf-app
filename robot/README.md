@@ -65,12 +65,30 @@
 
 ## 3. Pi へのインストール
 
-### 3-1 コードを置く
+### 3-1 コードを置く（1 行で済みます）
+
+Pi で次を実行すると、apt の導入・clone（2 回目以降は pull）・古い `~/pi` の退避・`.env` の用意・udev の確認・`test_logic.py` までまとめてやります。
+**何度実行しても安全**です（消す操作はありません）。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/syuk650220-creator/moving-bookshelf-app/main/robot/pi_setup.sh | bash
+```
+
+2 回目以降は `bash ~/moving-bookshelf-app/robot/pi_setup.sh` です。main 以外のブランチを試すときは `BRANCH=feature/xxx` を頭に付けます。
+
+> **★Pi の中の何が変わるのか★** 変わるのは **Python ファイルの置き場所だけ**です。
+> 9/1 に scp した `~/pi/` は git とつながっていない「コピー」なので、更新が届きません。
+> そこで同じコード（＋受取ボタン待ち対応の新しいブリッジ）を GitHub から `~/moving-bookshelf-app/` に置き、
+> `~/pi/` は `~/pi_old_日付/` に改名して脇へどけます（**削除はしません**。`~/pi/.env` があれば `robot/.env` に引き継ぎます）。
+> ROS 2・slam_toolbox の設定・udev ルール・地図・Arduino の書き込みなど、Pi のほかの環境はいっさい触りません。
+
+手でやる場合は次のとおりです。
 
 ```bash
 sudo apt install -y git python3-serial python3-requests
 cd ~ && git clone https://github.com/syuk650220-creator/moving-bookshelf-app.git
 cd ~/moving-bookshelf-app/robot
+mv ~/pi ~/pi_old_20260901      # 古いコピーを脇へ（消さない）
 ```
 
 以後の更新は `cd ~/moving-bookshelf-app && git pull` です。
@@ -82,6 +100,8 @@ cd ~/moving-bookshelf-app/robot
 > Realtime 用の `supabase` パッケージも Pi には入れません。ポーリングだけで運用できる設計です。
 
 ### 3-2 接続情報
+
+`pi_setup.sh` が `.env` のひな形まで作ります。手でやる場合は次のとおりです。
 
 ```bash
 cp .env.example .env
