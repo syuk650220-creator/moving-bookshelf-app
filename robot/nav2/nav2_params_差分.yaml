@@ -1,0 +1,191 @@
+# =====================================================================
+#  Nav2 設定 ― 既定値から変えるところだけ  ★タスク C1★
+#
+#  これは「そのまま使う設定ファイル」ではありません。
+#  Nav2 の標準 nav2_params.yaml の該当する節に、下の値を反映してください。
+#  （全部を書いた完全版を配ると、触っていないパラメータまで
+#    こちらの想像で埋めることになり、かえって危険なため）
+#
+#  値の根拠:
+#    [測位] 05_技術調査/調査過程_自己位置推定コンペ/referee_verdict.md
+#    [会場] 05_技術調査/調査過程_会場デモ方針コンペ/referee_verdict_venue.md
+#    [車体] pi/robot_params.py（φ80mm・上限60rpm）
+#
+#  ★どの値も「実機で確かめるまでは仮」です★
+#  とくに alpha1〜5 と lookahead は床とタイヤで変わります。
+# =====================================================================
+
+
+# =====================================================================
+#  1. AMCL ― ★既定のままだと横移動で破綻します★
+# =====================================================================
+amcl:
+  ros__parameters:
+
+    # ★★★ 最重要 ★★★
+    # 既定は "nav2_amcl::DifferentialMotionModel"（差動二輪用）です。
+    # 横移動するメカナムでは、パーティクルの予測が横方向を想定しないため
+    # 横行するたびに自己位置が破綻します。[会場 B2]
+    robot_model_type: "nav2_amcl::OmniMotionModel"
+
+    # Omni モデルのノイズ。alpha5 は Omni 専用（並進方向のノイズ）で、
+    # Differential モデルには存在しません。
+    # 0.3 前後から始め、床テストの結果で詰めます。[会場 C]
+    alpha1: 0.3      # 回転から回転へのノイズ
+    alpha2: 0.3      # 並進から回転へのノイズ
+    alpha3: 0.3      # 並進から並進へのノイズ
+    alpha4: 0.3      # 回転から並進へのノイズ
+    alpha5: 0.3      # ★Omni 専用★ 横方向の並進ノイズ
+
+    # 更新の閾値。既定は 0.25m / 0.2rad で、±10cm を狙うには粗すぎます。
+    # 停車直前に更新が止まると、そのぶんの誤差がそのまま残ります。[会場 B2]
+    update_min_d: 0.1
+    update_min_a: 0.1
+
+    # 人混み対策の主力。既定のままでよい（下の beamskip は使わない）。
+    laser_model_type: "likelihood_field"
+    z_hit: 0.5
+    z_rand: 0.5
+
+    # ★do_beamskip は既定 false のまま。触らないこと★
+    # 「人を無視してくれる」という説明は公式ドキュメントに存在しません。
+    # 7月の A/B で効果を確認できた場合にだけ検討します。無検証の本番投入は禁止。[会場 B2]
+    do_beamskip: false
+
+
+# =====================================================================
+#  2. コントローラ ― 7動作の機体に合わせる
+# =====================================================================
+#
+#  ★なぜ RPP（Regulated Pure Pursuit）なのか★
+#    RPP は差動二輪用のコントローラで、vx と ω しか出しません。
+#    つまり「斜め移動」も「vy」も生成しないので、
+#    v1 の量子化（横移動を封印）と完全に噛み合います。
+#    DWB を Omni 設定で使うと vx・vy・ω を混ぜた指令を出すため、
+#    量子化でほとんどが捨てられ、カクカクになります。
+#
+#  ★なぜ RotationShim を上にかぶせるのか★
+#    「まずその場で向きを合わせ、それから直進する」という動きになります。
+#    これは Arduino が持っている7動作（前進・回転）そのものです。
+#
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+
+    # これ未満の指令は 0 とみなす閾値。
+    # robot_params.MIN_RPM = 10rpm = 0.042 m/s と合わせています。
+    # （2026-09-01 の --sweep 実測で、5rpm でも指令どおり回ることを確認。
+    #   ただし無負荷での測定なので、余裕を見て 10rpm としています）
+    # ここを大きくしすぎると最終進入の微調整ができず、
+    # 小さくしすぎると Arduino が回せない微小指令で唸り続けます。
+    min_x_velocity_threshold: 0.04
+    min_y_velocity_threshold: 0.04
+    min_theta_velocity_threshold: 0.10
+
+    # ---- 停止判定 ----
+    goal_checker_plugins: ["general_goal_checker"]
+    general_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      # ★既定は 0.25 で、要件（±10cm）を定義上満たしません★[測位 争点5 / 会場 B3]
+      xy_goal_tolerance: 0.08
+      yaw_goal_tolerance: 0.25
+      # ★true にすること★
+      # false だと、いったん入った後に押し戻されると未達成に戻り、
+      # 目標付近で行ったり来たりします。
+      stateful: true
+
+    # ---- 経路追従 ----
+    controller_plugins: ["FollowPath"]
+    FollowPath:
+      plugin: "nav2_rotation_shim_controller::RotationShimController"
+      primary_controller: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+
+      # 経路の向きとの差がこれ以上なら、まず回頭だけする [rad]（45°）
+      angular_dist_threshold: 0.785
+      forward_sampling_distance: 0.5
+      rotate_to_heading_angular_vel: 0.6
+      max_angular_accel: 1.0
+      simulate_ahead_time: 1.0
+
+      # ---- ここから下は RPP 本体 ----
+      # 上限 0.25 m/s = 60 rpm（φ80mm）。[会場 B3]
+      # ※φ100mm 前提の資料では 48 rpm と書かれていますが誤りです。
+      desired_linear_vel: 0.25
+
+      lookahead_dist: 0.4
+      min_lookahead_dist: 0.25
+      max_lookahead_dist: 0.7
+      use_velocity_scaled_lookahead_dist: true
+      lookahead_time: 1.5
+
+      # ★最終進入★ 会場方針「最終1mは 0.10〜0.15 m/s」をこの2つで作ります。
+      #   0.10 m/s = 24 rpm。
+      min_approach_linear_velocity: 0.10
+      approach_velocity_scaling_dist: 1.0
+
+      # 曲率がきついところで減速する（メカナムは横滑りしやすい）
+      use_regulated_linear_velocity_scaling: true
+      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_speed: 0.10
+
+      # ★回ってから進む★ 量子化と噛み合う設定
+      use_rotate_to_heading: true
+      rotate_to_heading_min_angle: 0.5
+      allow_reversing: false      # 人混みで後退させない [会場 D3]
+
+      use_collision_detection: true
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+
+
+# =====================================================================
+#  3. 速度の最終的な蓋
+# =====================================================================
+#  コントローラが何を出しても、ここで頭打ちにします。
+#  Arduino 側にも MAX_RPM=150 の蓋がありますが、そこに頼らないこと。
+velocity_smoother:
+  ros__parameters:
+    # [vx, vy, ω]  ← vy は 0.0（v1 では横移動を使わない）
+    max_velocity: [0.25, 0.0, 1.0]
+    min_velocity: [-0.25, 0.0, -1.0]
+    max_accel: [0.5, 0.0, 2.0]
+    max_decel: [-0.5, 0.0, -2.0]
+
+
+# =====================================================================
+#  4. リカバリ動作 ― 人混みでは削る
+# =====================================================================
+#  会場方針: 後退(backup)・その場旋回(spin) は接触リスクなので使わない。
+#  wait とコストマップのクリアだけ残します。[会場 D3]
+#
+#  ★これは behavior_server のプラグイン一覧を減らすだけでは足りません★
+#  ビヘイビアツリーの XML からも該当ノードを外す必要があります。
+#  既定の navigate_to_pose_w_replanning_and_recovery.xml をコピーして
+#  Spin / BackUp を削り、bt_navigator の default_nav_to_pose_bt_xml で指定します。
+behavior_server:
+  ros__parameters:
+    behavior_plugins: ["wait"]
+    wait:
+      plugin: "nav2_behaviors::Wait"
+
+
+# =====================================================================
+#  5. 反映したあとの確認手順
+# =====================================================================
+#
+#  1. TF が出ているか
+#       ros2 run tf2_tools view_frames
+#       → map → odom → base_link → laser がつながっていること
+#
+#  2. 横移動しても自己位置が飛ばないか（OmniMotionModel の確認）
+#       RViz で AMCL のパーティクルを表示 → 手で横に押して観察
+#
+#  3. 停止精度（★これが本番の合格条件★）
+#       席の前にテープを貼り、10本走らせて実測。
+#       合格 = 10本中8本が ±10cm 以内。[会場 B3]
+#       ★必ず最終進入速度（0.10〜0.15 m/s = 24〜36 rpm）で測ること★
+#
+#  4. cmd_vel と実際の動きが合っているか
+#       ros2 topic echo /cmd_vel   と   ros2 topic echo /wheel_rpm
+#       を並べて、量子化がパタパタしていないか見る。
+#       切り替わりが毎周期起きているならヒステリシスを強める
+#       （mecanum_node の hysteresis / hold_sec）

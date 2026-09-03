@@ -17,7 +17,7 @@
       "blocks": [
         {"type": "p", "text": "ゴール: **1件の呼出を最後まで処理できるブリッジ** を作る。ロボ側プログラム(Python)が Supabase の `robot_calls` から `queued`(処理待ち)の呼出を1件取り出し、**`moving`→`arrived`→`done`** と状態を進める。同時にロボの現在地ともいえる `robot_status` も更新して『今ロボが何をしているか』を常に正しく表す。"},
         {"type": "p", "text": "なぜ必要か: アプリとロボは **直接通信しない**(疎結合)。アプリは `robot_calls` に呼出を insert し `robot_status` を購読するだけ。ロボ側は `robot_calls` を見て動き、`robot_status` を更新する。この『テーブルを介した橋渡し』の本体がこのブリッジ。ここが動かないとアプリの呼出ボタンを押してもロボは一切反応しない。"},
-        {"type": "callout", "variant": "study", "label": "前提タスク: #8 ブリッジ最小", "text": "本Issueは『#8 ブリッジ最小』(前提タスク)を発展させるもの。#8 ではまずポーリングで `queued` を取得し、最終形は Realtime購読(robot/README.md が定める持ち場)。本Issueでもまずポーリングで進めてよい(後で Realtime に差し替え)。最小実装の成果物は『robot/ 配下に Supabase へ接続して `queued` を1件取得するコード』。**ただし現状 robot/ には README.md のプレースホルダしか無く、接続コードはまだ存在しない。** 最小実装がまだ無い/別ブランチなら、まず『接続して queued を1件 select できる』ところを自分で作るのが最初の一歩(下のステップ2)。"}
+        {"type": "callout", "variant": "study", "label": "前提タスク: #8 ブリッジ最小", "text": "本Issueは『#8 ブリッジ最小』(前提タスク)を発展させるもの。#8 ではまずポーリングで `queued` を取得し、最終形は Realtime購読(robot/README.md が定める持ち場)。本Issueでもまずポーリングで進めてよい(後で Realtime に差し替え)。最小実装の成果物は『robot/ 配下に Supabase へ接続して `queued` を1件取得するコード』。**現状（2026-09-03）: `robot/bookshelf_bridge.py` に #8・本Issue・#9 の内容（ポーリング＋任意の Realtime、状態機械、robot_status 更新、席座標→Nav2 ゴール）が実装済み。** 本ページは『仕組みを理解して自分で読める・直せる』ための教材として使う。動かし方は `robot/README.md`。"}
       ]
     },
     {
@@ -127,7 +127,7 @@
       "blocks": [
         {"type": "ul", "items": [
           "要件: **F-09**(呼出まわり。正確な文言は基本設計で最終確認する。基本設計書.md は現状プレースホルダ)。",
-          "前提タスク: **#8 ブリッジ最小**(Supabase 接続＋queued 1件取得まで。まずポーリング、最終形は Realtime購読)。現状 robot/ は README.md のプレースホルダのみなので、接続コードが無ければ本Issueでステップ2から作る。",
+          "前提タスク: **#8 ブリッジ最小**(Supabase 接続＋queued 1件取得まで。まずポーリング、最終形は Realtime購読)。実装は `robot/bookshelf_bridge.py`（動かし方は `robot/README.md`）。",
           "関連: アプリ側『呼出』画面(robot_calls に insert する側)、LED 制御タスク、Nav2 ナビゲーションタスク。",
           "DBスキーマの一次情報: supabase/schema.sql(robot_calls / robot_status の check 制約・外部キーがここに書いてある)。",
           "接続情報・キーの考え方: 環境構築ガイドはアプリ用 NEXT_PUBLIC_ キー(値はフロントと同じ publishable key)の説明のみで、**ロボ側 Python(supabase-py)で使う環境変数名は未記載**。正式な変数名は PM(水谷)に確認し、チーム内で1つに統一する(#8 の困ったら・参照も同様)。",

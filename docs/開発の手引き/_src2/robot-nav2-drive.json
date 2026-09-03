@@ -39,9 +39,9 @@
     {
       "heading": "進め方ステップ",
       "blocks": [
-        {"type": "callout", "variant": "danger", "label": "最初に：開発OSの前提を確認", "text": "ROS2 Humble / Gazebo / TurtleBot3 は **Ubuntu 22.04 が前提**。このプロジェクトのアプリ開発は Windows 11（環境構築ガイド.html も Windows/Mac 前提でROS2は範囲外）なので、Windowsしか無い人は **WSL2 で Ubuntu 22.04 を入れる** か、別のUbuntu PC / Raspberry Pi で作業する必要がある。ここで方針を決めずに進めると最初の30分で詰まる。"},
+        {"type": "callout", "variant": "danger", "label": "最初に：開発OSの前提を確認", "text": "実機の Pi は **Ubuntu 24.04 + ROS2 Jazzy**（確定）。シミュで練習するなら同じ **Ubuntu 24.04 + Jazzy** を使う（TurtleBot3 は e-Manual の Jazzy タブに従う。Jazzy の Gazebo は新しい gz 系で、Humble 時代の Gazebo Classic とは手順が違う）。このプロジェクトのアプリ開発は Windows 11（環境構築ガイド.html も Windows/Mac 前提でROS2は範囲外）なので、Windowsしか無い人は **WSL2 で Ubuntu 24.04 を入れる** か、別のUbuntu PC / Raspberry Pi で作業する必要がある。ここで方針を決めずに進めると最初の30分で詰まる。"},
         {"type": "steps", "items": [
-          {"title": "1. ROS2環境を用意してシミュを起動する", "detail": "Ubuntu 22.04（WSL2でも可）に ROS2 Humble・Nav2・TurtleBot3 を apt で入れる（パッケージ名は公式で確認）。つまずき所: ①新しいターミナルごとに `source /opt/ros/humble/setup.bash` を実行する ②`export TURTLEBOT3_MODEL=burger` を毎回設定する（未設定だとモデルが分からず起動しない） ③apt で入れるパッケージ群（Nav2 / TurtleBot3 / シミュ用）は版で名前が違うので公式の該当ページで確認。まず公式の Gazebo + Nav2 起動例どおりに動かす。"},
+          {"title": "1. ROS2環境を用意してシミュを起動する", "detail": "Ubuntu 24.04（WSL2でも可）に ROS2 Jazzy・Nav2・TurtleBot3 を apt で入れる（パッケージ名は公式で確認）。つまずき所: ①新しいターミナルごとに `source /opt/ros/jazzy/setup.bash` を実行する ②`export TURTLEBOT3_MODEL=burger` を毎回設定する（未設定だとモデルが分からず起動しない） ③apt で入れるパッケージ群（Nav2 / TurtleBot3 / シミュ用）は版で名前が違うので公式の該当ページで確認。まず公式の Gazebo + Nav2 起動例どおりに動かす。"},
           {"title": "2. RVizで地図上に初期位置を与える", "detail": "Nav2 は今ロボがどこに居るかを AMCL（地図の上で自己位置を推定する仕組み）で推定する。起動直後はズレているので RViz の「2D Pose Estimate」（地図上で現在地と向きを手で教えるボタン）で実際の位置に合わせる。これをしないとゴールを送っても動かない／変な経路になる。"},
           {"title": "3. まず Simple Commander でゴールを1つ送る", "detail": "実装方式は **nav2_simple_commander の BasicNavigator（goToPose / isTaskComplete / getResult）に一本化** する。これは生のアクションを直接叩くより桁違いに易しい高レベルAPI。まずは座標をベタ書きで1つ送り、ロボが走って止まり getResult が succeeded になることを確認する。生のアクションクライアント(NavigateToPose)は仕組み理解用の参考にとどめる。"},
           {"title": "4. 席座標→ゴール(PoseStamped)変換を組み込む", "detail": "ベタ書きを卒業し、`stop_points` の x,y,theta からゴールを作る。**この theta→quaternion 変換は下調べIssue(#9)の成果物**。#9 で作った変換関数を import して使う（無ければ平面ヨーの最小版 `qx=0, qy=0, qz=sin(theta/2), qw=cos(theta/2)` の4成分すべてを自作）。frame_id は \"map\"、stamp は現在時刻を入れる。同じ変換を本格的に作り直さないこと。"},
@@ -55,10 +55,10 @@
       "blocks": [
         {"type": "callout", "variant": "study", "text": "ここが核心。Nav2 は概念が多いので「何を・なぜ・どこで調べるか」を押さえてから手を動かすと迷子にならない。"},
         {"type": "research", "items": [
-          {"topic": "ROS2 Humble / Nav2 / TurtleBot3 のシミュ環境セットアップ（OS前提込み）", "why": "本Issue最大の詰まり所。Ubuntu 22.04 前提で、apt パッケージ名・source・TURTLEBOT3_MODEL の export を正しくやらないと何も起動しない。Windows勢はWSL2方針も要確認。", "where": "TurtleBot3 e-Manual の Quick Start と Simulation（https://emanual.robotis.com/docs/en/platform/turtlebot3/quick-start/ と /simulation/）／ Nav2 Getting Started（https://docs.nav2.org/getting_started/index.html）／ ROS2 Humble インストール（https://docs.ros.org/en/humble/）。同フォルダの 環境構築ガイド.html はアプリ用でROS2は範囲外なので頼らない。"},
+          {"topic": "ROS2 Jazzy / Nav2 / TurtleBot3 のシミュ環境セットアップ（OS前提込み）", "why": "本Issue最大の詰まり所。Ubuntu 24.04 + Jazzy 前提で、apt パッケージ名・source・TURTLEBOT3_MODEL の export を正しくやらないと何も起動しない。Windows勢はWSL2方針も要確認。", "where": "TurtleBot3 e-Manual の Quick Start と Simulation（https://emanual.robotis.com/docs/en/platform/turtlebot3/quick-start/ と /simulation/）／ Nav2 Getting Started（https://docs.nav2.org/getting_started/index.html）／ ROS2 Jazzy インストール（https://docs.ros.org/en/jazzy/）。同フォルダの 環境構築ガイド.html はアプリ用でROS2は範囲外なので頼らない。"},
           {"topic": "Nav2 Simple Commander API（BasicNavigator の goToPose / isTaskComplete / getResult）", "why": "初心者の入口を一本化するため。これでゴール送信・完了待ち・結果取得が短く書ける。内部で NavigateToPose アクションが呼ばれていることも理解する。", "where": "Nav2 公式 commander_api（https://docs.nav2.org/commander_api/index.html）。メソッドの現行シグネチャはこのページで最終確認する。"},
           {"topic": "地図(map)と自己位置推定(AMCL)・costmap の役割", "why": "ゴールを送っても動かない原因の多くは「初期位置を与えていない」「地図が無い」。AMCL=自己位置推定、costmap=障害物を避けるためのコスト地図、という役割を知ると原因切り分けができる。", "where": "Nav2 Concepts（https://docs.nav2.org/concepts/index.html）／ RViz の 2D Pose Estimate は Getting Started 内の手順。"},
-          {"topic": "theta（ヨー角・ラジアン）→ quaternion 変換と PoseStamped の組み立て", "why": "席の向きを正しく送るのに必須。ただしこの変換は下調べIssue(#9)の担当範囲なので、本Issueは成果物を使うのが基本。重複作業を避ける判断のために仕組みは理解しておく。", "where": "下調べIssue「席座標→Nav2ゴール変換の下調べ(#9)」の成果物をまず参照。**平面ヨーだけなら `qx=0, qy=0, qz=sin(theta/2), qw=cos(theta/2)` の自前変換で十分（本Issueはこれを主導線にしてよい）**。tf_transformations の quaternion_from_euler を使う場合は apt に `ros-humble-tf-transformations` が無い環境もあり、transforms3d 依存で pip 導入が要ることもある（正確な導入手順は #9 の成果物・ROS2公式で要確認）。角度はROS2の規約(REP-103)で常にラジアン。"},
+          {"topic": "theta（ヨー角・ラジアン）→ quaternion 変換と PoseStamped の組み立て", "why": "席の向きを正しく送るのに必須。ただしこの変換は下調べIssue(#9)の担当範囲なので、本Issueは成果物を使うのが基本。重複作業を避ける判断のために仕組みは理解しておく。", "where": "下調べIssue「席座標→Nav2ゴール変換の下調べ(#9)」の成果物をまず参照。**平面ヨーだけなら `qx=0, qy=0, qz=sin(theta/2), qw=cos(theta/2)` の自前変換で十分（本Issueはこれを主導線にしてよい）**。tf_transformations の quaternion_from_euler を使う場合は apt に `ros-jazzy-tf-transformations` が無い環境もあり、transforms3d 依存で pip 導入が要ることもある（正確な導入手順は #9 の成果物・ROS2公式で要確認）。角度はROS2の規約(REP-103)で常にラジアン。"},
           {"topic": "ゴール到達/失敗の判定と許容誤差", "why": "「着いた」を自分で判定できないと合格基準が曖昧になる。結果が succeeded か、xy_goal_tolerance の範囲で止まったかを観測手段にする。", "where": "Nav2 commander_api の getResult / TaskResult（https://docs.nav2.org/commander_api/index.html）／ 許容誤差は goal_checker の設定（Nav2 Configuration）。"},
           {"topic": "Gazebo シミュで先に検証する流れ（TurtleBot3）", "why": "実機より安全・速く試行錯誤できる。シミュで成功してから実機に進むのが鉄則。", "where": "TurtleBot3 e-Manual Simulation（https://emanual.robotis.com/docs/en/platform/turtlebot3/simulation/）／ Nav2 Getting Started のシミュ手順。"}
         ]}
@@ -68,12 +68,12 @@
       "heading": "つまずきポイントと対処",
       "blocks": [
         {"type": "table", "headers": ["症状・勘違い", "原因と対処"], "rows": [
-          ["WindowsでROS2が動かない", "ROS2 Humble は Ubuntu 22.04 前提。WSL2でUbuntuを入れるか別PC/Piを使う。アプリ用の環境構築ガイドはROS2を含まない。"],
-          ["`ros2` コマンドが見つからない／パッケージが無い", "ターミナルごとに `source /opt/ros/humble/setup.bash` が必要。`~/.bashrc` に書いておくと毎回不要。"],
+          ["WindowsでROS2が動かない", "ROS2 Jazzy は Ubuntu 24.04 前提。WSL2でUbuntuを入れるか別PC/Piを使う。アプリ用の環境構築ガイドはROS2を含まない。"],
+          ["`ros2` コマンドが見つからない／パッケージが無い", "ターミナルごとに `source /opt/ros/jazzy/setup.bash` が必要。`~/.bashrc` に書いておくと毎回不要。"],
           ["シミュは起動するがロボが動かない", "起動直後は自己位置がズレている。RVizの 2D Pose Estimate で現在地と向きを与える。"],
           ["TurtleBot3 が起動しない", "`export TURTLEBOT3_MODEL=burger` の設定漏れが定番。毎ターミナルで必要。"],
           ["ゴールを送っても無視される", "PoseStamped の frame_id が空。\"map\" を入れ、stamp に現在時刻を入れる。"],
-          ["`import tf_transformations` でエラー", "apt に `ros-humble-tf-transformations` が無い環境も多く、transforms3d 依存で pip 導入が要るケースもある。**まずは平面ヨーの自前計算 `qx=0, qy=0, qz=sin(theta/2), qw=cos(theta/2)`（4成分すべて）で代替するのが確実**（本Issueはこれで十分）。tf_transformations を使う場合の apt/pip 手順は #9 の成果物・ROS2公式で要確認。"],
+          ["`import tf_transformations` でエラー", "apt に `ros-jazzy-tf-transformations` が無い環境も多く、transforms3d 依存で pip 導入が要るケースもある。**まずは平面ヨーの自前計算 `qx=0, qy=0, qz=sin(theta/2), qw=cos(theta/2)`（4成分すべて）で代替するのが確実**（本Issueはこれで十分）。tf_transformations を使う場合の apt/pip 手順は #9 の成果物・ROS2公式で要確認。"],
           ["theta の単位で事故る", "ROS2はラジアン統一（REP-103）。stop_points.theta も **ROS2と揃えるためラジアンで持つ想定（単位は #9 で確定）**。度で入れない。"],
           ["生アクションとSimple Commanderを混ぜて混乱", "初心者はまず Simple Commander(goToPose)一本で。生のアクションクライアントは仕組み理解用の参考。"]
         ]},
@@ -89,7 +89,7 @@
           "**到着精度**: xy_goal_tolerance の範囲で止まっていればOK（ピクセル単位で合わせない）。",
           "**実機（ストレッチ）**: マッピング済み地図で任意の1席へ自走・停止。"
         ]},
-        {"type": "callout", "variant": "warn", "label": "下のコマンドの前提", "text": "以下の確認コマンドは Nav2 が起動済みであることが大前提。別ターミナルで Nav2(bringup)とシミュを起動し、`source /opt/ros/humble/setup.bash` を通しておくこと。何も起動せず叩くと「何も出ない」で詰まる。"},
+        {"type": "callout", "variant": "warn", "label": "下のコマンドの前提", "text": "以下の確認コマンドは Nav2 が起動済みであることが大前提。別ターミナルで Nav2(bringup)とシミュを起動し、`source /opt/ros/jazzy/setup.bash` を通しておくこと。何も起動せず叩くと「何も出ない」で詰まる。"},
         {"type": "code", "lang": "bash", "code": "# Nav2のナビゲーション用アクションが居るか確認（一覧に navigate_to_pose が出ればOK）\nros2 action list\n\n# そのアクションの型・接続状況を見る\nros2 action info /navigate_to_pose\n\n# 自己位置推定(AMCL)の現在の推定値を見る（初期位置を与えた後に値が出る）\nros2 topic echo /amcl_pose"}
       ]
     },
@@ -97,7 +97,7 @@
       "heading": "🤖 AIコーチの使い方",
       "blocks": [
         {"type": "callout", "variant": "tip", "text": "AIには「答えのコード」を書かせず、考え方・調べ場所・つまずき切り分けを聞くと学びになる。下をコピペして使う。"},
-        {"type": "code", "lang": "text", "code": "あなたはROS2/Nav2に詳しいコーチです。答えの完成コードは書かず、考え方と「どの公式docsのどこを見るか」で導いてください。\n\nやりたいこと: ROS2 Humble + Nav2 + TurtleBot3(Gazeboシミュ)で、ある席の座標(x,y,theta)まで自走して停止させたい。実装は nav2_simple_commander の BasicNavigator(goToPose) を使う方針です。OSは Ubuntu 22.04 / WSL2 を想定。\n\n質問1: シミュ環境を起動して最初のゴールを1つ送るまでの全体手順を、つまずき所(source・TURTLEBOT3_MODEL・2D Pose Estimate)込みでステップに分けて教えてください。各ステップで見るべき公式docsページ名も。\n質問2: ゴールを送っても動かないときの原因切り分けを、確認すべき順番で教えてください(答えのコードは不要)。"}
+        {"type": "code", "lang": "text", "code": "あなたはROS2/Nav2に詳しいコーチです。答えの完成コードは書かず、考え方と「どの公式docsのどこを見るか」で導いてください。\n\nやりたいこと: ROS2 Jazzy + Nav2 + TurtleBot3(Gazeboシミュ)で、ある席の座標(x,y,theta)まで自走して停止させたい。実装は nav2_simple_commander の BasicNavigator(goToPose) を使う方針です。OSは Ubuntu 24.04 / WSL2 を想定。\n\n質問1: シミュ環境を起動して最初のゴールを1つ送るまでの全体手順を、つまずき所(source・TURTLEBOT3_MODEL・2D Pose Estimate)込みでステップに分けて教えてください。各ステップで見るべき公式docsページ名も。\n質問2: ゴールを送っても動かないときの原因切り分けを、確認すべき順番で教えてください(答えのコードは不要)。"}
         ]
       },
     {
@@ -128,8 +128,9 @@
           "前提データ: 席の座標(stop_points の x/y/theta)は **「サンプルデータを投入する(#3)」** で席3つがシード投入される（要件 F-09 周辺・画面なし）。テーブル自体は「Supabaseにテーブルを作成する(#2)」で作成済み。",
           "関連Issue: **「ブリッジ最小実装（robot_calls購読）(#8)」** — 呼び出しの検知側。本Issueの「走らせる」とつなげる相手。",
           "関連（物理・別作業）: **実機マッピング（SLAMで地図を作る）** — 実機自走（本Issueのストレッチ）の前提。完了するまで実機Doneはブロックされる。",
-          "ROS2/Nav2 公式: docs.nav2.org（commander_api / concepts / getting_started）、docs.ros.org/en/humble、TurtleBot3 e-Manual。",
-          "環境: 同フォルダの 環境構築ガイド.html は **アプリ用（Windows/Mac）でROS2は対象外**。ROS2はUbuntu 22.04/WSL2を各自用意。"
+          "**現状（2026-09-03）**: `robot/bookshelf_bridge.py` に Nav2 へのゴール送出（`--nav2`、BasicNavigator 使用）と #9 の変換関数 `goal_from_stop_point` が実装済み。残りは実機での地図・席座標・較正と実走の確認（`robot/README.md` §5〜§7）。",
+          "ROS2/Nav2 公式: docs.nav2.org（commander_api / concepts / getting_started）、docs.ros.org/en/jazzy、TurtleBot3 e-Manual。",
+          "環境: 同フォルダの 環境構築ガイド.html は **アプリ用（Windows/Mac）でROS2は対象外**。ROS2はUbuntu 24.04 + Jazzy/WSL2を各自用意。"
         ]}
       ]
     }
