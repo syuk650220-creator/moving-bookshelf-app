@@ -366,6 +366,7 @@ Nav2 の設定は [`nav2/nav2_params_差分.yaml`](nav2/nav2_params_差分.yaml)
 | 目標付近で行ったり来たりする | `stateful: true` になっていない |
 | 唸るだけで進まない | `min_x_velocity_threshold` が `MIN_RPM` 相当（0.04）より小さい |
 | Pi 上で `sed -i` が Permission denied | scp 時代の名残で `~/pi` が読み取り専用。`git clone` した `~/moving-bookshelf-app` を使う |
+| **片側の車輪だけ 0.3 秒ほど遅れて動き出す** | `robot_params.SEND_PERIOD` が 0.02（50 Hz）になっている。Arduino の受信ブロックは Ts=20 ms ごとに 1 パケットしか取り出さないので、同じ周期で送ると取りこぼしがバッファに溜まって片側だけ遅れる。**0.04（25 Hz）が正**（2026-09-03 実機で確認） |
 
 より詳しい症状表は Arduino の通信仕様書 §11（OneDrive `simulink/arduino/README_raspberrypi.md`）にあります。
 
