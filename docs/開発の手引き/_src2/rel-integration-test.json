@@ -42,7 +42,7 @@
       "heading": "進め方ステップ",
       "blocks": [
         {"type": "steps", "items": [
-          {"title": "Step0：前提が揃っているかゲート確認（ここを通らなければ着手しない）", "detail": "本Issueは『各部品が出来てから』の最終合流です。(1) ブリッジ（robot_calls を Realtime 購読→Nav2 ゴール変換）、(2) LED 制御、(3) 席座標→Nav2 ゴール変換、(4) アプリの呼出/貸出/返却 がそれぞれ完了していることを確認します。robot/ はまだプレースホルダなので、ブリッジの『起動コマンド・ログの見方』はハード制御班の手順書か該当Issueから入手してください（本書には載っていません）。あわせて『status を done まで進めるか arrived で止めるか』『誰が status を進めるか（ブリッジ）』をチームで一度決めてメモします。"},
+          {"title": "Step0：前提が揃っているかゲート確認（ここを通らなければ着手しない）", "detail": "本Issueは『各部品が出来てから』の最終合流です。(1) ブリッジ（robot_calls を Realtime 購読→Nav2 ゴール変換）、(2) LED 制御、(3) 席座標→Nav2 ゴール変換、(4) アプリの呼出/貸出/返却 がそれぞれ完了していることを確認します。ブリッジの起動コマンドとログの見方は `robot/README.md` にあります（`python bookshelf_bridge.py --live --simulate 5` で走行なしの通し確認、`--live --nav2` で実走）。あわせて『status を done まで進めるか arrived で止めるか』『誰が status を進めるか（ブリッジ）』をチームで一度決めてメモします。"},
           {"title": "Step1：開始状態をそろえる（シード＆リセット）", "detail": "テストは毎回同じスタート地点から始めないと再現できません。Supabase の SQL Editor（service_role 権限で動く）を使い、books に available の本を入れ、stop_points に席を1件以上入れ、robot_status の id=1 を state=idle に update します。このとき current_call_id も一緒に null に update します（schema.sql では robot_status.current_call_id が robot_calls への外部キーで、前回テストの呼出 id が残ったままだと『idle なのに前の呼出を指している』状態になり、2回目以降の通しでおかしくなるため）。stop_points / users / robot_status はアプリ（anon キー）からは insert できない（RLS に insert ポリシーが無い）ので、必ず SQL Editor で行います。books は insert 可。座標 x/y/theta は実機の地図に対応する実測値なので、ハード制御班・席座標Issue担当に確認して埋めます。"},
           {"title": "Step2：アプリ側だけで『呼ぶ』を確認", "detail": "ブラウザでアプリを開き、本を選んで席へ呼びます。Supabase の Table Editor で robot_calls を開き、新しい行が status=queued / book_id・seat_id が正しい値で入っているかを目視します。ここで増えなければアプリ↔Supabase の段で詰まっています（切り分け早見表参照）。"},
           {"title": "Step3：ブリッジが拾うかを確認（Realtime のつなぎ目）", "detail": "ロボ側でブリッジを起動した端末の出力（ログ）を見ます。robot_calls の新規行を受信したログが出るか、robot_calls.status が moving に、robot_status.state が moving に変わるかを Table Editor で確認します。受信しない場合は Realtime がそのテーブルで有効化されているか（後述）を疑います。"},
@@ -79,7 +79,7 @@
         {"type": "callout", "variant": "warn", "label": "設計書を開いても中身が無い", "text": "docs/基本設計書.md と docs/要件定義書.md は現状『後で貼る』のプレースホルダで状態遷移も要件も書かれていない。状態遷移・enum を確認したいときは supabase/schema.sql の CHECK 制約を見る（整備後は設計書を参照）。"},
         {"type": "callout", "variant": "warn", "label": "毎回スタート状態が違うと再現できない／削除できない仕様", "text": "RLS に DELETE ポリシーが無く誰も削除できない（全削除事故防止の仕様）。だからリセットは『消す』ではなく『update で戻す』。具体：robot_status は insert 不可・id=1 の1行固定なので、その行を state=idle に update し、同時に current_call_id も null に update する（state だけ戻すと前回の current_call_id が残り、次の通しで idle なのに前の呼出を指したままになる。新しく insert しようとすると失敗する）。books はテストで on_loan になった行を status=available に update。loans はテストで作った行の returned_at を update で戻す（または無視して新しいテストとして進める）。これらは SQL Editor で行う。"},
         {"type": "callout", "variant": "warn", "label": "stop_points / users / robot_status はアプリから insert できない", "text": "schema.sql 上、stop_points・robot_status・users には insert ポリシーが無い（select / 一部 update のみ）。さらに users は auth.users への外部キー。つまり『席を入れる』『利用者を入れる』はアプリ（anon キー）からは不可で、Supabase の SQL Editor（service_role）で行う必要がある。席が入れられない＝壊れた、ではなく仕様。robot_calls と books と loans は insert 可。"},
-        {"type": "callout", "variant": "tip", "label": "ブリッジのログがどこか分からない", "text": "robot/ はまだプレースホルダ。ブリッジの起動コマンドとログの出る場所はハード制御班の手順書／該当Issueにある。本書には載せていないので、ブリッジ担当に聞いて Step3 の確認場所を事前に押さえておく。"}
+        {"type": "callout", "variant": "tip", "label": "ブリッジのログがどこか分からない", "text": "起動コマンドとログの見方は `robot/README.md`。ブリッジは起動した端末に `[呼出]` `[db]` `[nav]` の行を出すので、Step3 の確認はその端末を見る。"}
       ]
     },
     {
@@ -138,7 +138,7 @@
           "環境変数のキー名（NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY が正）と .env.local の作り方：同フォルダの 環境構築ガイド.html",
           "疎通確認：まず Supabase ダッシュボードの Table Editor で行数を見る。scripts/check-supabase.mjs を使うなら先にキー名を PUBLISHABLE_KEY に直す（別タスクで起票推奨）",
           "Realtime 有効化：https://supabase.com/docs/guides/realtime ／ ダッシュボードの Database→Publications",
-          "Nav2 / ROS2 のログとナビゲーション：https://docs.nav2.org/ ／ https://docs.ros.org/en/humble/",
+          "Nav2 / ROS2 のログとナビゲーション：https://docs.nav2.org/ ／ https://docs.ros.org/en/jazzy/",
           "関連Issue（前提・先に完了が必要）：ブリッジ実装、LED制御、席座標→Nav2ゴール変換、アプリの呼出/貸出/返却画面。ブリッジの起動コマンド・ログの場所はハード制御班の手順書へ"
         ]},
         {"type": "callout", "variant": "study", "label": "進め方の哲学", "text": "詰まったら答えを聞くのでなく『どのテーブルのどの値を見れば層を絞れるか』を考える。境界（テーブル）を見る癖がつけば、3ヶ月後に問題が出ても自分で切り分けられます。"}
