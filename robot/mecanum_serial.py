@@ -13,7 +13,9 @@ Arduino 2枚との USB シリアル通信（ライブラリ）
 
 ★守らなければならない6つの決まり（README_raspberrypi.md §7）と、このファイルの対応★
 
-  1. 20〜50ms ごとに送り続ける  → _sender_loop が独立したスレッドで 50Hz を回す
+  1. 20〜50ms ごとに送り続ける  → _sender_loop が独立したスレッドで SEND_PERIOD ごと（既定 40ms = 25Hz）に回す
+                                   ★20ms にすると Arduino の取り出し（Ts ごとに 1 パケット）と同じ速さになり、
+                                     取りこぼしが溜まって片側だけ遅れる。robot_params.SEND_PERIOD の注記を参照★
   2. 連番を必ず1ずつ増やす      → 送信のたびに seq を +1
   3. 検算に 0x5A を混ぜる       → build_packet の CHK_SEED
   4. 両方の基板に同じものを送る → 1つのパケットを2つのポートへ書く
@@ -319,7 +321,7 @@ class MecanumLink:
     # ---------------- 指令 ----------------
 
     def set_command(self, motion: int, rpm: float):
-        """次に送る指令を差し替える。実際の送信は 50Hz のスレッドが行う。"""
+        """次に送る指令を差し替える。実際の送信は SEND_PERIOD ごとのスレッドが行う。"""
         with self._lock:
             self._motion = motion
             self._rpm = rpm

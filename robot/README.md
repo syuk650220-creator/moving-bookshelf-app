@@ -17,7 +17,7 @@
 | ロボ側の計算機 | Raspberry Pi 5 ／ Ubuntu Server 24.04 ＋ ROS 2 Jazzy（ros-base） |
 | Pi のアドレス | `ssh cse_c@cse-c-ubuntu2404.local`（IP は DHCP で変わる。`ROS_DOMAIN_ID=7`） |
 | 走行制御 | Arduino Nano 33 IoT ×2（左＝FL/RL、右＝FR/RR）。Simulink 製ファーム **v2**（テレメトリ 24 バイト・内蔵 IMU LSM6DS3・暴走防止）が書き込み済み。ソースは OneDrive の `ものづくりゼミ/simulink/arduino/` |
-| Pi ↔ Arduino | USB シリアル 115200。指令 7 バイトを 50 Hz で両基板へ、報告 24 バイトが 10 Hz で各基板から |
+| Pi ↔ Arduino | USB シリアル 115200。指令 7 バイトを 25 Hz（`robot_params.SEND_PERIOD`。50 Hz にすると片側が遅れる）で両基板へ、報告 24 バイトが 10 Hz で各基板から |
 | 基板の固定名 | `/dev/mecanum_left`（シリアル `24B3C5715030574B412E3120FF18212B`）／ `/dev/mecanum_right`（`B8A2ED6B5030534E512E3120FF02362A`）。udev で固定（§3-3） |
 | モータドライバ | TB67H420FTG ×2 |
 | 車輪 | OSOYOO φ80 mm メカナム ×4。ホイールベース 95 mm・トレッド 175 mm（`robot_params.py`） |

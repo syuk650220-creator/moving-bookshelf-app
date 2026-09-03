@@ -1,7 +1,7 @@
 """
 mecanum_node.py ― ROS2 ノード（Nav2 と Arduino のあいだ）  ★タスク A3 + A5★
 
-    /cmd_vel  ──> 量子化 ──> 7バイトのパケット（50Hz）──> Arduino ×2
+    /cmd_vel  ──> 量子化 ──> 7バイトのパケット（SEND_PERIOD ごと・既定 25Hz）──> Arduino ×2
     /odom     <── 順運動学 <── テレメトリ（10Hz）        <── Arduino ×2
 
 通信は **USB シリアル**です（SPI ではありません）。
@@ -240,9 +240,10 @@ class MecanumNode(Node):
         self._last_sent = self.link.sent_count
         self._last_recv = self.link.recv_count
 
-        if sent < 50:      # 2秒なら本来 100 回前後
+        expected = 2.0 / P.SEND_PERIOD     # 2秒ぶんの本来の送信回数（25Hz なら 50 回）
+        if sent < expected / 2:
             self.get_logger().error(
-                f"送信が滞っています（2秒で {sent} 回）。ウォッチドッグで停止します")
+                f"送信が滞っています（2秒で {sent} 回、本来 {expected:.0f} 回）。ウォッチドッグで停止します")
         if recv < 10:      # 2秒なら本来 40 回前後（10Hz × 2枚）
             self.get_logger().warn(
                 f"テレメトリが少ないです（2秒で {recv} 回）。"
