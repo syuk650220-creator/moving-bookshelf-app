@@ -101,15 +101,24 @@ mv ~/pi ~/pi_old_20260901      # 古いコピーを脇へ（消さない）
 
 ### 3-2 接続情報
 
-`pi_setup.sh` が `.env` のひな形まで作ります。手でやる場合は次のとおりです。
+`pi_setup.sh` が `.env` のひな形まで作ります。このプロジェクトの値は次のとおりで、そのまま貼り付けて Enter すれば書き込まれます
+（PC の `.env.local` と同じ。publishable キーは公開してよいもので、[環境構築ガイド](../docs/開発の手引き/環境構築ガイド.md) にも同じ値があります）。
 
 ```bash
-cp .env.example .env
-nano .env        # SUPABASE_URL と SUPABASE_ANON_KEY を書く
+cat > ~/moving-bookshelf-app/robot/.env <<'EOF'
+SUPABASE_URL=https://zljswppciglhvwjyquow.supabase.co
+SUPABASE_ANON_KEY=sb_publishable_Ebl1Rfth5d2_Kikh6nK2wA_PEM75NnJ
+EOF
 ```
 
-値はアプリの `.env.local` と同じです（URL と publishable キー `sb_publishable_…`）。
 **service_role キーは絶対に Pi に置かないこと。** anon（publishable）キーで足ります。
+Supabase のプロジェクトを作り直したときは、ダッシュボードの Settings → API の値に差し替えてください。
+
+書けたかは、ブリッジを DB を書き換えないモードで起動して確かめます（`現在の robot_status: … 'idle'` と出れば接続できています。Ctrl-C で抜ける）。
+
+```bash
+cd ~/moving-bookshelf-app/robot && python3 bookshelf_bridge.py
+```
 
 Supabase の SQL Editor で `sql/01_realtime_と_updated_at.sql` と `sql/02_manual_control.sql` を 1 回ずつ実行しておきます
 （何度実行しても壊れないように書いてあります。済んでいれば不要）。
