@@ -231,7 +231,7 @@ export default function AdminPage() {
     <main className="p-6 max-w-md mx-auto">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">管理者画面</h1>
-        <Link href="/" className="text-sm text-blue-600 underline">
+        <Link href="/books" className="text-sm text-blue-600 underline">
           ← 本一覧へ
         </Link>
       </div>

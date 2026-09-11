@@ -28,7 +28,8 @@ npm run dev                        # http://localhost:3000
 
 ```
 app/            # Next.js App Router（画面 S-1〜S-7）
-  page.tsx              # S-1 本一覧（ホーム）
+  page.tsx              # タイトル画面（アプリを開く → S-6 ログイン → S-1 本一覧）
+  books/page.tsx        # S-1 本一覧
   books/[id]/page.tsx   # S-2 本詳細・借りる/返す
   register/page.tsx     # S-3 本登録
   robot-call/page.tsx   # S-4 ロボ呼出（本と席を選ぶ・受取ボタン）

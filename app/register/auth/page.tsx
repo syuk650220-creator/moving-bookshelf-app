@@ -70,7 +70,7 @@ export default function RegisterAuthPage() {
         </form>
 
         <div className="mt-4 text-center">
-          <Link href="/" className="text-sm text-gray-500 hover:underline">
+          <Link href="/books" className="text-sm text-gray-500 hover:underline">
             キャンセルして本一覧に戻る
           </Link>
         </div>
