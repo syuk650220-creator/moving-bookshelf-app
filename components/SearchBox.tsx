@@ -19,7 +19,7 @@ export default function SearchBox() {
         } else {
           params.delete('q')
         }
-        router.push(`/?${params.toString()}`)
+        router.push(`/books?${params.toString()}`)
       }}
     />
   )

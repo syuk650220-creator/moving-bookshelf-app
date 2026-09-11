@@ -256,7 +256,7 @@ export default function BookDetailPage({
 
   return (
     <main className="p-6">
-      <Link href="/" className="text-blue-600 underline">
+      <Link href="/books" className="text-blue-600 underline">
         ← 一覧に戻る
       </Link>
 

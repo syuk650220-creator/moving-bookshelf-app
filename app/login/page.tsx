@@ -36,8 +36,8 @@ export default function Login() {
     // ゲスト名を localStorage に保存（借りる/返す(#7)でこの名前を使う）
     setGuestName(name);
 
-    // 本一覧（ホーム）へ移動
-    router.push("/");
+    // 本一覧へ移動
+    router.push("/books");
   };
 
   return (
