@@ -167,7 +167,7 @@ function RobotCall() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">ロボを呼ぶ</h1>
         <Link
-          href={bookParam ? `/books/${bookParam}` : '/'}
+          href={bookParam ? `/books/${bookParam}` : '/books'}
           className="text-sm text-blue-600 underline"
         >
           ← 戻る
