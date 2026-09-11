@@ -59,7 +59,7 @@ export default function Login() {
 
     setError("");
     setGuestName(name); // ゲスト名を localStorage に保存
-    router.push("/");   // 本一覧（ホーム）へ移動
+    router.push("/books");   // 本一覧（ホーム）へ移動
   };
 
   return (
