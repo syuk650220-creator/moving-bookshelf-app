@@ -129,6 +129,7 @@
           "関連Issue: **「ブリッジ最小実装（robot_calls購読）(#8)」** — 呼び出しの検知側。本Issueの「走らせる」とつなげる相手。",
           "関連（物理・別作業）: **実機マッピング（SLAMで地図を作る）** — 実機自走（本Issueのストレッチ）の前提。完了するまで実機Doneはブロックされる。",
           "**現状（2026-09-03）**: `robot/bookshelf_bridge.py` に Nav2 へのゴール送出（`--nav2`、BasicNavigator 使用）と #9 の変換関数 `goal_from_stop_point` が実装済み。残りは実機での地図・席座標・較正と実走の確認（`robot/README.md` §5〜§7）。",
+          "**現状（2026-09-18・段階3）**: ブリッジは呼出ごとに **自己位置推定（本棚の場所＝`stop_points` id=0 を AMCL の初期位置に送る）→ 席へ走行 → 「本を取得した」待ち → 本棚の場所へ帰還** まで進むようになった（`robot_status.state` に `localizing` が追加。走行中は現在地 `pose_*` も書く）。席と本棚の場所の登録は `robot/pin_tool.py`（TF か RViz のクリック）と管理者画面 `/admin/pins`。DB の追加分は `robot/sql/03_pins_home_pose.sql`。当日の窓の構成は OneDrive `03_ガイド・解説/08_アプリ連携_段階3_マッピングから呼出・帰還まで_v1.html`。**`--nav2` の経路は実機未検証**（状態機械は `test_logic.py` で検証済み）。",
           "ROS2/Nav2 公式: docs.nav2.org（commander_api / concepts / getting_started）、docs.ros.org/en/jazzy、TurtleBot3 e-Manual。",
           "環境: 同フォルダの 環境構築ガイド.html は **アプリ用（Windows/Mac）でROS2は対象外**。ROS2はUbuntu 24.04 + Jazzy/WSL2を各自用意。"
         ]}

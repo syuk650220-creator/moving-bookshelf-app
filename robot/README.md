@@ -32,13 +32,18 @@
 
 ```
 【呼出】 アプリ S-4 ──insert──> robot_calls ──> bookshelf_bridge.py ──> Nav2 ──> mecanum_node.py ──> Arduino ×2
-         アプリ     <──select── robot_status <── bookshelf_bridge.py
+         アプリ     <──select── robot_status <── bookshelf_bridge.py（状態・現在地・進行状況）
 【手動】 アプリ /admin ──update──> robot_manual <──manual_poll()── manual_control.py --serial ──> Arduino ×2
+【ピン】 アプリ /admin/pins ──update──> stop_points <──upsert── pin_tool.py（TF か RViz のクリックから）
 ```
 
 - `robot_calls.status` は queued → moving → arrived → done。moving と arrived はブリッジが進め、
-  **arrived → done はアプリ S-4 の「受け取った」ボタン**で進みます（ゼミ決定 2026-09-01）。
-- `robot_status` は常に 1 行（id=1）。書くのはブリッジだけです。
+  **arrived → done はアプリ S-4 の「本を取得した」ボタン**で進みます（ゼミ決定 2026-09-01。ボタンの文言は 2026-09-18 に変更）。
+- `robot_status.state` は **idle → localizing（自己位置推定中）→ moving → arrived → returning（本棚の場所へ帰還中）→ idle**。
+  常に 1 行（id=1）。書くのはブリッジだけです。走行中は現在地（`pose_x/y/theta`）と一言（`detail`）も 1 秒ごとに書きます。
+- `stop_points` は **id=0 が「本棚の場所」（`kind='home'`）、id≥1 が席**。本棚の場所は受取後に帰る先で、
+  呼出のたびに AMCL の初期位置にもなります（§5-4）。アプリの席一覧には id≥1 だけが出ます。
+- 上の 3 つは `sql/03_pins_home_pose.sql` で入ります（§3-2）。未適用でもブリッジは動きますが、localizing と現在地は書きません。
 - **ブリッジと手動操作を同時に実機へつながないこと**（Arduino への指令の取り合いになります）。
 
 ---
@@ -47,17 +52,19 @@
 
 | ファイル | 役割 |
 |---|---|
-| `bookshelf_bridge.py` | ブリッジ本体（Issue #8 / #9 / #14）。`robot_calls` を 1 秒ポーリング（`--realtime` で購読も併用）し、席座標を Nav2 ゴールに変換、status を進める。`--nav2` で実走 |
+| `bookshelf_bridge.py` | ブリッジ本体（Issue #8 / #9 / #14 ／ 段階3）。`robot_calls` を 1 秒ポーリング（`--realtime` で購読も併用）し、自己位置推定（本棚の場所を初期位置に）→ 席へ走行 → 受取待ち → 本棚の場所へ帰還、と status を進める。`--nav2` で実走 |
+| `pin_tool.py` | ★ピン建て★ 席1〜3 と本棚の場所（id=0）の map 座標を `stop_points` に登録。ロボを置いた場所（TF `map→base_link` の中央値）か RViz のクリック（2D Goal Pose ／ Publish Point）から。ROS 2 が無くても `--set` で数値登録できる |
 | `manual_control.py` | 管理者画面（/admin）ラジコンモードの受け側。`robot_manual` を 0.2 秒ポーリングし、指令が 1.2 秒更新されなければ停止（デッドマン）。`--serial` で実機接続 |
 | `mecanum_serial.py` | Arduino 2 枚との USB シリアル通信ライブラリ（送信ループ・テレメトリ＋IMU・量子化 `Quantizer`・暴走防止の検出） |
 | `mecanum_node.py` | ROS 2 ノード。`/cmd_vel` → パケット、テレメトリ → `/odom` と TF |
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算を検証（44 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算とブリッジの状態機械を検証（94 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `sql/01_realtime_と_updated_at.sql` | schema.sql に足りない 2 つ（Realtime publication ／ updated_at 自動更新トリガ）。SQL Editor で 1 回実行 |
 | `sql/02_manual_control.sql` | 手動操作用の `robot_manual` テーブル・RPC・ビュー。SQL Editor で 1 回実行 |
+| `sql/03_pins_home_pose.sql` | ★段階3★ `stop_points.kind`（本棚の場所＝id 0）と insert/update ポリシー、`robot_status` の `localizing` と現在地（`pose_*`・`detail`）。SQL Editor で 1 回実行 |
 | `.env.example` | Supabase 接続情報のひな形。`.env` にコピーして値を入れる（`.env` はコミットされない） |
 | `requirements.txt` | PC／venv 用の参考。**Pi では apt を使う** |
 
@@ -120,8 +127,10 @@ Supabase のプロジェクトを作り直したときは、ダッシュボー�
 cd ~/moving-bookshelf-app/robot && python3 bookshelf_bridge.py
 ```
 
-Supabase の SQL Editor で `sql/01_realtime_と_updated_at.sql` と `sql/02_manual_control.sql` を 1 回ずつ実行しておきます
+Supabase の SQL Editor で `sql/01_realtime_と_updated_at.sql`・`sql/02_manual_control.sql`・`sql/03_pins_home_pose.sql` を 1 回ずつ実行しておきます
 （何度実行しても壊れないように書いてあります。済んでいれば不要）。
+03 を流すと `stop_points` に本棚の場所（id=0）の行ができ、`robot_status` に `localizing` と現在地の列が増えます。
+ブリッジは起動時に「スキーマ : 段階3（sql/03 適用済み）」と表示して判定結果を教えてくれます。
 
 ### 3-3 左右の基板を固定する（udev・初回のみ）
 
@@ -211,22 +220,66 @@ python bookshelf_bridge.py        # ★DB は書き換えない dry-run。まず
 python3 bookshelf_bridge.py --live --simulate 5   # 走行の代わりに 5 秒待って「到着」扱い
 ```
 
-アプリの S-4 で呼ぶと、順番待ち → 移動中 → 到着（受取待ち）と表示が進みます。
-**「受け取った」を押すと done になり、ブリッジは次の呼出へ進みます。**
+アプリの S-4 で呼ぶと、ロボの状態が 自己位置推定中（1 秒）→ 移動中（残り x m）→ 到着（受取待ち）と進みます。
+**「本を取得した」を押すと done になり、ロボは 本棚へ帰還中 → 待機中 と進んでから次の呼出へ移ります。**
+`--simulate` でも現在地を直線補間で動かすので、`/admin/pins` の地図で「動いたふり」を確認できます。
 押し忘れ対策に `--arrive-timeout 120` を付けると 120 秒で自動 done にできます（既定は無効）。
 
 ### 5-3 Pi で実走する（Nav2）
 
-前提: 地図が保存済み、`stop_points` が map 座標の実測値、`mecanum_node.py` と Nav2 が起動済み（§7）。
+前提: 地図が保存済み、`stop_points` の席と本棚の場所が map 座標の実測値（§5-4）、`mecanum_node.py` と Nav2 が起動済み（§7）、
+**ロボが本棚の場所（id=0 のピン）に、登録したときと同じ向きで置いてある**こと。
 
 ```bash
 python3 bookshelf_bridge.py --live --nav2
 ```
 
-1 回の走行は `--nav-timeout`（既定 180 秒）で打ち切られ、失敗時は canceled になります。
+起動すると amcl と bt_navigator が active になるのを待ち、呼出が来るたびに次の順で動きます。
+
+| 順 | ブリッジがすること | `robot_status.state` |
+|---|---|---|
+| ① | 本棚の場所の座標を AMCL の初期位置として `/initialpose` に送り、`/amcl_pose` が返るのを待って 2 秒落ち着かせる（★ロボが本棚の場所に居るときだけ★。走行失敗などで居ないときは送らず、AMCL の追跡をそのまま使う） | `localizing` |
+| ② | 席の座標へ `goToPose`。1 秒ごとに現在地と「残り x m」を書く | `moving` |
+| ③ | 到着。アプリの「本を取得した」を待つ | `arrived` |
+| ④ | 本棚の場所へ `goToPose` | `returning` |
+| ⑤ | 帰り着いたら待機（次の呼出で①から） | `idle` |
+
+- 1 回の走行は `--nav-timeout`（既定 180 秒）で打ち切られ、失敗時は canceled になります。帰還に失敗したときは呼出は done のまま idle に戻り、`detail` に「帰還に失敗」と出ます。**手で本棚の場所へ戻してブリッジを再起動**してください（再起動＝「本棚の場所に居る」前提に戻る）。
+- RViz の 2D Pose Estimate で人が初期位置を与える運用なら `--no-localize`。受取後に席で待たせるなら `--no-return-home`。
+- 初期位置のばらつきは `--init-sigma-xy 0.15`（m）`--init-sigma-yaw 0.17`（rad ≒ 10°）。本棚の場所に置く精度に合わせます。
+- `nav2_simple_commander` の `waitUntilNav2Active()` は**使っていません**。Jazzy では初期位置が未設定だと地図原点 (0,0,0) を勝手に送るためです（②完全ガイド E3 の注記）。
+- Ctrl-C で止めると走行を中止（`cancelTask`）し、処理中の呼出を canceled、状態を idle に戻してから終了します。
+
+> ★`--nav2` の経路は 2026-09-18 時点で実機未検証です★ 実機なしで検証できる部分（状態機械・DB への書き込み・失敗時の扱い）は
+> `test_logic.py` の「Bridge」の項で通してあります。初回は `--nav-timeout 60` など短めで、非常停止に手を添えて試してください。
 
 Realtime も試すなら `--realtime` を足します。**動かなくても構いません** ― ポーリング（1 秒）だけで運用できる設計です。
 会場の Wi-Fi は不通前提という裁定が出ているため、意図的にこうしてあります。
+
+### 5-4 ピン建て（席1〜3 と本棚の場所の座標を登録する）
+
+ピンは 4 つです。**本棚の場所（id=0）は床にテープで印を付け、毎回同じ向きに置く**こと（ここが帰る先であり、自己位置推定の初期位置です）。
+
+| id | kind | 意味 | theta の意味 |
+|---|---|---|---|
+| 0 | home | 本棚の場所（定位置） | 置いたときにロボが向く向き |
+| 1〜3 | seat | 席（アプリの「届け先の席」） | 席に着いたときロボが向く向き |
+
+登録の仕方は 3 通り。どれも `stop_points` に upsert します（sql/03 の insert/update ポリシーが必要）。
+
+```bash
+cd ~/moving-bookshelf-app/robot
+python3 pin_tool.py                     # 対話モード（SLAM か AMCL が動いている Pi／母艦で）
+python3 pin_tool.py --list              # いまのピンを見る
+python3 pin_tool.py --set 1 1.85 0.42 1.57 --label 席1    # 数値を直接（ROS 2 不要・PC からでも）
+```
+
+- **A. ロボを置いた場所を登録（推奨）** … 対話モードで番号 → `c`。裁定書 §5 の手順どおり、席へ 0.15 m/s 以下で進入 → ±40° 首振り → 2〜3 秒静止 → `c`。TF `map→base_link` を 5 回読んで中央値を採ります。
+- **B. RViz でクリック** … 番号 → `r` → RViz の **2D Goal Pose**（位置＋向き）か **Publish Point**（位置のみ）。★Nav2 起動中に 2D Goal Pose を押すとロボが走り出すので、ピン建ては SLAM 中か Nav2 停止中に★
+- **C. アプリの管理者画面 `/admin/pins`** … 地図の上でピンとロボの現在地を見ながら数値を直す。本棚の場所（id=0）の追加もここでできる。
+
+採ったあとは `/admin/pins` の地図で 4 つの位置関係が部屋と合っているか確かめ、AMCL を起動して席1 へ 1 本試走してテープからのズレを実測します（±10 cm 以内で合格。裁定書 §5）。
+REST で書けないときは同じ内容の SQL を表示するので、SQL Editor に貼ってください。
 
 ---
 
@@ -329,7 +382,14 @@ Nav2 の設定は [`nav2/nav2_params_差分.yaml`](nav2/nav2_params_差分.yaml)
 **既定値から変えるところだけ**を根拠つきで書いてあるので、`nav2_bringup` の標準 `nav2_params.yaml` をコピーしたものに反映してください。
 とくに `robot_model_type: "nav2_amcl::OmniMotionModel"` は、入れないと横移動のたびに自己位置が破綻します。
 
-実走の起動順（目安）: LiDAR → `mecanum_node.py`（TF） → Nav2 bringup（地図＋AMCL） → RViz で初期位置 → `bookshelf_bridge.py --live --nav2`。
+実走の起動順（目安）: LiDAR → `mecanum_node.py`（odom→base_link の TF） → `base_link→laser` の静的 TF → Nav2 bringup（地図＋AMCL） → 母艦の RViz（監視） → `bookshelf_bridge.py --live --nav2`（初期位置は本棚の場所のピンから自動。§5-3）。
+
+> ★TF の鎖は `map → odom → base_link → laser` にすること★
+> 地図づくりで使った `temp_tf_launch.py` は `odom→base_footprint→base_link→laser` を全部静的に出します。
+> 実走では `odom→base_link` を `mecanum_node.py` が出すので、`temp_tf_launch.py` は**使わず**、`base_link→laser` だけを
+> `ros2 run tf2_ros static_transform_publisher --x <前後 m> --y 0 --z <高さ m> --frame-id base_link --child-frame-id laser` で出します
+> （両方動かすと `base_link` の親が 2 つになって TF が壊れます）。`nav2_params.yaml` の `base_frame_id` / `robot_base_frame` は `base_link` に合わせます。
+> 当日の窓の構成は OneDrive の `03_ガイド・解説/08_アプリ連携_段階3_マッピングから呼出・帰還まで_v1.html`。
 
 ### まだ書いていないもの
 
@@ -367,6 +427,15 @@ Nav2 の設定は [`nav2/nav2_params_差分.yaml`](nav2/nav2_params_差分.yaml)
 | 唸るだけで進まない | `min_x_velocity_threshold` が `MIN_RPM` 相当（0.04）より小さい |
 | Pi 上で `sed -i` が Permission denied | scp 時代の名残で `~/pi` が読み取り専用。`git clone` した `~/moving-bookshelf-app` を使う |
 | **片側の車輪だけ 0.3 秒ほど遅れて動き出す** | `robot_params.SEND_PERIOD` が 0.02（50 Hz）になっている。Arduino の受信ブロックは Ts=20 ms ごとに 1 パケットしか取り出さないので、同じ周期で送ると取りこぼしがバッファに溜まって片側だけ遅れる。**0.04（25 Hz）が正**（2026-09-03 実機で確認） |
+| ブリッジ起動時に「★sql/03 未適用★」と出る | `sql/03_pins_home_pose.sql` を SQL Editor で実行していない。動くが localizing と現在地は書けない |
+| 「ホーム : ★未登録★」と出る／帰還しない | `stop_points` に id=0（kind='home'）が無い。`pin_tool.py` か `/admin/pins` の「＋ 本棚の場所」で登録 |
+| 呼ぶとすぐ canceled になり detail が「自己位置推定に失敗」 | 初期位置を送っても `/amcl_pose` が来ない。AMCL が `/scan` と TF（`map→odom→base_link→laser`）を受け取れているか。`ros2 topic echo /amcl_pose` |
+| 初期位置を与えた直後、RViz で粒子が壁からずれている | ロボが本棚の場所のピンと違う位置・向きに置かれている。テープの印に合わせ直してブリッジを再起動。または `--no-localize` で RViz から与える |
+| 席に着くたび少しずつずれる／帰還後に向きが違う | 帰還は `xy_goal_tolerance`（8 cm）の精度で止まる。次の呼出で初期位置をピンに戻すので大きくは溜まらないが、気になるなら `--init-sigma-xy` を大きくして AMCL に任せる |
+| 「帰還に失敗」と出て idle になった | 帰り道で詰まった。手で本棚の場所へ戻し、ブリッジを再起動（再起動で「本棚の場所に居る」前提に戻る） |
+| `/admin/pins` で保存すると「書き込めません」 | `stop_points` の insert/update ポリシーが無い。`sql/03` を実行 |
+| `pin_tool.py` で `c` を押しても TF が読めない | SLAM か AMCL が動いていない、またはフレーム名が違う（暫定 TF 構成なら `--base-frame base_footprint`） |
+| `pin_tool.py` で `r` を押したのに何も来ない | RViz の Fixed Frame が map でない／ROS_DOMAIN_ID が違う（7）。クリックのフレームが map 以外だと拒否する |
 
 より詳しい症状表は Arduino の通信仕様書 §11（OneDrive `simulink/arduino/README_raspberrypi.md`）にあります。
 
@@ -391,5 +460,7 @@ Nav2 の設定は [`nav2/nav2_params_差分.yaml`](nav2/nav2_params_差分.yaml)
 | Arduino 通信仕様（**これが正**・v2） | OneDrive `ものづくりゼミ/simulink/arduino/README_raspberrypi.md` |
 | 実機の作業記録（確定値・較正手順・次の一手） | OneDrive `ものづくりゼミ/04_報告・記録/実機ログ_PARTD_オドメトリ実装_v1.html` |
 | 地図づくりの起動手順（LiDAR → TF → SLAM の 3 窓） | OneDrive `ものづくりゼミ/03_ガイド・解説/03_マッピング_クイックスタート_v1.html` |
+| **段階3 の当日手順**（マッピング → ピン建て → アプリ呼出 → 自己位置推定 → 席 → 本を取得 → 本棚へ帰還） | OneDrive `ものづくりゼミ/03_ガイド・解説/08_アプリ連携_段階3_マッピングから呼出・帰還まで_v1.html` |
+| 席座標の採取手順（首振り・静止・中央値・試走で検証） | OneDrive `ものづくりゼミ/05_技術調査/発表会場デモ運用方針書_v1_0.docx` §5 |
 | DB スキーマ・RLS | [`../supabase/schema.sql`](../supabase/schema.sql) |
 | 各 Issue の進め方 | [`../docs/開発の手引き/index.html`](../docs/開発の手引き/index.html) |

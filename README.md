@@ -32,11 +32,12 @@ app/            # Next.js App Router（画面 S-1〜S-7）
   books/page.tsx        # S-1 本一覧
   books/[id]/page.tsx   # S-2 本詳細・借りる/返す
   register/page.tsx     # S-3 本登録
-  robot-call/page.tsx   # S-4 ロボ呼出（本と席を選ぶ・受取ボタン）
+  robot-call/page.tsx   # S-4 ロボ呼出（本と席を選ぶ・「本を取得した」ボタンでロボを本棚へ帰す）
   history/page.tsx      # S-5 貸出履歴
   login/page.tsx        # S-6 ログイン/ゲスト
   search/page.tsx       # S-7 検索・タグ（COULD）
-  admin/page.tsx        # 管理者画面（ロボの手動操作・連携確認）
+  admin/page.tsx        # 管理者画面（ロボの手動操作・連携確認・現在地）
+  admin/pins/page.tsx   # 席・本棚の場所のピン管理（stop_points を地図で確認・編集。ロボの現在地も表示）
 components/     # 共通UI
 lib/            # supabaseClient.ts ほか
 supabase/       # schema.sql（テーブル定義 + RLS）
@@ -54,4 +55,5 @@ scripts/        # 疎通確認・本の一括登録
 ## データベース
 
 `supabase/schema.sql` を Supabase の SQL Editor で実行するとテーブル一式（books / loans / users / robot_calls / robot_status / stop_points）と RLS が作成されます。削除ポリシーは意図的に未定義（全削除事故の防止）。
-ロボ連携に必要な追加分（Realtime publication・updated_at トリガ・手動操作用 `robot_manual`）は `robot/sql/` の 2 ファイルを続けて実行してください。
+ロボ連携に必要な追加分（Realtime publication・updated_at トリガ・手動操作用 `robot_manual`・ピン建てと自己位置推定用の `stop_points.kind` / `robot_status.localizing` / 現在地）は `robot/sql/` の 3 ファイル（01 → 02 → 03）を続けて実行してください。
+`stop_points` は **id=0 が本棚の場所（ロボの定位置）、id≥1 が席**です。
