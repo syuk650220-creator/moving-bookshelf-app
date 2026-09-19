@@ -62,6 +62,7 @@
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
 | `test_logic.py` | 実機なしで計算とブリッジの状態機械を検証（94 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
+| `nav2/robot_tf_launch.py` | ★段階3★ 実走のときの静的 TF（`base_footprint→base_link→laser`）。`temp_tf_launch.py` のかわりに使う（§7） |
 | `sql/01_realtime_と_updated_at.sql` | schema.sql に足りない 2 つ（Realtime publication ／ updated_at 自動更新トリガ）。SQL Editor で 1 回実行 |
 | `sql/02_manual_control.sql` | 手動操作用の `robot_manual` テーブル・RPC・ビュー。SQL Editor で 1 回実行 |
 | `sql/03_pins_home_pose.sql` | ★段階3★ `stop_points.kind`（本棚の場所＝id 0）と insert/update ポリシー、`robot_status` の `localizing` と現在地（`pose_*`・`detail`）。SQL Editor で 1 回実行 |
@@ -159,7 +160,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（44 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（94 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -382,13 +383,19 @@ Nav2 の設定は [`nav2/nav2_params_差分.yaml`](nav2/nav2_params_差分.yaml)
 **既定値から変えるところだけ**を根拠つきで書いてあるので、`nav2_bringup` の標準 `nav2_params.yaml` をコピーしたものに反映してください。
 とくに `robot_model_type: "nav2_amcl::OmniMotionModel"` は、入れないと横移動のたびに自己位置が破綻します。
 
-実走の起動順（目安）: LiDAR → `mecanum_node.py`（odom→base_link の TF） → `base_link→laser` の静的 TF → Nav2 bringup（地図＋AMCL） → 母艦の RViz（監視） → `bookshelf_bridge.py --live --nav2`（初期位置は本棚の場所のピンから自動。§5-3）。
+実走の起動順（目安）: LiDAR → `mecanum_node.py`（odom→base_footprint の TF） → `nav2/robot_tf_launch.py`（残りの静的 TF） → Nav2 bringup（地図＋AMCL） → 母艦の RViz（監視） → `bookshelf_bridge.py --live --nav2`（初期位置は本棚の場所のピンから自動。§5-3）。
 
-> ★TF の鎖は `map → odom → base_link → laser` にすること★
-> 地図づくりで使った `temp_tf_launch.py` は `odom→base_footprint→base_link→laser` を全部静的に出します。
-> 実走では `odom→base_link` を `mecanum_node.py` が出すので、`temp_tf_launch.py` は**使わず**、`base_link→laser` だけを
-> `ros2 run tf2_ros static_transform_publisher --x <前後 m> --y 0 --z <高さ m> --frame-id base_link --child-frame-id laser` で出します
-> （両方動かすと `base_link` の親が 2 つになって TF が壊れます）。`nav2_params.yaml` の `base_frame_id` / `robot_base_frame` は `base_link` に合わせます。
+> ★TF の鎖は地図づくりのときと同じ `map → odom → base_footprint → base_link → laser` にすること★
+> 地図づくりで使った `~/bringup/temp_tf_launch.py` は `odom→base_footprint` まで「動かない仮の TF」で出します。
+> 実走ではそこを車輪オドメトリが出すので、**`temp_tf_launch.py` は止めて**、次の 2 つに置き換えます（両方動かすと `base_footprint` の親が 2 つになって TF が壊れます）。
+>
+> ```bash
+> python3 mecanum_node.py --ros-args -p base_frame:=base_footprint                      # odom → base_footprint
+> ros2 launch ~/moving-bookshelf-app/robot/nav2/robot_tf_launch.py laser_x:=0.10 laser_z:=0.20   # base_footprint → base_link → laser
+> ```
+>
+> `laser_x` / `laser_z` は **`temp_tf_launch.py` と同じ値**にします（`grep -n -E "'--(x|y|z|yaw)'" ~/bringup/temp_tf_launch.py` で確認。違うと地図と `/scan` がずれます）。
+> 鎖の形が同じなので、Nav2 標準の `nav2_params.yaml` のフレーム名（amcl は `base_footprint`、costmap は `base_link`）は書き換え不要で、`pin_tool.py` の既定（`base_link`）も地図づくり・実走の両方で使えます。
 > 当日の窓の構成は OneDrive の `03_ガイド・解説/08_アプリ連携_段階3_マッピングから呼出・帰還まで_v1.html`。
 
 ### まだ書いていないもの
