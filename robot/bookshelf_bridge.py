@@ -17,6 +17,7 @@ bookshelf_bridge.py ― アプリ（Supabase）とロボをつなぐブリッジ
 
   ・自己位置推定 … ロボが「本棚の場所」（stop_points の kind='home'・id=0）に居る前提で、
     その座標を AMCL の初期位置として送り、/amcl_pose が返るのを待ちます。
+    --nav2 のときは起動直後にも 1 回行うので、走り出す前に RViz でレーザーと壁の重なりを確認できます。
     帰還に失敗したときなど「本棚の場所に居ない」ときは初期位置を送らず、AMCL の追跡をそのまま使います。
     RViz の 2D Pose Estimate で人が与える運用にしたいときは --no-localize を付けます。
   ・帰還 … 受取（done）のあと、本棚の場所（home）へ Nav2 で戻ってから idle にします（--no-return-home で無効）。
@@ -501,6 +502,31 @@ class Bridge:
 
         return cb
 
+    # ---------------- 起動時の自己位置推定 ----------------
+
+    def startup_localize(self) -> bool:
+        """
+        起動直後に 1 回、本棚の場所を初期位置として与える。
+        最初の呼出を待たずに AMCL が map→odom を出し始めるので、走り出す前に
+        RViz で「レーザーの点が地図の壁に重なっているか」を目で確かめられる。
+        （呼出のたびにも同じことをする。ここは確認のための先出し）
+        """
+        if not self.localize or self.home is None:
+            return False
+        print("\n[起動] 本棚の場所で自己位置推定をします（RViz でレーザーと壁の重なりを確認してください）")
+        ok = self.nav.localize(goal_from_stop_point(self.home))
+        label = self.home.get("label") or "本棚の場所"
+        try:
+            if ok:
+                self.set_status("idle", None, detail=f"{label}で待機中（自己位置推定済み）",
+                                pose=self.nav.current_pose())
+            else:
+                self.set_status("idle", None,
+                                detail="起動時の自己位置推定に失敗（AMCL の応答なし）。LiDAR・TF・Nav2 を確認してください")
+        except requests.RequestException as e:
+            print(f"    [warn] 状態の書き込みに失敗（続行します）: {e}")
+        return ok
+
     # ---------------- 1件を処理する ----------------
 
     def handle(self, call: dict):
@@ -817,6 +843,9 @@ def main():
                     home=home, return_home=not args.no_return_home,
                     localize=not args.no_localize, pose_interval=args.pose_interval,
                     schema_v3=v3)
+
+    if args.nav2:
+        bridge.startup_localize()
 
     if args.realtime:
         try_realtime(url, key, bridge.handle)

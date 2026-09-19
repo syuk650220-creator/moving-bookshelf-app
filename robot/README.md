@@ -60,7 +60,7 @@
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算とブリッジの状態機械を検証（94 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算とブリッジの状態機械を検証（99 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/robot_tf_launch.py` | ★段階3★ 実走のときの静的 TF（`base_footprint→base_link→laser`）。`temp_tf_launch.py` のかわりに使う（§7） |
 | `sql/01_realtime_と_updated_at.sql` | schema.sql に足りない 2 つ（Realtime publication ／ updated_at 自動更新トリガ）。SQL Editor で 1 回実行 |
@@ -160,7 +160,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（94 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（99 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -235,7 +235,7 @@ python3 bookshelf_bridge.py --live --simulate 5   # 走行の代わりに 5 秒�
 python3 bookshelf_bridge.py --live --nav2
 ```
 
-起動すると amcl と bt_navigator が active になるのを待ち、呼出が来るたびに次の順で動きます。
+起動すると amcl と bt_navigator が active になるのを待ち、**まず本棚の場所で自己位置推定を 1 回**行います（母艦の RViz でレーザーの点が地図の壁に重なっているかを、走り出す前にここで確認）。そのあとは呼出が来るたびに次の順で動きます。
 
 | 順 | ブリッジがすること | `robot_status.state` |
 |---|---|---|

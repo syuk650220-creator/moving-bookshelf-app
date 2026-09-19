@@ -418,6 +418,20 @@ br.shutdown()
 check("shutdown: ナビを止め、呼出を canceled、idle に戻す",
       (n.events[-1], s.calls["c12"], s.status["state"]), (("cancel",), "canceled", "idle"))
 
+print("  --- 起動時の自己位置推定（--nav2 のとき main が呼ぶ）---")
+s, n = FakeSupa(PINS), FakeNav()
+br = make_bridge(s, n)
+check("本棚の場所を初期位置として与える", (br.startup_localize(), n.events), (True, [("localize", "本棚の場所")]))
+check("idle のまま detail に「自己位置推定済み」・現在地も書く",
+      (s.status["state"], "自己位置推定済み" in s.status["detail"], "pose_x" in s.status), ("idle", True, True))
+s, n = FakeSupa(PINS), FakeNav(fail_localize=True)
+br = make_bridge(s, n)
+check("失敗しても止まらず detail で知らせる", (br.startup_localize(), "失敗" in s.status["detail"]), (False, True))
+s, n = FakeSupa([p for p in PINS if p["id"] != 0]), FakeNav()
+check("ホーム未登録なら何もしない", (make_bridge(s, n).startup_localize(), n.events, s.log), (False, [], []))
+s, n = FakeSupa(PINS), FakeNav()
+check("--no-localize なら何もしない", (make_bridge(s, n, localize=False).startup_localize(), n.events), (False, []))
+
 print("  --- LoggingNavigator（--simulate 0）---")
 ln = B.LoggingNavigator(0.0, start_pose=(1.0, 1.0, 0.0))
 check("localize は初期位置に飛ぶ", (ln.localize(B.goal_from_stop_point(PINS[0])), ln.pose), (True, (0.0, 0.0, 0.0)))
