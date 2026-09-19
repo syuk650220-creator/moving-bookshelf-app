@@ -9,8 +9,9 @@ const MOTION_LABEL: Record<number, string> = {
   0: '停止', 1: '前進', 2: '後退', 3: '左横', 4: '右横', 5: '左回転', 6: '右回転',
 }
 
+// robot_status.state（段階3で localizing＝自己位置推定中 が増えた。sql/03 参照）
 const STATE_LABEL: Record<string, string> = {
-  idle: '待機中', moving: '移動中', arrived: '到着', returning: '帰還中',
+  idle: '待機中', localizing: '自己位置推定中', moving: '移動中', arrived: '到着', returning: '本棚へ帰還中',
 }
 
 // キーボード → 動作番号（pi_controller.py と同じ割り当て + 矢印キー）
@@ -34,6 +35,11 @@ type ManualView = {
 type RobotStatus = {
   state: string
   current_call_id: string | null
+  // ---- 段階3（sql/03）で増えた列。無い環境では undefined ----
+  detail?: string | null        // 「席2 へ移動中（残り 1.2 m）」のような一言
+  pose_x?: number | null        // ロボの現在地（map フレーム [m]・[rad]）
+  pose_y?: number | null
+  pose_theta?: number | null
 }
 
 export default function AdminPage() {
@@ -178,7 +184,7 @@ export default function AdminPage() {
     const fetchAll = async () => {
       const [mv, st, qc] = await Promise.all([
         supabase.from('robot_manual_v').select('enabled, motion, rpm, pi_age').eq('id', 1).single(),
-        supabase.from('robot_status').select('state, current_call_id').eq('id', 1).single(),
+        supabase.from('robot_status').select('*').eq('id', 1).single(),   // detail / pose_* は sql/03 以降
         supabase.from('robot_calls').select('id', { count: 'exact', head: true }).eq('status', 'queued'),
       ])
       if (!alive) return
@@ -231,9 +237,14 @@ export default function AdminPage() {
     <main className="p-6 max-w-md mx-auto">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">管理者画面</h1>
-        <Link href="/books" className="text-sm text-blue-600 underline">
-          ← 本一覧へ
-        </Link>
+        <div className="flex gap-3">
+          <Link href="/admin/pins" className="text-sm text-blue-600 underline">
+            📍 ピン管理
+          </Link>
+          <Link href="/books" className="text-sm text-blue-600 underline">
+            ← 本一覧へ
+          </Link>
+        </div>
       </div>
       <p className="mt-1 text-sm text-gray-600">
         ロボットとアプリの連携確認用。Supabase 経由でロボを手動操作します。
@@ -253,6 +264,26 @@ export default function AdminPage() {
           <dd className={`font-bold ${state === 'idle' ? 'text-green-600' : 'text-orange-600'}`}>
             {STATE_LABEL[state] ?? state}
           </dd>
+
+          {status?.detail && (
+            <>
+              <dt className="text-gray-500">進行状況</dt>
+              <dd className="text-gray-700">{status.detail}</dd>
+            </>
+          )}
+
+          {status?.pose_x != null && status?.pose_y != null && (
+            <>
+              <dt className="text-gray-500">現在地（map）</dt>
+              <dd className="font-mono text-gray-700">
+                x={status.pose_x.toFixed(2)} y={status.pose_y.toFixed(2)} θ=
+                {(((status.pose_theta ?? 0) * 180) / Math.PI).toFixed(0)}°
+                <Link href="/admin/pins" className="ml-2 font-sans text-xs text-blue-600 underline">
+                  地図で見る
+                </Link>
+              </dd>
+            </>
+          )}
 
           <dt className="text-gray-500">Pi 受信スクリプト</dt>
           <dd className={`font-bold ${piOnline ? 'text-green-600' : 'text-red-500'}`}>

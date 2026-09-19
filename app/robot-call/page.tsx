@@ -26,8 +26,9 @@ const CALL_COLOR: Record<string, string> = {
   moving: 'bg-blue-100 text-blue-700',
   arrived: 'bg-green-100 text-green-700',
 }
+// robot_status.state（段階3で localizing＝自己位置推定中 が増えた。sql/03 参照）
 const STATE_LABEL: Record<string, string> = {
-  idle: '待機中', moving: '移動中', arrived: '到着', returning: '帰還中',
+  idle: '待機中', localizing: '自己位置推定中', moving: '移動中', arrived: '到着', returning: '本棚へ帰還中',
 }
 
 function RobotCall() {
@@ -42,6 +43,7 @@ function RobotCall() {
   const [seatId, setSeatId] = useState<number | null>(null)
   const [queue, setQueue] = useState<CallRow[]>([])
   const [robotState, setRobotState] = useState<string>('')
+  const [robotDetail, setRobotDetail] = useState<string | null>(null)   // 「席2 へ移動中（残り 1.2 m）」など
   const [isCalling, setIsCalling] = useState(false)
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
@@ -63,7 +65,8 @@ function RobotCall() {
     const load = async () => {
       const [b, s] = await Promise.all([
         supabase.from('books').select('id, title, status').order('title'),
-        supabase.from('stop_points').select('id, label').order('id'),
+        // id=0 は「本棚の場所」（ロボの定位置・帰る先）なので届け先には出さない（席は id ≥ 1）
+        supabase.from('stop_points').select('id, label').gt('id', 0).order('id'),
       ])
       if (!aliveRef.current) return
       if (b.data) setBooks(b.data as Book[])
@@ -83,11 +86,16 @@ function RobotCall() {
         .select('id, status, requested_by, created_at, books(title), stop_points(label)')
         .in('status', ['queued', 'moving', 'arrived'])
         .order('created_at', { ascending: true }),
-      supabase.from('robot_status').select('state').eq('id', 1).single(),
+      // detail 列は sql/03 で増えたもの。無い環境でも動くよう '*' で読む
+      supabase.from('robot_status').select('*').eq('id', 1).single(),
     ])
     if (!aliveRef.current) return
     if (q.data) setQueue(q.data as unknown as CallRow[])
-    if (st.data) setRobotState(st.data.state)
+    if (st.data) {
+      const row = st.data as { state: string; detail?: string | null }
+      setRobotState(row.state)
+      setRobotDetail(row.detail ?? null)
+    }
   }, [])
 
   useEffect(() => {
@@ -116,13 +124,14 @@ function RobotCall() {
     if (error) {
       setMessage({ kind: 'err', text: `呼出に失敗しました: ${error.message}` })
     } else {
-      setMessage({ kind: 'ok', text: 'ロボを呼びました。到着したら「受け取った」を押してください。' })
+      setMessage({ kind: 'ok', text: 'ロボを呼びました。到着したら「本を取得した」を押してください。' })
       await fetchQueue()
     }
     setIsCalling(false)
   }
 
-  // 到着した呼出を「受け取った」→ done（ロボは次の呼出へ進む）
+  // 到着した呼出を「本を取得した」→ done
+  // （ブリッジはこれを見て robot_status を returning にし、本棚の場所へ帰ってから次の呼出へ進む）
   const handleReceive = async (callId: string) => {
     const { data, error } = await supabase
       .from('robot_calls')
@@ -131,11 +140,11 @@ function RobotCall() {
       .eq('status', 'arrived')   // 到着済みのときだけ（競合対策）
       .select('id')
     if (error) {
-      setMessage({ kind: 'err', text: `受取の記録に失敗しました: ${error.message}` })
+      setMessage({ kind: 'err', text: `取得の記録に失敗しました: ${error.message}` })
     } else if (!data || data.length === 0) {
       setMessage({ kind: 'err', text: 'この呼出はすでに処理されています' })
     } else {
-      setMessage({ kind: 'ok', text: '受け取りを記録しました。' })
+      setMessage({ kind: 'ok', text: '本の取得を記録しました。ロボは本棚の場所へ帰ります。' })
     }
     await fetchQueue()
   }
@@ -182,6 +191,7 @@ function RobotCall() {
         <span className={`font-bold ${robotState === 'idle' ? 'text-green-600' : 'text-orange-600'}`}>
           {STATE_LABEL[robotState] ?? robotState ?? '—'}
         </span>
+        {robotDetail && <span className="ml-2 text-xs text-gray-500">{robotDetail}</span>}
       </p>
 
       {message && (
@@ -297,7 +307,7 @@ function RobotCall() {
                     onClick={() => handleReceive(c.id)}
                     className="mt-2 w-full rounded-md bg-green-600 py-2 text-sm font-bold text-white hover:bg-green-700"
                   >
-                    ✅ 受け取った（ロボを帰す）
+                    📗 本を取得した（ロボを本棚へ帰す）
                   </button>
                 )}
                 {c.status === 'queued' && (
