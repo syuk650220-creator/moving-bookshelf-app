@@ -60,8 +60,9 @@
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算とブリッジの状態機械を検証（99 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせを検証（111 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
+| `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
 | `nav2/robot_tf_launch.py` | ★段階3★ 実走のときの静的 TF（`base_footprint→base_link→laser`）。`temp_tf_launch.py` のかわりに使う（§7） |
 | `sql/01_realtime_と_updated_at.sql` | schema.sql に足りない 2 つ（Realtime publication ／ updated_at 自動更新トリガ）。SQL Editor で 1 回実行 |
 | `sql/02_manual_control.sql` | 手動操作用の `robot_manual` テーブル・RPC・ビュー。SQL Editor で 1 回実行 |
@@ -160,7 +161,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（99 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（111 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -380,7 +381,17 @@ python3 mecanum_node.py --ros-args -p publish_tf:=false -p use_vy:=false -p max_
 ```
 
 Nav2 の設定は [`nav2/nav2_params_差分.yaml`](nav2/nav2_params_差分.yaml) にあります。
-**既定値から変えるところだけ**を根拠つきで書いてあるので、`nav2_bringup` の標準 `nav2_params.yaml` をコピーしたものに反映してください。
+**既定値から変えるところだけ**を根拠つきで書いてあります。反映は手作業ではなく **`make_nav2_params.py`** で行います（Pi に入っている標準ファイルに差分を重ねて `~/nav2/nav2_params.yaml` を作る。何度実行しても安全で、前のファイルは `.bak_日時` に残ります）。
+
+```bash
+cd ~/moving-bookshelf-app/robot/nav2
+python3 make_nav2_params.py                          # 何を変えるかを見るだけ（書かない）
+python3 make_nav2_params.py --write                  # ~/nav2/nav2_params.yaml を作る
+python3 make_nav2_params.py --write --robot-radius 0.25    # 機体の半径 [m]（中心からいちばん遠い角まで＋0.02）
+```
+
+`behavior_server`（後退・その場旋回のリカバリを外す）は既定では重ねません。ビヘイビアツリーの XML からも Spin / BackUp を外すのが条件で、片方だけ変えると `bt_navigator` が起動に失敗するためです（XML を直したら `--with-behavior-server`）。
+差分ファイルの値を変えたら、もう一度 `--write` で作り直します（`~/nav2/nav2_params.yaml` を直接編集しない）。
 とくに `robot_model_type: "nav2_amcl::OmniMotionModel"` は、入れないと横移動のたびに自己位置が破綻します。
 
 実走の起動順（目安）: LiDAR → `mecanum_node.py`（odom→base_footprint の TF） → `nav2/robot_tf_launch.py`（残りの静的 TF） → Nav2 bringup（地図＋AMCL） → 母艦の RViz（監視） → `bookshelf_bridge.py --live --nav2`（初期位置は本棚の場所のピンから自動。§5-3）。

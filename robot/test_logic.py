@@ -36,6 +36,8 @@ import robot_params as P          # noqa: E402
 import mecanum_serial as M        # noqa: E402
 import bookshelf_bridge as B      # noqa: E402
 import pin_tool as PT             # noqa: E402
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nav2"))
+import make_nav2_params as NP     # noqa: E402  （yaml は main() の中でしか import しない）
 
 ok = True
 
@@ -461,6 +463,54 @@ except ValueError:
 sql = PT.sql_for_pins([PT.pin_row(1, 1.0, 2.0, 0.5, "A's seat")])
 check("sql_for_pins: upsert 文で、クォートをエスケープ",
       ("on conflict (id) do update" in sql, "'A''s seat'" in sql, "'seat'" in sql), (True, True, True))
+
+
+# =====================================================================
+print("\n=== make_nav2_params（Nav2 設定の重ね合わせ）===")
+# =====================================================================
+base = {
+    "amcl": {"ros__parameters": {"robot_model_type": "nav2_amcl::DifferentialMotionModel", "alpha1": 0.2,
+                                 "base_frame_id": "base_footprint"}},
+    "controller_server": {"ros__parameters": {
+        "general_goal_checker": {"plugin": "nav2_controller::SimpleGoalChecker", "stateful": True,
+                                 "xy_goal_tolerance": 0.25},
+        "FollowPath": {"plugin": "nav2_mppi_controller::MPPIController", "vx_max": 0.5, "batch_size": 2000}}},
+    "local_costmap": {"local_costmap": {"ros__parameters": {"robot_radius": 0.22}}},
+    "global_costmap": {"global_costmap": {"ros__parameters": {"footprint": "[[0.1,0.1],[-0.1,-0.1]]"}}},
+    "behavior_server": {"ros__parameters": {"behavior_plugins": ["spin", "backup", "wait"]}},
+}
+over = {
+    "amcl": {"ros__parameters": {"robot_model_type": "nav2_amcl::OmniMotionModel", "alpha5": 0.3}},
+    "controller_server": {"ros__parameters": {
+        "general_goal_checker": {"plugin": "nav2_controller::SimpleGoalChecker", "xy_goal_tolerance": 0.08},
+        "FollowPath": {"plugin": "nav2_rotation_shim_controller::RotationShimController",
+                       "desired_linear_vel": 0.25}}},
+}
+merged, changes = NP.deep_merge(base, over)
+amcl = merged["amcl"]["ros__parameters"]
+check("同じキーは上書き・無いキーは追加・触らないキーは残る",
+      (amcl["robot_model_type"], amcl["alpha5"], amcl["alpha1"], amcl["base_frame_id"]),
+      ("nav2_amcl::OmniMotionModel", 0.3, 0.2, "base_footprint"))
+gc = merged["controller_server"]["ros__parameters"]["general_goal_checker"]
+check("plugin が同じ節は重ねる（stateful は標準の true のまま）", (gc["xy_goal_tolerance"], gc["stateful"]), (0.08, True))
+fp = merged["controller_server"]["ros__parameters"]["FollowPath"]
+check("plugin が変わる節は節ごと差し替え（MPPI のキーを残さない）",
+      (fp["desired_linear_vel"], "vx_max" in fp, "batch_size" in fp), (0.25, False, False))
+check("元の dict は書き換えない",
+      base["controller_server"]["ros__parameters"]["FollowPath"]["plugin"], "nav2_mppi_controller::MPPIController")
+check("差分に無い節はそのまま", merged["behavior_server"], base["behavior_server"])
+check("変更点の一覧（値が同じものは数えない）", len(changes), 4)
+check("追加されたキーの旧値は MISSING",
+      [c for c in changes if c[0][-1] == "alpha5"][0][1] is NP.MISSING, True)
+warns = NP.set_robot_radius(merged, 0.25, changes)
+check("robot_radius を設定する", merged["local_costmap"]["local_costmap"]["ros__parameters"]["robot_radius"], 0.25)
+check("footprint の節は触らず警告",
+      (len(warns), "robot_radius" in merged["global_costmap"]["global_costmap"]["ros__parameters"]), (1, False))
+check("null と空リストを見つける",
+      NP.find_unsupported({"a": {"b": None, "c": [], "d": [1], "e": 0}}), [("a", "b"), ("a", "c")])
+check("必須の値の検算に使うパスが読める",
+      NP.get_path(merged, NP.MUST_HAVE[0][0]), NP.MUST_HAVE[0][1])
+check("無いパスは MISSING", NP.get_path(merged, ("x", "y")) is NP.MISSING, True)
 
 
 print()

@@ -10,7 +10,7 @@
 #    BRANCH=feature/xxx bash ~/moving-bookshelf-app/robot/pi_setup.sh
 #
 #  やること
-#    1. apt で git / python3-serial / python3-requests を入れる
+#    1. apt で git / python3-serial / python3-requests / python3-yaml を入れる
 #    2. ~/moving-bookshelf-app を clone（あれば git pull）
 #    3. 古い ~/pi（2026-09-01 に scp した仮置き）を ~/pi_old_YYYYMMDD に退避。
 #       ~/pi/.env があれば robot/.env に引き継ぐ（★消しません。移動とコピーだけ★）
@@ -32,8 +32,8 @@ warn() { printf '   \033[1;33m★\033[0m %s\n' "$*"; }
 
 # ---------------------------------------------------------------- 1
 step "1/6 依存パッケージ（apt）"
-sudo apt-get install -y -q git python3-serial python3-requests >/dev/null
-ok "git / python3-serial / python3-requests"
+sudo apt-get install -y -q git python3-serial python3-requests python3-yaml >/dev/null
+ok "git / python3-serial / python3-requests / python3-yaml"
 
 # ---------------------------------------------------------------- 2
 step "2/6 リポジトリ（ブランチ: $BRANCH）"
@@ -102,4 +102,5 @@ step "6/6 計算部分の検証（実機なし）"
 printf '\n次にやること:  cd %s\n' "$ROBOT_DIR"
 printf '  段階1 手動操作 : python3 manual_control.py --serial\n'
 printf '  段階2 呼出フロー: python3 bookshelf_bridge.py --live --simulate 5\n'
+printf '  段階3 Nav2 設定 : python3 nav2/make_nav2_params.py   （確認だけ。--write で ~/nav2/nav2_params.yaml を作る）\n'
 printf '  （両方を同時に動かさないこと）\n'
