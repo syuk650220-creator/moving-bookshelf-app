@@ -18,6 +18,19 @@ type CallRow = {
   stop_points: { label: string } | null
 }
 
+// robot_status.current_call_id が指している呼出（ロボがいま担当している 1 件）
+type CurrentCall = {
+  id: string
+  status: string
+  requested_by: string | null
+  books: { title: string } | null
+  stop_points: { label: string } | null
+}
+
+// ロボ側（ブリッジ）は走行中 1 秒ごとに robot_status を更新する。
+// これより長く更新が無ければ「ブリッジが止まっている」とみなし、帰還待ちのロックだけは外す
+const ROBOT_STALE_MS = 60_000
+
 const CALL_LABEL: Record<string, string> = {
   queued: '順番待ち', moving: '移動中', arrived: '到着（受取待ち）',
 }
@@ -44,6 +57,9 @@ function RobotCall() {
   const [queue, setQueue] = useState<CallRow[]>([])
   const [robotState, setRobotState] = useState<string>('')
   const [robotDetail, setRobotDetail] = useState<string | null>(null)   // 「席2 へ移動中（残り 1.2 m）」など
+  const [currentCall, setCurrentCall] = useState<CurrentCall | null>(null)   // ロボがいま担当している呼出
+  const [robotUpdatedAt, setRobotUpdatedAt] = useState<string | null>(null)
+  const [nowMs, setNowMs] = useState(0)   // 「更新が止まっているか」の判定用（ポーリングのたびに更新）
   const [isCalling, setIsCalling] = useState(false)
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
@@ -86,16 +102,29 @@ function RobotCall() {
         .select('id, status, requested_by, created_at, books(title), stop_points(label)')
         .in('status', ['queued', 'moving', 'arrived'])
         .order('created_at', { ascending: true }),
-      // detail 列は sql/03 で増えたもの。無い環境でも動くよう '*' で読む
-      supabase.from('robot_status').select('*').eq('id', 1).single(),
+      // detail 列は sql/03 で増えたもの。無い環境でも動くよう '*' で読む。
+      // robot_calls(...) は current_call_id の先（ロボがいま担当している呼出）を一緒に引く
+      supabase
+        .from('robot_status')
+        .select('*, robot_calls(id, status, requested_by, books(title), stop_points(label))')
+        .eq('id', 1)
+        .single(),
     ])
     if (!aliveRef.current) return
     if (q.data) setQueue(q.data as unknown as CallRow[])
     if (st.data) {
-      const row = st.data as { state: string; detail?: string | null }
+      const row = st.data as unknown as {
+        state: string
+        detail?: string | null
+        updated_at?: string | null
+        robot_calls?: CurrentCall | null
+      }
       setRobotState(row.state)
       setRobotDetail(row.detail ?? null)
+      setCurrentCall(row.robot_calls ?? null)
+      setRobotUpdatedAt(row.updated_at ?? null)
     }
+    setNowMs(Date.now())
   }, [])
 
   useEffect(() => {
@@ -109,12 +138,53 @@ function RobotCall() {
     }
   }, [fetchQueue])
 
+  // ---------------- 自分の呼出が進行中か（1 人 1 件） ----------------
+  //
+  // 「ロボを呼ぶ」は、自分の呼出が 呼出 → 到着 →「本を取得した」→ 本棚へ帰還 → 待機中 まで
+  // 終わるまで押せない。ほかの人は今までどおり呼べる（順番待ちに入る）。
+  //   ① 自分の呼出がキューにある（順番待ち・移動中・到着）
+  //   ② 自分の呼出は完了（done）したが、ロボがまだ本棚の場所へ帰っている途中
+  //      （ブリッジは帰還中も robot_status.current_call_id にその呼出を入れている）
+
+  const myActiveCall = guestName ? queue.find((c) => c.requested_by === guestName) ?? null : null
+  const robotStale =
+    robotUpdatedAt !== null && nowMs > 0 && nowMs - new Date(robotUpdatedAt).getTime() > ROBOT_STALE_MS
+  const myReturning =
+    !myActiveCall &&
+    !!guestName &&
+    robotState !== 'idle' &&
+    currentCall?.requested_by === guestName &&
+    !robotStale   // ブリッジが止まったまま帰還中で固まったときは、永久に押せなくならないよう外す
+  const myBusy = !!myActiveCall || myReturning
+  const myBusyCall = myActiveCall ?? (myReturning ? currentCall : null)
+
   // ---------------- 操作 ----------------
 
   const handleCall = async () => {
-    if (!bookId || seatId === null || !guestName || isCalling) return
+    if (!bookId || seatId === null || !guestName || isCalling || myBusy) return
     setIsCalling(true)
     setMessage(null)
+
+    // ★1 人 1 件★ 画面の表示は最大 1.5 秒遅れるので、書き込む直前に DB でも確かめる
+    // （連打・別のタブ・別の端末から同じ名前で呼んだ場合の二重呼出を防ぐ）
+    const { data: mine, error: checkError } = await supabase
+      .from('robot_calls')
+      .select('id')
+      .eq('requested_by', guestName)
+      .in('status', ['queued', 'moving', 'arrived'])
+      .limit(1)
+    if (checkError) {
+      setMessage({ kind: 'err', text: `呼出の確認に失敗しました: ${checkError.message}` })
+      setIsCalling(false)
+      return
+    }
+    if (mine && mine.length > 0) {
+      setMessage({ kind: 'err', text: 'あなたの呼出がまだ進行中です。ロボが本棚の場所に戻るまでお待ちください。' })
+      await fetchQueue()
+      setIsCalling(false)
+      return
+    }
+
     const { error } = await supabase.from('robot_calls').insert({
       book_id: bookId,
       seat_id: seatId,
@@ -259,15 +329,40 @@ function RobotCall() {
         <button
           type="button"
           onClick={handleCall}
-          disabled={!bookId || seatId === null || isCalling}
+          disabled={!bookId || seatId === null || isCalling || myBusy}
           className={`mt-4 w-full rounded-md py-3 font-bold text-white transition-colors ${
-            !bookId || seatId === null || isCalling
+            !bookId || seatId === null || isCalling || myBusy
               ? 'bg-gray-400 cursor-not-allowed'
               : 'bg-blue-600 hover:bg-blue-700'
           }`}
         >
-          {isCalling ? '呼出中...' : '🤖 ロボを呼ぶ'}
+          {isCalling ? '呼出中...' : myBusy ? '⏳ あなたの呼出が進行中です' : '🤖 ロボを呼ぶ'}
         </button>
+        {myBusy && (
+          <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
+            <p className="font-bold">
+              {myBusyCall?.books?.title ?? '本'} → {myBusyCall?.stop_points?.label ?? '席'}：
+              {myReturning
+                ? '本棚へ帰還中'
+                : CALL_LABEL[myActiveCall?.status ?? ''] ?? myActiveCall?.status}
+            </p>
+            <p className="mt-0.5">
+              {myReturning
+                ? 'ロボが本棚の場所に戻ると、次の呼出ができます。'
+                : myActiveCall?.status === 'arrived'
+                  ? '下の「本を取得した」を押すとロボが本棚の場所へ帰ります。戻ったら次の呼出ができます。'
+                  : myActiveCall?.status === 'queued'
+                    ? 'ロボが本棚の場所に戻るまで、次の呼出はできません。やめるときは下の「呼出を取り消す」。'
+                    : 'ロボが本を届けて本棚の場所に戻るまで、次の呼出はできません。'}
+            </p>
+            {/* 到着後のボタン待ちの間はロボ側が状態を書き換えないので、止まって見えるのは正常。警告は移動中だけ */}
+            {robotStale && myActiveCall?.status === 'moving' && (
+              <p className="mt-0.5 text-red-700">
+                ロボ側の更新が 1 分以上止まっています。ロボ担当（管理者）に知らせてください。
+              </p>
+            )}
+          </div>
+        )}
         {guestName && (
           <p className="mt-2 text-center text-xs text-gray-400">「{guestName}」として呼び出します</p>
         )}
