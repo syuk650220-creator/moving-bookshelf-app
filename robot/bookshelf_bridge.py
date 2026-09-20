@@ -298,14 +298,32 @@ class Nav2Navigator:
         self.nav.create_subscription(PoseWithCovarianceStamped, "amcl_pose", self._on_amcl, qos)
         self.pub_init = self.nav.create_publisher(PoseWithCovarianceStamped, "initialpose", 10)
 
-        print("    [nav] Nav2 の起動を待っています…（amcl と bt_navigator が active になるまで）")
+        # ★待つのは amcl まで★ bt_navigator はここで待ってはいけません（2026-09-20 実機で判明）。
+        #   Nav2 の global_costmap は map→base_link の TF が出るまで起動を完了できず、
+        #   その TF は AMCL が初期位置をもらって初めて出ます。bt_navigator はその後ろに並んでいるので、
+        #   「bt_navigator が active になってから初期位置を送る」順番だとお互いに待ち続けます
+        #   （Nav2 側は 60 秒で起動を諦めます）。amcl → 初期位置（localize）→ bt_navigator の順で待ちます。
+        self._nav_ready = False
+        print("    [nav] AMCL（自己位置推定）の起動を待っています…")
         try:
             self.nav._waitForNodeToActivate("amcl")
+            print("    [nav] AMCL が有効になりました")
+        except AttributeError:
+            # 版が変わって private メソッドが無くなった場合: 待たずに進む（localize() が 3 秒ごとに再送する）
+            print("    [nav] （この版では AMCL の起動待ちを省略します）")
+
+    def wait_navigation_ready(self):
+        """経路計画・制御側（bt_navigator）が active になるまで待つ。初期位置を与えた「あと」に呼ぶこと。"""
+        if self._nav_ready:
+            return
+        print("    [nav] 経路計画・制御（bt_navigator）の起動を待っています…"
+              "（初期位置が入ると先へ進みます。1 分以上ここで止まるなら Nav2 の窓を確認）")
+        try:
             self.nav._waitForNodeToActivate("bt_navigator")
         except AttributeError:
-            # 版が変わって private メソッドが無くなった場合の逃げ道
-            # （localizer='robot_localization' にすると初期位置の自動送信を通らない）
+            # （localizer='robot_localization' にすると AMCL 待ちと初期位置の自動送信を通らない）
             self.nav.waitUntilNav2Active(localizer="robot_localization")
+        self._nav_ready = True
         print("    [nav] Nav2 が有効になりました")
 
     # ---------------- AMCL の現在地 ----------------
@@ -376,6 +394,7 @@ class Nav2Navigator:
     # ---------------- 走行 ----------------
 
     def go(self, goal: dict, on_progress=None) -> bool:
+        self.wait_navigation_ready()
         p = self._PoseStamped()
         p.header.frame_id = goal["frame_id"]
         p.header.stamp = self.nav.get_clock().now().to_msg()
@@ -810,6 +829,9 @@ def main():
         print(f"現在の robot_status: {st[0] if st else '（行がありません）'}")
         q = supa.select("robot_calls", "status=eq.queued&select=id&limit=100")
         print(f"未処理の呼出: {len(q)} 件")
+        if q and args.live:
+            print("  ★たまっている呼出は、準備ができしだいすぐ処理します（--nav2 ならロボが動き出します）★\n"
+                  "    走らせたくない古い呼出は、アプリの「ロボを呼ぶ」画面で取り消してから起動してください。")
     except Exception as e:
         sys.exit(f"Supabase に接続できません: {e}")
 
@@ -845,7 +867,16 @@ def main():
                     schema_v3=v3)
 
     if args.nav2:
-        bridge.startup_localize()
+        # 順番が大事: 初期位置を与える → それで Nav2 の残り（costmap・bt_navigator）が起動を完了できる
+        try:
+            if not bridge.startup_localize():
+                print("    [nav] ★初期位置が入っていません★ RViz の 2D Pose Estimate で初期位置を与えてください"
+                      "（与えるまで Nav2 は起動を完了できません）")
+            navigator.wait_navigation_ready()
+        except KeyboardInterrupt:
+            bridge.shutdown()
+            print("終了しました。")
+            return
 
     if args.realtime:
         try_realtime(url, key, bridge.handle)

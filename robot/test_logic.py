@@ -513,6 +513,44 @@ check("必須の値の検算に使うパスが読める",
 check("無いパスは MISSING", NP.get_path(merged, ("x", "y")) is NP.MISSING, True)
 
 
+# =====================================================================
+print("\n=== Nav2 の起動待ちの順番（amcl → 初期位置 → bt_navigator）===")
+# =====================================================================
+# 2026-09-20 実機: 「bt_navigator が active になってから初期位置を送る」順だと、Nav2 とお互いに待ち続けた。
+# ROS 2 が無い PC でも確かめられるよう、BasicNavigator の代わりに呼ばれた順を記録する偽物を差し込む。
+import inspect
+
+
+class _FakeBasicNav:
+    def __init__(self):
+        self.waited = []
+
+    def _waitForNodeToActivate(self, name):
+        self.waited.append(name)
+
+
+init_src = inspect.getsource(B.Nav2Navigator.__init__)
+check("__init__ は amcl だけを待つ（bt_navigator を待つと Nav2 とお互いに待ち続ける）",
+      ('_waitForNodeToActivate("amcl")' in init_src, '_waitForNodeToActivate("bt_navigator")' in init_src),
+      (True, False))
+
+nv = B.Nav2Navigator.__new__(B.Nav2Navigator)      # ROS を import する __init__ は通さない
+nv.nav = _FakeBasicNav()
+nv._nav_ready = False
+nv.wait_navigation_ready()
+check("wait_navigation_ready は bt_navigator を待つ", nv.nav.waited, ["bt_navigator"])
+nv.wait_navigation_ready()
+check("2 回目は待たない（一度 active を確認したら覚えておく）", nv.nav.waited, ["bt_navigator"])
+
+go_src = inspect.getsource(B.Nav2Navigator.go)
+check("go() はゴールを送る前に Nav2 の準備を確かめる",
+      go_src.index("wait_navigation_ready()") < go_src.index("goToPose"), True)
+
+main_src = inspect.getsource(B.main)
+check("main は 初期位置（startup_localize）→ bt_navigator 待ち の順",
+      main_src.index("startup_localize()") < main_src.index("wait_navigation_ready()"), True)
+
+
 print()
 print("=" * 46)
 print("  すべて成功" if ok else "  ★失敗があります★")

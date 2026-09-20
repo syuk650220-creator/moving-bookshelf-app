@@ -14,8 +14,15 @@ Nav2 標準の nav2_params.yaml のフレーム名（amcl は base_footprint、c
 
     # 窓A: 車輪オドメトリ（odom → base_footprint）
     python3 ~/moving-bookshelf-app/robot/mecanum_node.py --ros-args -p base_frame:=base_footprint
-    # 窓B: この launch（★数値は temp_tf_launch.py と同じにする★）
-    ros2 launch ~/moving-bookshelf-app/robot/nav2/robot_tf_launch.py laser_x:=0.10 laser_z:=0.20
+    # 窓B: この launch（★数値は temp_tf_launch.py と同じにする★。既定値はこの機体の値なので、引数なしで合う）
+    ros2 launch ~/moving-bookshelf-app/robot/nav2/robot_tf_launch.py
+
+★既定値はこの機体（2026-09-20 に Pi の temp_tf_launch.py と実機で確認）★
+    base_footprint→base_link  z 0.05
+    base_link→laser           x 0.10, z 0.15, yaw 3.14159
+  yaw が 3.14159 なのは、RPLIDAR の 0° が機体の「後ろ」（基板側）を向いて付いているためです
+  （機体の前＝本棚側）。0 のままだと地図は作れてしまいますが、Nav2 がゴールと反対へ走らせます。
+  確かめ方: ラジコンで前進させたとき、RViz の base_link の赤い軸の向きへロボが進めば合っています。
 
 LiDAR の取付位置は、地図を作ったときと同じ値にすること（違うと地図と /scan がずれます）。
     grep -n -E "'--(x|y|z|yaw)'" ~/bringup/temp_tf_launch.py      # いまの値を確かめる
@@ -35,12 +42,12 @@ def generate_launch_description():
                               description="base_link から見た LiDAR の前後位置 [m]（前が +）"),
         DeclareLaunchArgument("laser_y", default_value="0.0",
                               description="同 左右位置 [m]（左が +）"),
-        DeclareLaunchArgument("laser_z", default_value="0.20",
+        DeclareLaunchArgument("laser_z", default_value="0.15",
                               description="同 高さ [m]"),
-        DeclareLaunchArgument("laser_yaw", default_value="0.0",
-                              description="LiDAR の向き [rad]（前後が逆なら 3.14159）"),
-        DeclareLaunchArgument("base_z", default_value="0.0",
-                              description="base_footprint（床）から base_link までの高さ [m]。0 のままで構わない"),
+        DeclareLaunchArgument("laser_yaw", default_value="3.14159",
+                              description="LiDAR の向き [rad]。この機体は 0° が後ろ向きなので 3.14159（前向きに付け直したら 0.0）"),
+        DeclareLaunchArgument("base_z", default_value="0.05",
+                              description="base_footprint（床）から base_link までの高さ [m]（RViz の見た目だけに効く）"),
     ]
 
     footprint_tf = Node(

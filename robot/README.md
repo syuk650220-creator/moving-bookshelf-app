@@ -61,7 +61,7 @@
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせを検証（111 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせを検証（116 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
 | `nav2/robot_tf_launch.py` | ★段階3★ 実走のときの静的 TF（`base_footprint→base_link→laser`）。`temp_tf_launch.py` のかわりに使う（§7） |
@@ -162,7 +162,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（111 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（116 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -237,7 +237,12 @@ python3 bookshelf_bridge.py --live --simulate 5   # 走行の代わりに 5 秒�
 python3 bookshelf_bridge.py --live --nav2
 ```
 
-起動すると amcl と bt_navigator が active になるのを待ち、**まず本棚の場所で自己位置推定を 1 回**行います（母艦の RViz でレーザーの点が地図の壁に重なっているかを、走り出す前にここで確認）。そのあとは呼出が来るたびに次の順で動きます。
+起動すると **amcl が active になるのを待つ → 本棚の場所で自己位置推定を 1 回（初期位置を送る）→ bt_navigator が active になるのを待つ**、の順で準備します（母艦の RViz でレーザーの点が地図の壁に重なっているかを、走り出す前にここで確認）。そのあとは呼出が来るたびに次の順で動きます。
+
+> ★この順番には理由があります（2026-09-20 実機で判明）★ Nav2 の global_costmap は `map→base_link` の TF が出るまで起動を完了できず、その TF は AMCL が初期位置をもらって初めて出ます。
+> 初期位置が来ないまま **60 秒**たつと Nav2 は起動を諦めます（`Timed out waiting for transform from base_link to map` のあと `Failed to bring up`）。
+> → **ブリッジは Nav2 より先か、Nav2 の起動から 1 分以内に起動する**こと（先に起動しておけば AMCL が立ち上がった瞬間に初期位置を送ります）。諦めてしまっていたら Nav2 を起動し直します。
+> 順番待ち（queued）の呼出が残っていると、準備ができしだいロボが走り出します。古い呼出はアプリで取り消してから起動してください。
 
 | 順 | ブリッジがすること | `robot_status.state` |
 |---|---|---|
@@ -414,11 +419,12 @@ python3 make_nav2_params.py --write --robot-radius 0.21    # 機体の半径 [m]
 **LiDAR の取付位置（同じ計測。`robot_tf_launch.py` / `temp_tf_launch.py` に入れる値の目安）**
 
 LiDAR は本棚の上（機体でいちばん高い位置）にあり、回転の中心から **前（本棚側）へ 約 86 mm・左右のずれ 0**、スキャン面は床から 約 32 cm です。
-→ `laser_x:=0.086 laser_y:=0.0 laser_z:=0.32`（既定値の `laser_x:=0.10 laser_z:=0.20` とほぼ同じ向き・量。2D の地図と走行に効くのは x と yaw で、z は RViz の見た目だけ）。
-★要確認★ LiDAR の 0° の向き（`laser_yaw`）は CAD からは決められません（CAD では LiDAR のベルト・モータ側が後ろ＝基板側を向いています）。RViz で、前にある壁が前に映るかを見て確かめます。地図づくりと実走で同じ値を使うこと。
+Pi の `~/bringup/temp_tf_launch.py` に入っている値は `base_footprint→base_link` z 0.05、`base_link→laser` x 0.10・z 0.15 で、CAD の値（x 0.086）との差は 1.4 cm。2D の地図と走行に効くのは x と yaw で、z は RViz の見た目だけなので、**Pi の値をそのまま使います**（`robot_tf_launch.py` の既定値も同じにしてあります）。
+**★`laser_yaw` は 3.14159★（2026-09-20 実機で確定）** RPLIDAR の 0° は機体の後ろ（基板側）を向いて付いています（CAD でもベルト・モータ側が基板側）。yaw 0 のままでも地図は普通に作れてしまいますが、ロボの向きが 180° 逆に推定され、Nav2 がゴールと反対へ走らせます。
+見つけ方は「ラジコンで前進させたのに、地図上のロボは自分の向きと逆へ下がっていく」。`temp_tf_launch.py` の laser の行に `'--yaw','3.14159'` を足し、地図とピンを作り直しました。地図づくりと実走で同じ値を使うこと。
 スキャン面より低い物（椅子の脚の台座、床に置いた箱など）は LiDAR に映らないので、走らせる場所の床は片付けておきます。
 
-実走の起動順（目安）: LiDAR → `mecanum_node.py`（odom→base_footprint の TF） → `nav2/robot_tf_launch.py`（残りの静的 TF） → Nav2 bringup（地図＋AMCL） → 母艦の RViz（監視） → `bookshelf_bridge.py --live --nav2`（初期位置は本棚の場所のピンから自動。§5-3）。
+実走の起動順（目安）: LiDAR → `mecanum_node.py`（odom→base_footprint の TF） → `nav2/robot_tf_launch.py`（残りの静的 TF） → `bookshelf_bridge.py --live --nav2`（AMCL を待って、初期位置を本棚の場所のピンから自動で送る。§5-3） → Nav2 bringup（地図＋AMCL） → 母艦の RViz（監視）。ブリッジを Nav2 のあとに起動するなら **1 分以内**に。
 
 > ★TF の鎖は地図づくりのときと同じ `map → odom → base_footprint → base_link → laser` にすること★
 > 地図づくりで使った `~/bringup/temp_tf_launch.py` は `odom→base_footprint` まで「動かない仮の TF」で出します。
@@ -426,10 +432,10 @@ LiDAR は本棚の上（機体でいちばん高い位置）にあり、回転�
 >
 > ```bash
 > python3 mecanum_node.py --ros-args -p base_frame:=base_footprint                      # odom → base_footprint
-> ros2 launch ~/moving-bookshelf-app/robot/nav2/robot_tf_launch.py laser_x:=0.10 laser_z:=0.20   # base_footprint → base_link → laser
+> ros2 launch ~/moving-bookshelf-app/robot/nav2/robot_tf_launch.py      # base_footprint → base_link → laser（既定値＝この機体の値: x 0.10, z 0.15, yaw 3.14159, base_z 0.05）
 > ```
 >
-> `laser_x` / `laser_z` は **`temp_tf_launch.py` と同じ値**にします（`grep -n -E "'--(x|y|z|yaw)'" ~/bringup/temp_tf_launch.py` で確認。違うと地図と `/scan` がずれます）。
+> `laser_x` / `laser_z` / `laser_yaw` は **`temp_tf_launch.py` と同じ値**にします（`grep -n -E "'--(x|y|z|yaw)'" ~/bringup/temp_tf_launch.py` で確認。違うと地図と `/scan` がずれます）。
 > 鎖の形が同じなので、Nav2 標準の `nav2_params.yaml` のフレーム名（amcl は `base_footprint`、costmap は `base_link`）は書き換え不要で、`pin_tool.py` の既定（`base_link`）も地図づくり・実走の両方で使えます。
 > 当日の窓の構成は OneDrive の `03_ガイド・解説/08_アプリ連携_段階3_マッピングから呼出・帰還まで_v1.html`。
 
