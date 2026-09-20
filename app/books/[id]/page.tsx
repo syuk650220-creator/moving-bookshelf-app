@@ -3,6 +3,7 @@ import { use, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { getGuestName } from '@/lib/guestName'
+import { borrowBook } from '@/lib/loans'
 import Link from 'next/link'
 
 type Book = {
@@ -48,6 +49,8 @@ export default function BookDetailPage({
   const [loans, setLoans] = useState<Loan[]>([])
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
+  // 画面を差し替えずに上に出すお知らせ（「すでに貸出中です」など）
+  const [notice, setNotice] = useState<string | null>(null)
 
   async function fetchData() {
     // 本を1件取得
@@ -78,6 +81,7 @@ export default function BookDetailPage({
   }
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- マウント時の初回フェッチ（setStateはawait後にのみ実行される）
     fetchData()
   }, [id])
 
@@ -125,7 +129,8 @@ export default function BookDetailPage({
     }
   }
 
-  // 「借りる」処理
+  // 「直接借りる」処理（ロボを呼ばず、自分で本棚から取るとき）
+  // ※ロボに運んでもらう「借りる」は /robot-call へのリンクで、貸出の記録は到着後の「本を取得した」で行う
   async function handleBorrow() {
     if (isProcessing) return
 
@@ -138,41 +143,23 @@ export default function BookDetailPage({
 
     setIsProcessing(true)
     setErrorMsg(null)
+    setNotice(null)
 
     try {
-      // ① loansに1行insert
-      const { error: insertError } = await supabase
-        .from('loans')
-        .insert({
-          book_id: id,
-          borrower_type: 'guest',
-          guest_name: guestName,
-        })
-
-      if (insertError) {
-        setErrorMsg('借りる処理に失敗しました')
+      // 貸出の記録（books を貸出中に → loans に1行）。ロボ呼出の「本を取得した」と同じ処理
+      const result = await borrowBook(id, guestName)
+      if (!result.ok) {
+        if (result.reason === 'not_available') {
+          // ほかの人が先に借りた。画面を最新にして知らせる
+          setNotice(result.message)
+          await fetchData()
+        } else {
+          setErrorMsg(result.message)
+        }
         return
       }
 
-      // ② booksのstatusをon_loanに更新
-      const { error: updateError } = await supabase
-        .from('books')
-        .update({ status: 'on_loan' })
-        .eq('id', id)
-
-      if (updateError) {
-        // booksの更新に失敗したら、先ほどinsertしたloansの行を取り消す（ロールバック）
-        await supabase
-          .from('loans')
-          .delete()
-          .eq('book_id', id)
-          .is('returned_at', null)
-
-        setErrorMsg('状態の更新に失敗しました')
-        return
-      }
-
-      // ③ 画面を最新化
+      // 画面を最新化
       await fetchData()
 
     } catch (e) {
@@ -290,23 +277,37 @@ export default function BookDetailPage({
         </p>
       )}
 
+      {notice && (
+        <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-sm text-amber-800">
+          {notice}
+        </p>
+      )}
+
       {/* 借りる・返すボタン（statusで出し分け） */}
-      <div className="mt-4 flex gap-4">
-        <Link
-          href={`/robot-call?book=${id}`}
-          className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
-        >
-          🤖 ロボを呼ぶ
-        </Link>
-        {book.status === 'available' ? (
-          <button
-            className="bg-blue-500 text-white px-4 py-2 rounded disabled:opacity-50"
-            disabled={isProcessing}
-            onClick={handleBorrow}
-          >
-            {isProcessing ? '処理中...' : '借りる'}
-          </button>
-        ) : (
+      {book.status === 'available' ? (
+        <div className="mt-4">
+          <div className="flex flex-wrap gap-4">
+            {/* 借りる ＝ ロボを呼ぶ画面へ。貸出の記録は、ロボが着いて「本を取得した」を押したとき */}
+            <Link
+              href={`/robot-call?book=${id}`}
+              className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+            >
+              🤖 借りる
+            </Link>
+            <button
+              className="border border-blue-500 text-blue-600 px-4 py-2 rounded hover:bg-blue-50 disabled:opacity-50"
+              disabled={isProcessing}
+              onClick={handleBorrow}
+            >
+              {isProcessing ? '処理中...' : '直接借りる'}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            「借りる」は本棚ロボが席まで本を運びます。「直接借りる」はロボを呼ばず、自分で本棚から取るときに押します。
+          </p>
+        </div>
+      ) : (
+        <div className="mt-4 flex flex-wrap gap-4">
           <button
             className="bg-gray-500 text-white px-4 py-2 rounded disabled:opacity-50"
             disabled={isProcessing}
@@ -314,8 +315,15 @@ export default function BookDetailPage({
           >
             {isProcessing ? '処理中...' : '返す'}
           </button>
-        )}
-      </div>
+          {/* 返却のために本棚ロボを席まで呼ぶ */}
+          <Link
+            href={`/robot-call?book=${id}`}
+            className="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700"
+          >
+            🤖 ロボを呼ぶ
+          </Link>
+        </div>
+      )}
 
       {/* 貸出履歴 */}
       <h2 className="mt-6 text-xl font-bold">貸出履歴</h2>
