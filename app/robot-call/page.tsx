@@ -3,6 +3,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabaseClient'
 import { getGuestName } from '@/lib/guestName'
+import { borrowBook } from '@/lib/loans'
 import Link from 'next/link'
 
 type Book = { id: string; title: string; status: string }
@@ -14,7 +15,8 @@ type CallRow = {
   status: string
   requested_by: string | null
   created_at: string
-  books: { title: string } | null
+  book_id: string | null
+  books: { title: string; status: string } | null   // status が available なら「借りるための呼出」
   stop_points: { label: string } | null
 }
 
@@ -99,7 +101,7 @@ function RobotCall() {
     const [q, st] = await Promise.all([
       supabase
         .from('robot_calls')
-        .select('id, status, requested_by, created_at, books(title), stop_points(label)')
+        .select('id, status, requested_by, created_at, book_id, books(title, status), stop_points(label)')
         .in('status', ['queued', 'moving', 'arrived'])
         .order('created_at', { ascending: true }),
       // detail 列は sql/03 で増えたもの。無い環境でも動くよう '*' で読む。
@@ -202,7 +204,12 @@ function RobotCall() {
 
   // 到着した呼出を「本を取得した」→ done
   // （ブリッジはこれを見て robot_status を returning にし、本棚の場所へ帰ってから次の呼出へ進む）
+  //
+  // 本が在庫ありなら、ここで貸出も記録する（本の画面の「借りる」→ この画面 → 到着 → 取得、が 1 本の流れ）。
+  // 借りた人は、ボタンを押した人ではなく「呼んだ人」（requested_by）。
+  // 貸出中の本の呼出（返却のためにロボを呼んだ場合）は、貸出を記録しない。
   const handleReceive = async (callId: string) => {
+    const call = queue.find((c) => c.id === callId) ?? null
     const { data, error } = await supabase
       .from('robot_calls')
       .update({ status: 'done' })
@@ -214,7 +221,29 @@ function RobotCall() {
     } else if (!data || data.length === 0) {
       setMessage({ kind: 'err', text: 'この呼出はすでに処理されています' })
     } else {
-      setMessage({ kind: 'ok', text: '本の取得を記録しました。ロボは本棚の場所へ帰ります。' })
+      const borrower = call?.requested_by ?? guestName
+      if (call?.book_id && call.books?.status === 'available' && borrower) {
+        const result = await borrowBook(call.book_id, borrower)
+        if (result.ok) {
+          setMessage({
+            kind: 'ok',
+            text: `本の取得を記録し、「${borrower}」さんの貸出として記録しました。ロボは本棚の場所へ帰ります。`,
+          })
+        } else if (result.reason === 'not_available') {
+          // 到着を待つあいだに、だれかが「直接借りる」で先に記録した
+          setMessage({ kind: 'ok', text: '本の取得を記録しました（この本はすでに貸出中でした）。ロボは本棚の場所へ帰ります。' })
+        } else {
+          setMessage({
+            kind: 'err',
+            text: 'ロボは本棚の場所へ帰りますが、貸出の記録に失敗しました。本の画面の「直接借りる」で記録してください。',
+          })
+        }
+        // 本の状態（在庫あり → 貸出中）を選択欄の表示にも反映する
+        const b = await supabase.from('books').select('id, title, status').order('title')
+        if (aliveRef.current && b.data) setBooks(b.data as Book[])
+      } else {
+        setMessage({ kind: 'ok', text: '本の取得を記録しました。ロボは本棚の場所へ帰ります。' })
+      }
     }
     await fetchQueue()
   }
@@ -244,7 +273,9 @@ function RobotCall() {
   return (
     <main className="p-6 max-w-md mx-auto">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">ロボを呼ぶ</h1>
+        <h1 className="text-2xl font-bold">
+          {bookParam && selectedBook?.status === 'available' ? '借りる（ロボを呼ぶ）' : 'ロボを呼ぶ'}
+        </h1>
         <Link
           href={bookParam ? `/books/${bookParam}` : '/books'}
           className="text-sm text-blue-600 underline"
@@ -280,9 +311,17 @@ function RobotCall() {
       <section className="mt-4 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
         {/* 本の選択（S-2 から来たときは固定表示） */}
         {bookParam && selectedBook ? (
-          <p className="text-sm">
-            呼ぶ本: <span className="font-bold">{selectedBook.title}</span>
-          </p>
+          <div>
+            <p className="text-sm">
+              {selectedBook.status === 'available' ? '借りる本' : '呼ぶ本'}:{' '}
+              <span className="font-bold">{selectedBook.title}</span>
+            </p>
+            <p className="mt-1 text-xs text-gray-500">
+              {selectedBook.status === 'available'
+                ? 'ロボが席に着いて「本を取得した」を押すと、貸出として記録されます（途中でやめた・届かなかった場合は記録されません）。'
+                : 'この本は貸出中です。返却のために本棚ロボを席まで呼べます（返却の記録は、本の画面の「返す」で）。'}
+            </p>
+          </div>
         ) : (
           <div>
             <label htmlFor="book" className="block text-sm font-medium text-gray-700 mb-1">
@@ -404,6 +443,11 @@ function RobotCall() {
                   >
                     📗 本を取得した（ロボを本棚へ帰す）
                   </button>
+                )}
+                {c.status === 'arrived' && c.books?.status === 'available' && (
+                  <p className="mt-1 text-center text-xs text-gray-500">
+                    押すと「{c.requested_by ?? 'ゲスト'}」さんの貸出として記録されます
+                  </p>
                 )}
                 {c.status === 'queued' && (
                   <button
