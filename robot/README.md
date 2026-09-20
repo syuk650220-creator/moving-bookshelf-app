@@ -264,7 +264,19 @@ python3 bookshelf_bridge.py --live --nav2
 Realtime も試すなら `--realtime` を足します。**動かなくても構いません** ― ポーリング（1 秒）だけで運用できる設計です。
 会場の Wi-Fi は不通前提という裁定が出ているため、意図的にこうしてあります。
 
-### 5-4 ピン建て（席1〜3 と本棚の場所の座標を登録する）
+### 5-4 地図づくりとピン建て（席1〜3 と本棚の場所の座標を登録する）
+
+**地図づくりはアプリのラジコンで走らせてできます（2026-09-20 実機で確認）。** 地図づくりのあいだ動かすのは LiDAR・仮の TF（`~/bringup/temp_tf_launch.py`）・slam_toolbox だけで、
+`mecanum_node.py` は使いません。Arduino が空いているので、§4 の手動操作（`manual_control.py --serial` ＋ アプリの `/admin` の手動モード）をそのまま横で動かせます。
+この SLAM は車輪の回転数を使わず点群だけで位置を追うので、手で押すのと地図の出来は変わりません（押す人が LiDAR に映り込まないぶん有利）。
+
+- 速度は 25〜35 rpm、**回転するときはいちばん遅い 15 rpm**（30 rpm だと 1 秒に約 50° 回って地図が乱れやすい）。壁の 30 cm 手前でボタンを離す
+- 走り回る前に **前進を 1〜2 秒**: RViz のロボ（base_link の赤い軸）が赤い軸の向きへ進めば TF は合っている。後ろへ下がるなら `laser_yaw` が 180° 違う（§7）
+- 地図を作り直すには slam_toolbox を Ctrl+C して起動し直す（原点が変わるので**ピンは取り直し**）
+- 保存は **`mkdir -p ~/maps`** のあと `ros2 run nav2_map_server map_saver_cli -f ~/maps/my_map --ros-args -p save_map_timeout:=10.0`
+  （フォルダが無いと `Unable to open file`、待ち時間が既定の 2 秒だと `Failed to spin map subscription` で失敗することがある）。母艦側で保存する操作は無い
+- **実走（§5-3）に移る前に** slam_toolbox → 仮の TF → 手動操作（アプリで手動モードを切る → `manual_control.py` を Ctrl-C）を止める。LiDAR は止めない
+
 
 ピンは 4 つです。**本棚の場所（id=0）は床にテープで印を付け、毎回同じ向きに置く**こと（ここが帰る先であり、自己位置推定の初期位置です）。
 
