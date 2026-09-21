@@ -8,6 +8,10 @@ mecanum_node.py ― ROS2 ノード（Nav2 と Arduino のあいだ）  ★タス
 仕様は simulink/arduino/README_raspberrypi.md（v2・テレメトリ 24 バイト）、
 実装の中身は mecanum_serial.py にあります。
 IMU（加速度・角速度）は Telemetry.acc / .gyro に入っていますが、まだ /imu には出していません。
+★use_gyro:=true にすると、オドメトリの「向きの変化」だけを IMU のジャイロから取ります（2026-09-21 追加）★
+  進んだ量は車輪（エンコーダ）、回った量はジャイロ、「止まっている」の判定とジャイロのゼロ点合わせは車輪、
+  という補い合いです（mecanum_serial.GyroYaw）。既定は false（今までどおり全部車輪から）。
+  どちらの設定でも、旋回中は 2 秒ごとに「車輪から出した速さ」と「ジャイロの速さ」を並べてログに出します。
 ★IMU は Arduino Nano 33 IoT 内蔵の LSM6DS3 を使う方針です（2026-09-03 決定。BNO055 は使いません）★
   次の仕事: /imu（sensor_msgs/Imu）を出して robot_localization に角速度 Z を入れる（設計メモ §10 A6）。
 
@@ -24,6 +28,9 @@ IMU（加速度・角速度）は Telemetry.acc / .gyro に入っていますが
 
   # パラメータを変える
   python3 mecanum_node.py --ros-args -p use_vy:=true -p max_rpm:=30.0
+
+  # 旋回をジャイロから取る（起動から 2 秒ほどは機体を静止させておくこと＝ゼロ点合わせ）
+  python3 mecanum_node.py --ros-args -p base_frame:=base_footprint -p use_gyro:=true
 
 ────────────────────────────────────────────────────────────
 ★publish_tf について★
@@ -49,7 +56,7 @@ from std_msgs.msg import Float32MultiArray
 from tf2_ros import TransformBroadcaster
 
 import robot_params as P
-from mecanum_serial import MecanumLink, Quantizer, MOTION_NAME, find_ports
+from mecanum_serial import MecanumLink, Quantizer, GyroYaw, MOTION_NAME, find_ports
 
 
 def yaw_to_quat(yaw: float):
@@ -75,6 +82,7 @@ class MecanumNode(Node):
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("odom_rate", 50.0)
         self.declare_parameter("use_stamped_cmd_vel", False)
+        self.declare_parameter("use_gyro", False)   # ★旋回（向きの変化）を IMU のジャイロから取る★
 
         gp = self.get_parameter
         left = gp("left_port").value or None
@@ -82,6 +90,10 @@ class MecanumNode(Node):
         self.odom_frame = gp("odom_frame").value
         self.base_frame = gp("base_frame").value
         self.publish_tf = gp("publish_tf").value
+        self.use_gyro = bool(gp("use_gyro").value)
+        self.gyro = GyroYaw()
+        self._gyro_announced = False
+        self._wz_pair = None                 # (車輪から出した wz, ジャイロの wz) 直近の値。ログ用
 
         # ---------------- シリアル ----------------
         left, right = find_ports(left, right, verbose=False)
@@ -160,6 +172,17 @@ class MecanumNode(Node):
             return                        # まだテレメトリが来ていない
         vx, vy, wz = vel
 
+        # ★エンコーダとジャイロの補い合い★ 進んだ量は車輪、回った量はジャイロ（use_gyro のとき）。
+        #   use_gyro が false でも、ゼロ点合わせと見比べ用のログのために毎回通す
+        L, R = self.link.tlm_left, self.link.tlm_right
+        g = self.link.yaw_rate()
+        if g is not None and L and R:
+            moving = any(abs(r) >= 1.0 for r in (L.rpm_front, L.rpm_rear, R.rpm_front, R.rpm_rear))
+            wz_gyro = self.gyro.update(g, wz, moving, stamp=(L.t, R.t))
+            self._wz_pair = (wz, g - self.gyro.bias) if (moving and self.gyro.ready) else None
+            if self.use_gyro:
+                wz = wz_gyro
+
         # 車体座標 → 世界座標（区間の中央の角度を使うと精度が上がる）
         th_mid = self.th + wz * dt * 0.5
         self.x += (vx * math.cos(th_mid) - vy * math.sin(th_mid)) * dt
@@ -201,7 +224,7 @@ class MecanumNode(Node):
         tc[14] = BIG
         tc[21] = BIG
         tc[28] = BIG
-        tc[35] = 0.20 ** 2     # wz  ← その場旋回はいちばん滑る
+        tc[35] = (0.05 if (self.use_gyro and self.gyro.ready) else 0.20) ** 2   # wz  ← 車輪だけだと、その場旋回はいちばん滑る
         od.twist.covariance = tc
 
         self.pub_odom.publish(od)
@@ -248,6 +271,20 @@ class MecanumNode(Node):
             self.get_logger().warn(
                 f"テレメトリが少ないです（2秒で {recv} 回）。"
                 "モデルを［ビルド、展開、起動］したか、ケーブルを確認してください")
+
+        # ★ジャイロ★ ゼロ点が決まったら 1 回知らせる。旋回中は、車輪とジャイロの「回る速さ」を並べて出す
+        if self.gyro.ready and not self._gyro_announced:
+            self._gyro_announced = True
+            self.get_logger().info(
+                f"ジャイロのゼロ点: {math.degrees(self.gyro.bias):+.2f} dps（静止中に測定）。"
+                + ("旋回はジャイロから取ります（use_gyro）" if self.use_gyro
+                   else "旋回は車輪から取っています（ジャイロを使うなら use_gyro:=true）"))
+        if self._wz_pair is not None and abs(self._wz_pair[0]) > 0.2:
+            w, gz = self._wz_pair
+            ratio = gz / w
+            self.get_logger().info(
+                f"旋回の速さ: 車輪 {w:+.2f} / ジャイロ {gz:+.2f} rad/s（ジャイロ÷車輪 = {ratio:.2f}）"
+                + ("  ★符号が逆です。use_gyro は使わないでください★" if ratio < 0 else ""))
 
         # ★v2★ フレーム長の食い違い（Arduino が v1 のまま）
         if self.link.bad_frames > self._last_bad:

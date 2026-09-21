@@ -649,6 +649,31 @@ vx_, vy_, wz_ = M.twist_for_motion(M.TURN_LEFT, 15)
 check("左回転 15 rpm は約 0.47 rad/s（1 秒に約 27°）", (vx_, vy_, round(wz_, 2)), (0.0, 0.0, 0.47))
 
 
+# =====================================================================
+print("\n=== GyroYaw（旋回はジャイロ、静止の判定とゼロ点合わせは車輪）===")
+# =====================================================================
+gy = M.GyroYaw(calib_samples=5)
+check("ゼロ点が決まる前に動いたら、車輪の wz を使う", gy.update(0.50, 0.40, True, stamp=1), 0.40)
+for k in range(5):                      # 静止中: ジャイロは 0.02 rad/s ずれている
+    out = gy.update(0.02, 0.0, False, stamp=10 + k)
+check("静止中は wz = 0", out, 0.0)
+check("静止中の平均がゼロ点になる", (gy.ready, round(gy.bias, 6)), (True, 0.02))
+check("動いているときは ジャイロ − ゼロ点", round(gy.update(0.49, 0.60, True, stamp=20), 6), 0.47)
+b0 = gy.bias
+for _ in range(3):                      # オドメトリは 50 Hz、テレメトリは 10 Hz: 同じサンプルが何度も来る
+    gy.update(0.03, 0.0, False, stamp=21)
+check("同じテレメトリ（stamp が同じ）は 1 回しか数えない", round(gy.bias, 9), round(b0 + 0.02 * (0.03 - b0), 9))
+b1 = gy.bias
+gy.update(0.50, 0.0, False, stamp=22)   # 車輪は止まっているのに大きく回っている（手で回された）
+check("静止中でも大きな値はゼロ点の更新に使わない", gy.bias, b1)
+gy2 = M.GyroYaw(calib_samples=3)
+for k in range(3):
+    gy2.update(0.03, 0.0, False, stamp=k)
+for k in range(200):                    # 温度でゼロ点がゆっくり動く → 追いかける
+    gy2.update(0.05, 0.0, False, stamp=100 + k)
+check("ゼロ点はゆっくり追従する", round(gy2.bias, 3), 0.05)
+
+
 print()
 print("=" * 46)
 print("  すべて成功" if ok else "  ★失敗があります★")

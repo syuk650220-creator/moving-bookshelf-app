@@ -8,6 +8,7 @@
 #  窓の構成（robot/README.md §5-4「車輪オドメトリを使う地図づくり」）:
 #    窓①  ros2 launch rplidar_ros rplidar.launch.py
 #    窓②  python3 mecanum_node.py --ros-args -p base_frame:=base_footprint -p use_vy:=true
+#          （旋回をジャイロから取るなら -p use_gyro:=true を足す。先に README §5-4 の見比べをしてから）
 #    窓③  ros2 launch ~/moving-bookshelf-app/robot/nav2/robot_tf_launch.py
 #    窓④  ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false \
 #             slam_params_file:=$HOME/moving-bookshelf-app/robot/slam/mapping_odom.yaml
