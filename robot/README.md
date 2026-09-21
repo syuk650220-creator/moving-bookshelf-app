@@ -61,9 +61,10 @@
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせを検証（116 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（138 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
+| `map_check.py` | ★段階3★ 保存した地図（`~/maps/my_map.yaml`＋`.pgm`）とピンの点検。地図の大きさ・中身、ピンが壁から機体の半径より離れているか、本棚の場所から各席へ道があるかを調べ、地図を文字で表示する。ROS 2 不要・何も書き換えない |
 | `nav2/robot_tf_launch.py` | ★段階3★ 実走のときの静的 TF（`base_footprint→base_link→laser`）。`temp_tf_launch.py` のかわりに使う（§7） |
 | `sql/01_realtime_と_updated_at.sql` | schema.sql に足りない 2 つ（Realtime publication ／ updated_at 自動更新トリガ）。SQL Editor で 1 回実行 |
 | `sql/02_manual_control.sql` | 手動操作用の `robot_manual` テーブル・RPC・ビュー。SQL Editor で 1 回実行 |
@@ -162,7 +163,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（116 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（138 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -275,10 +276,26 @@ Realtime も試すなら `--realtime` を足します。**動かなくても構�
 - 地図を作り直すには slam_toolbox を Ctrl+C して起動し直す（原点が変わるので**ピンは取り直し**）
 - 保存は **`mkdir -p ~/maps`** のあと `ros2 run nav2_map_server map_saver_cli -f ~/maps/my_map --ros-args -p save_map_timeout:=10.0`
   （フォルダが無いと `Unable to open file`、待ち時間が既定の 2 秒だと `Failed to spin map subscription` で失敗することがある）。母艦側で保存する操作は無い
+- 保存できたら **`python3 map_check.py`** で点検する（下の「地図の保存と点検」）
 - **実走（§5-3）に移る前に** slam_toolbox → 仮の TF → 手動操作（アプリで手動モードを切る → `manual_control.py` を Ctrl-C）を止める。LiDAR は止めない
 
 
 ピンは 4 つです。**本棚の場所（id=0）は床にテープで印を付け、毎回同じ向きに置く**こと（ここが帰る先であり、自己位置推定の初期位置です）。
+
+**地図の保存と点検**
+
+保存されるのは 2 つで 1 組です。`my_map.pgm`（地図の絵。白＝空き、黒＝障害物、灰色＝LiDAR がまだ見ていない）と、`my_map.yaml`（1 マスの大きさ `resolution`、絵の左下の角の map 座標 `origin`、白黒のしきい値、絵のファイル名）。
+保存ツールは「slam_toolbox が最後に配った地図」をそのまま書くので、**SLAM が動いているあいだ**に、**最後に動かしてから 5〜10 秒待って**（地図の配信は数秒おき）、**ピン建てと同じ回の SLAM で**保存します。Nav2 は起動時にこのファイルを読むので、STEP 5 の RViz に出る地図がそのまま「保存できた地図」です。
+
+```bash
+cd ~/moving-bookshelf-app/robot
+python3 map_check.py            # 地図の大きさ・中身、ピンの位置、本棚の場所→各席の道、文字の地図
+```
+
+- `★地図の外★` … 地図とピンが別の回のもの、または地図が育つ前に保存した
+- `★いちばん近い障害物まで 0.1x m（機体の半径 0.21 m より近い）★` … Nav2 はそのピンを「入れない場所」とみなして経路を作れない。
+  アプリの表示が **「残り 0.0 m」のまま、ロボがその場で回るだけ**になる（回るのは Nav2 の立て直しの動作）。ピンを壁・机から 30 cm 以上離して取り直す
+- `★道がありません★` … 途中の通路が機体の半径 × 2（42 cm）より狭い
 
 | id | kind | 意味 | theta の意味 |
 |---|---|---|---|
@@ -474,6 +491,7 @@ Pi の `~/bringup/temp_tf_launch.py` に入っている値は `base_footprint→
 | 一部の車輪だけ応答しない（`u=0`・`rpm=0` のまま） | **暴走防止のラッチ**（v2）。X（停止）／`cmd_vel=0` で解除。原因（配線・障害物・タイヤの拘束）を直してから動かし直す |
 | 片方の基板の rpm が 0 のまま | その基板の USB が挿さっていない。**2 枚とも挿す**（エンコーダの電源を隣の基板から取っているため、片方だけだと暴走する） |
 | 前進で 4 輪の符号がバラバラ | Arduino 側の `MOTOR_DIR`／`MOTOR_INV_*` の問題。Arduino 担当へ |
+| アプリの表示が「残り 0.0 m」「残り 0.2 m」のまま、ロボがその場で回るだけで時間切れ | Nav2 が経路を作れていない。ピン（本棚の場所か席）が地図上の壁・机から機体の半径（0.21 m）より近い、通路が狭い、地図とピンが別の回のもの | `python3 map_check.py` で点検（§5-4）。Nav2 の窓に `Failed to create plan`・`Goal/Start occupied` などが出ていないか |
 | /admin で「Pi 受信スクリプト オフライン」 | `manual_control.py` が動いていない、または `.env` の URL／キーが違う |
 | ボタンを押しても実機が動かない（オンライン表示はある） | `--serial` を付けていない。またはブリッジの `--nav2` と取り合っている |
 | Realtime が飛んでこない | `sql/01_realtime_と_updated_at.sql` を実行していない。Pi では `--realtime` を付けずポーリングで運用 |

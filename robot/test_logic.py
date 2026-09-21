@@ -38,6 +38,7 @@ import bookshelf_bridge as B      # noqa: E402
 import pin_tool as PT             # noqa: E402
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nav2"))
 import make_nav2_params as NP     # noqa: E402  （yaml は main() の中でしか import しない）
+import map_check as MC            # noqa: E402
 
 ok = True
 
@@ -549,6 +550,76 @@ check("go() はゴールを送る前に Nav2 の準備を確かめる",
 main_src = inspect.getsource(B.main)
 check("main は 初期位置（startup_localize）→ bt_navigator 待ち の順",
       main_src.index("startup_localize()") < main_src.index("wait_navigation_ready()"), True)
+
+
+# =====================================================================
+print("\n=== map_check（保存した地図とピンの点検）===")
+# =====================================================================
+# 20 × 12 マス（1 マス 0.1 m ＝ 2.0 × 1.2 m）の部屋を作る。外周が壁、真ん中に縦の仕切り（上に 0.3 m のすき間）。
+#   画像の 1 行目が「上の端」（y が大きい側）。origin は左下の角。
+import tempfile
+
+MW, MH = 20, 12
+rows_px = []
+for r in range(MH):                     # r=0 が上の端
+    line = []
+    for c in range(MW):
+        wall = r in (0, MH - 1) or c in (0, MW - 1)
+        divider = c == 10 and r >= 4    # 仕切りは下から上へ。上の 3 マス（r=1..3）が通り道
+        line.append(0 if (wall or divider) else 254)
+    rows_px.append(line)
+rows_px[5][15] = 205                    # 未知のマスを 1 つ
+pgm = b"P5\n# comment line\n%d %d\n255\n" % (MW, MH) + bytes(v for line in rows_px for v in line)
+
+w_, h_, maxval_, px_ = MC.parse_pgm(pgm)
+check("PGM（P5・コメント行つき）の大きさと画素数", (w_, h_, maxval_, len(px_)), (MW, MH, 255, MW * MH))
+w2, h2, _, px2 = MC.parse_pgm(b"P2 2 2 255 0 254 205 254")
+check("PGM（P2・テキスト）も読める", (w2, h2, px2), (2, 2, [0, 254, 205, 254]))
+try:
+    MC.parse_pgm(b"P5 4 4 255 " + bytes(5))
+    check("画素が足りない PGM はエラーにする", "例外なし", "ValueError")
+except ValueError:
+    check("画素が足りない PGM はエラーにする", "ValueError", "ValueError")
+
+yaml_text = "image: room.pgm\nmode: trinary\nresolution: 0.1\norigin: [-1.0, -0.5, 0]\nnegate: 0\noccupied_thresh: 0.65\nfree_thresh: 0.25\n"
+meta_ = MC.parse_map_yaml(yaml_text)
+check("yaml: 解像度・原点・画像名", (meta_["resolution"], meta_["origin"], meta_["image"]), (0.1, [-1.0, -0.5, 0.0], "room.pgm"))
+
+with tempfile.TemporaryDirectory() as td:
+    with open(os.path.join(td, "room.pgm"), "wb") as f:
+        f.write(pgm)
+    with open(os.path.join(td, "room.yaml"), "w", encoding="utf-8") as f:
+        f.write(yaml_text)
+    gm = MC.load_map(os.path.join(td, "room.yaml"))
+
+cnt = gm.counts()
+check("分類: 未知は 1 マス、空き＋障害物＋未知＝全マス",
+      (cnt[MC.UNKNOWN], cnt[MC.FREE] + cnt[MC.OCC] + cnt[MC.UNKNOWN]), (1, MW * MH))
+check("範囲: x −1.0〜+1.0、y −0.5〜+0.7", tuple(round(v, 6) for v in gm.bounds()), (-1.0, 1.0, -0.5, 0.7))
+check("左下の角のマスは（列 0, いちばん下の行）", gm.world_to_cell(-0.95, -0.45), (0, MH - 1))
+check("左上の角のマスは（列 0, 行 0）", gm.world_to_cell(-0.95, 0.65), (0, 0))
+check("地図の外は None", gm.world_to_cell(1.5, 0.0), None)
+cx_, cy_ = gm.cell_center(0, MH - 1)
+check("マスの中心 → 座標（左下）", (round(cx_, 6), round(cy_, 6)), (-0.95, -0.45))
+
+# 左の部屋の真ん中 (-0.45, 0.05): 左の壁の中心 x=-0.95 まで 0.5 m、仕切り x=0.05 まで 0.5 m
+check("障害物までの距離（部屋の真ん中）", round(gm.clearance(-0.45, 0.05), 6), 0.5)
+check("判定: 真ん中は OK", MC.judge_point(gm, -0.45, 0.05, 0.21)[0], "OK")
+check("判定: 壁から 0.15 m は NG（半径 0.21 より近い）", MC.judge_point(gm, -0.80, 0.05, 0.21)[0], "NG")
+check("判定: 壁から 0.24 m は WARN（ぎりぎり）", MC.judge_point(gm, -0.71, 0.05, 0.21)[0], "WARN")
+check("判定: 壁のマスの上は NG", MC.judge_point(gm, -0.95, 0.05, 0.21)[0], "NG")
+check("判定: 地図の外は NG", MC.judge_point(gm, 3.0, 0.0, 0.21)[0], "NG")
+
+# 道: 仕切りのすき間は 3 マス（0.3 m）。半径 0.10 なら通れる、0.21 なら通れない
+left, right = (-0.45, 0.05), (0.55, 0.05)
+check("道: 半径 0.10 m なら仕切りのすき間を通れる", gm.path_length(left, right, 0.10) is not None, True)
+check("道: 半径 0.21 m では通れない（すき間が狭い）", gm.path_length(left, right, 0.21), None)
+check("道: 同じ部屋の中なら半径 0.21 m でも道あり", gm.path_length(left, (-0.45, 0.25), 0.21) is not None, True)
+check("道: 出発点が壁に近すぎると道なし", gm.path_length((-0.85, 0.05), left, 0.21), None)
+
+art = MC.render_ascii(gm, {gm.world_to_cell(-0.45, 0.05): "0"})
+check("文字の地図: 行数と、1 行目は壁（1 マスを横 2 文字で描く）", (len(art.splitlines()), art.splitlines()[0]), (MH, "#" * (2 * MW)))
+check("文字の地図: ピンの数字が入る", "00" in art.splitlines()[MH - 1 - 5], True)
 
 
 print()
