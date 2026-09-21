@@ -617,6 +617,20 @@ check("道: 半径 0.21 m では通れない（すき間が狭い）", gm.path_l
 check("道: 同じ部屋の中なら半径 0.21 m でも道あり", gm.path_length(left, (-0.45, 0.25), 0.21) is not None, True)
 check("道: 出発点が壁に近すぎると道なし", gm.path_length((-0.85, 0.05), left, 0.21), None)
 
+# だめなピンへの提案: 左の壁（中心 x=-0.95）から 0.15 m の点 → 同じ行で、壁から 0.30 m のマス（x=-0.65）
+sx_, sy_, sd_ = MC.suggest_spot(gm, -0.80, 0.05, 0.21)
+check("提案: いちばん近い OK の位置（壁から 0.30 m 以上）", (round(sx_, 2), round(sy_, 2), round(sd_, 2)), (-0.65, 0.05, 0.3))
+check("提案: すでに OK の点なら、その点のマス", tuple(round(v, 2) for v in MC.suggest_spot(gm, -0.45, 0.05, 0.21)[:2]), (-0.45, 0.05))
+check("提案: 広さが足りなければ None", MC.suggest_spot(gm, -0.45, 0.05, 0.21, target=0.9), None)
+check("ずれをロボから見た向きに直す（向き 0）", tuple(round(v, 3) for v in MC.offset_in_robot_frame(0.15, 0.05, 0.0)), (0.15, 0.05))
+check("ずれをロボから見た向きに直す（向き 90°: 地図の +y が前）",
+      tuple(round(v, 3) for v in MC.offset_in_robot_frame(0.0, 0.15, math.pi / 2)), (0.15, 0.0))
+check("動かし方の文", MC.describe_move(0.14, -0.06), "前へ 14 cm・右へ 6 cm")
+check("動かし方の文（ほぼ同じ）", MC.describe_move(0.004, 0.0), "ほぼ同じ位置")
+near_art = MC.render_ascii(gm, {}, field=gm.distance_field(), keep_out=0.26)
+check("文字の地図: 壁のとなりは : （置けない帯）、部屋の真ん中は .",
+      (near_art.splitlines()[6][2:4], near_art.splitlines()[6][10:12]), ("::", ".."))
+
 art = MC.render_ascii(gm, {gm.world_to_cell(-0.45, 0.05): "0"})
 check("文字の地図: 行数と、1 行目は壁（1 マスを横 2 文字で描く）", (len(art.splitlines()), art.splitlines()[0]), (MH, "#" * (2 * MW)))
 check("文字の地図: ピンの数字が入る", "00" in art.splitlines()[MH - 1 - 5], True)
