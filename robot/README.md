@@ -43,7 +43,7 @@
 - `robot_status.state` は **idle → localizing（自己位置推定中）→ moving → arrived → returning（本棚の場所へ帰還中）→ idle**。
   常に 1 行（id=1）。書くのはブリッジだけです。走行中は現在地（`pose_x/y/theta`）と一言（`detail`）も 1 秒ごとに書きます。
 - `stop_points` は **id=0 が「本棚の場所」（`kind='home'`）、id≥1 が席**。本棚の場所は受取後に帰る先で、
-  呼出のたびに AMCL の初期位置にもなります（§5-4）。アプリの席一覧には id≥1 だけが出ます。
+  ブリッジの起動時と、人の手で置いた直後の呼出では AMCL の初期位置にもなります（§5-3）。アプリの席一覧には id≥1 だけが出ます。
 - 上の 3 つは `sql/03_pins_home_pose.sql` で入ります（§3-2）。未適用でもブリッジは動きますが、localizing と現在地は書きません。
 - **ブリッジと手動操作を同時に実機へつながないこと**（Arduino への指令の取り合いになります）。
 
@@ -61,7 +61,7 @@
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（193 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（198 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
 | `slam/mapping_no_odom.yaml` ／ `slam/mapping_odom.yaml` | slam_toolbox の設定。前者はいつもの手順（仮の TF）のまま使える調整版、後者は**車輪オドメトリを使う地図づくり**用（§5-4） |
@@ -164,7 +164,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（193 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（198 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -248,7 +248,7 @@ python3 bookshelf_bridge.py --live --nav2
 
 | 順 | ブリッジがすること | `robot_status.state` |
 |---|---|---|
-| ① | 本棚の場所の座標を AMCL の初期位置として `/initialpose` に送り、`/amcl_pose` が返るのを待って 2 秒落ち着かせる（★ロボが本棚の場所に居るときだけ★。走行失敗などで居ないときは送らず、AMCL の追跡をそのまま使う） | `localizing` |
+| ① | 本棚の場所の座標を AMCL の初期位置として `/initialpose` に送り、`/amcl_pose` が返るのを待って 2 秒落ち着かせる（★人の手でテープに合わせて置いた直後＝ブリッジを起動してから最初の走行の前だけ★。**Nav2 で一度でも走ったあとは送らず、AMCL の推定をそのまま使う** ── 帰り着いた位置はピンから「8 cm・30°」以内のどこかで、ピンの真上ではないので、ピンの座標を送り直すと合っている推定をずらしてしまう。人が持ち上げて置き直したら、ブリッジを起動し直す） | `localizing` |
 | ② | 席の座標へ `goToPose`。1 秒ごとに現在地と「残り x m」を書く | `moving` |
 | ③ | 到着。アプリの「本を取得した」を待つ | `arrived` |
 | ④ | 本棚の場所へ `goToPose` | `returning` |
@@ -556,7 +556,8 @@ Pi の `~/bringup/temp_tf_launch.py` に入っている値は `base_footprint→
 | 「ホーム : ★未登録★」と出る／帰還しない | `stop_points` に id=0（kind='home'）が無い。`pin_tool.py` か `/admin/pins` の「＋ 本棚の場所」で登録 |
 | 呼ぶとすぐ canceled になり detail が「自己位置推定に失敗」 | 初期位置を送っても `/amcl_pose` が来ない。AMCL が `/scan` と TF（`map→odom→base_link→laser`）を受け取れているか。`ros2 topic echo /amcl_pose` |
 | 初期位置を与えた直後、RViz で粒子が壁からずれている | ロボが本棚の場所のピンと違う位置・向きに置かれている。テープの印に合わせ直してブリッジを再起動。または `--no-localize` で RViz から与える |
-| 席に着くたび少しずつずれる／帰還後に向きが違う | 帰還は `xy_goal_tolerance`（8 cm）の精度で止まる。次の呼出で初期位置をピンに戻すので大きくは溜まらないが、気になるなら `--init-sigma-xy` を大きくして AMCL に任せる |
+| 帰還後に向きが違う（最大 30°）／位置が数 cm ずれている | 仕様。ゴールの許容は **位置 8 cm・向き 30°**（`xy_goal_tolerance` 0.08・`yaw_goal_tolerance` 0.52）。向きをゆるくしてあるのは、着いてから向きを合わせる時間を省くため。自己位置は AMCL が追い続けているので、ずれたまま次の呼出に出ても問題ない（ピンの座標で上書きしない）。向きまで合わせたいときは差分ファイルの `yaw_goal_tolerance` を小さくして作り直す |
+| 着いてから、向きを合わせるのに時間がかかる | `yaw_goal_tolerance` が 0.25 のまま（古い `~/nav2/nav2_params.yaml`）。ブリッジの起動時の点検にも出る → `make_nav2_params.py --write --robot-radius 0.21` → Nav2 を起動し直す |
 | 「帰還に失敗」と出て idle になった | 帰り道で詰まった。手で本棚の場所へ戻し、ブリッジを再起動（再起動で「本棚の場所に居る」前提に戻る） |
 | `/admin/pins` で保存すると「書き込めません」 | `stop_points` の insert/update ポリシーが無い。`sql/03` を実行 |
 | `pin_tool.py` で `c` を押しても TF が読めない | SLAM か AMCL が動いていない、またはフレーム名が違う（暫定 TF 構成なら `--base-frame base_footprint`） |

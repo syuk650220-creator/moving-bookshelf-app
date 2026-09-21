@@ -345,9 +345,14 @@ check("走行中の進捗（残り x m）を書く", len(prog) >= 1 and "1.2" in
 check("到着の detail に「本を取得した」の案内",
       any("本を取得した" in (b.get("detail") or "") for t, b in s.log if b.get("state") == "arrived"), True)
 
-print("  --- 2 件目: 本棚に居るので再び初期位置を与える ---")
+print("  --- 2 件目: Nav2 で帰ってきたあとは、ピンの座標で AMCL の推定を上書きしない ---")
+# 帰り着いた位置はピンから「8 cm・30°」以内のどこか。ピンの座標を送り直すと、合っている推定をずらしてしまう
+check("1 件目のあとは、ピンの座標を初期位置として信用しない", br.home_pose_trusted, False)
 br.handle(call("c2", 1))
-check("2 件目も localize(本棚の場所) から", n.events[3], ("localize", "本棚の場所"))
+check("2 件目は初期位置を送らず、いまの推定から", n.events[3], ("localize", None))
+check("2 件目の表示は「現在の推定位置から継続」",
+      [b.get("detail") for t, b in s.log if t == "robot_status" and b.get("state") == "localizing"][-1],
+      "自己位置推定中（現在の推定位置から継続）")
 check("同じ id は二度処理しない", (br.handle(call("c1", 1)), n.n_go), (None, 4))
 
 print("  --- 走行失敗: canceled にして idle。本棚に居ないので次は初期位置を送らない ---")
@@ -693,6 +698,12 @@ first_cmd = _yaml_num("max_angular_accel") / _yaml_num("controller_frequency")
 check("量子化の下限は約 0.31 rad/s", round(deadband_w, 2), 0.31)
 check("止まった状態からの最初の回転指令（max_angular_accel ÷ controller_frequency）が下限を超える",
       first_cmd > deadband_w, True)
+# 位置はきっちり、向きはゆるく（2026-09-21 PM 決定: 向きは ±30° でよい）
+check("ゴールの許容: 位置 8 cm・向き 30°（0.52 rad）",
+      (_yaml_num("xy_goal_tolerance"), round(math.degrees(_yaml_num("yaw_goal_tolerance")))), (0.08, 30))
+# 回頭は 0.31 rad/s より遅くできない。的に入ってから止まるまでの行きすぎ（0.4 秒ぶん）が、的の幅に収まること
+check("回頭の行きすぎ（回頭の速さ × 0.4 秒）が、向きの許容の幅（±）に収まる",
+      _yaml_num("rotate_to_heading_angular_vel") * 0.4 < 2 * _yaml_num("yaw_goal_tolerance"), True)
 check("回頭の速さ rotate_to_heading_angular_vel が下限を超える",
       _yaml_num("rotate_to_heading_angular_vel") > deadband_w, True)
 mo_, rp_ = M.Quantizer(use_vy=False)(0.0, 0.0, first_cmd, now=500.0)
@@ -736,13 +747,16 @@ print("\n=== 古い Nav2 の設定に気づく（ブリッジの起動時の点�
 _new = {"controller_frequency": 20.0, "FollowPath.max_angular_accel": _yaml_num("max_angular_accel"),
         "FollowPath.rotate_to_heading_angular_vel": _yaml_num("rotate_to_heading_angular_vel"),
         "FollowPath.min_approach_linear_velocity": _yaml_num("min_approach_linear_velocity"),
-        "progress_checker.movement_time_allowance": _yaml_num("movement_time_allowance")}
+        "progress_checker.movement_time_allowance": _yaml_num("movement_time_allowance"),
+        "general_goal_checker.yaw_goal_tolerance": _yaml_num("yaw_goal_tolerance")}
 check("いまの差分ファイルの値なら、問題なし", B.check_nav2_motion_params(_new), [])
 _old = dict(_new, **{"FollowPath.max_angular_accel": 1.0, "progress_checker.movement_time_allowance": 10.0})
 _probs = B.check_nav2_motion_params(_old)
 check("古い値（max_angular_accel 1.0・見張り 10 秒）は 2 つとも指摘する", len(_probs), 2)
 check("指摘に「最初の指令 0.05 rad/s」と「下限 0.31 rad/s」が入る",
       ("0.05 rad/s" in _probs[0], "0.31 rad/s" in _probs[0]), (True, True))
+check("向きの許容が 0.25 rad のまま（古い設定）も指摘する",
+      ["向きの許容" in t for t in B.check_nav2_motion_params(dict(_new, **{"general_goal_checker.yaw_goal_tolerance": 0.25}))], [True])
 check("値が読めなかった項目（None）は指摘しない", B.check_nav2_motion_params({"controller_frequency": 20.0}), [])
 check("Nav2 の標準値のまま（3.2 rad/s²）でも指摘する",
       len(B.check_nav2_motion_params({"controller_frequency": 20.0, "FollowPath.max_angular_accel": 3.2})), 1)

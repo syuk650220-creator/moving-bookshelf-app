@@ -251,6 +251,7 @@ NAV2_CHECK_PARAMS = (
     "FollowPath.rotate_to_heading_angular_vel",
     "FollowPath.min_approach_linear_velocity",
     "progress_checker.movement_time_allowance",
+    "general_goal_checker.yaw_goal_tolerance",
 )
 NAV2_FIX_HINT = ("直し方: Nav2 の窓を Ctrl+C → bash ~/moving-bookshelf-app/robot/pi_setup.sh → "
                  "cd ~/moving-bookshelf-app/robot/nav2 && python3 make_nav2_params.py --write --robot-radius 0.21 → "
@@ -285,6 +286,10 @@ def check_nav2_motion_params(p: dict) -> list[str]:
     t = p.get("progress_checker.movement_time_allowance")
     if t is not None and t < 14.9:
         out.append(f"進み具合の見張りが {t:g} 秒（この機体用は 15 秒）→ 古い設定ファイルのままの目印です")
+    y = p.get("general_goal_checker.yaw_goal_tolerance")
+    if y is not None and y < 0.5:
+        out.append(f"着いたときの向きの許容が {y:g} rad（約 {math.degrees(y):.0f}°。この機体用は 0.52 rad＝30°）"
+                   "→ 着いてから向きを合わせるのに時間がかかります。古い設定ファイルのままの目印です")
     return out
 
 
@@ -563,9 +568,14 @@ class Bridge:
         self._state_now: str = "idle"    # 走行中の進捗書き込み（_progress）が使う「いまの state」
         self._call_now: str | None = None
         # ★起動時はロボが「本棚の場所」に置かれている前提★
-        #   ここが True のときだけ、呼出のたびにホーム座標を AMCL の初期位置として送る。
-        #   席へ動き出したら False、ホームへ帰り着いたら True に戻す。
+        #   at_home … いま本棚の場所に居るか。席へ動き出したら False、帰り着いたら True。
         self.at_home = True
+        #   home_pose_trusted … 「ピンの座標＝ロボの本当の位置」と言えるか。★人の手でテープに合わせて置いた直後だけ True★
+        #     True のときだけ、呼出の前にホーム座標を AMCL の初期位置として送る。Nav2 で一度でも走ったら False のまま。
+        #     Nav2 で帰ってきたロボは、ピンから「位置 8 cm・向き 30°」以内のどこかに居るだけで、ピンの真上ではない。
+        #     そこでピンの座標を送り直すと、LiDAR で合わせ込んである AMCL の推定を、わざわざずれた値で上書きしてしまう。
+        #     （人が持ち上げて置き直したときは、ブリッジを起動し直す＝ここが True に戻る）
+        self.home_pose_trusted = True
 
     # ---------------- 状態の読み書き ----------------
 
@@ -618,7 +628,8 @@ class Bridge:
         起動直後に 1 回、本棚の場所を初期位置として与える。
         最初の呼出を待たずに AMCL が map→odom を出し始めるので、走り出す前に
         RViz で「レーザーの点が地図の壁に重なっているか」を目で確かめられる。
-        （呼出のたびにも同じことをする。ここは確認のための先出し）
+        （人の手で置いた直後＝最初の呼出の前にも、もう一度同じことをする。Nav2 で走り出したあとは送らない。
+          ここは確認のための先出し）
         """
         if not self.localize or self.home is None:
             return False
@@ -680,7 +691,7 @@ class Bridge:
 
         # ---- ① 自己位置推定 ----
         if self.localize:
-            use_home = self.at_home and self.home is not None
+            use_home = self.home_pose_trusted and self.at_home and self.home is not None
             where = "本棚の場所を初期位置に" if use_home else "現在の推定位置から継続"
             self._state_now, self._call_now = "localizing", cid
             self.set_status("localizing", cid, detail=f"自己位置推定中（{where}）")
@@ -696,6 +707,7 @@ class Bridge:
         self._state_now, self._call_now = "moving", cid
         self.set_status("moving", cid, detail=f"{label} へ移動中", pose=self.nav.current_pose())
         self.at_home = False
+        self.home_pose_trusted = False      # ここから先の位置は AMCL が追う。ピンの座標で上書きしない
         ok = self.nav.go(goal, on_progress=self._progress(f"{label} へ移動中"))
         if not ok:
             self.set_call(cid, "canceled")
