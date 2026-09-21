@@ -63,9 +63,13 @@ function RobotCall() {
   const [robotUpdatedAt, setRobotUpdatedAt] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(0)   // 「更新が止まっているか」の判定用（ポーリングのたびに更新）
   const [isCalling, setIsCalling] = useState(false)
+  const [isReceiving, setIsReceiving] = useState(false)
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
 
   const aliveRef = useRef(true)
+  // 自分の呼出が一覧から消えたとき「ロボが届かなかった」のかを見分けるための控え
+  const myCallIdRef = useRef<string | null>(null)          // 直前のポーリングで進行中だった自分の呼出
+  const selfCanceledRef = useRef<Set<string>>(new Set())   // 自分で取り消した呼出（知らせなくてよい）
 
   // ゲスト名が無ければログインへ（借りる処理と同じルール）
   useEffect(() => {
@@ -113,7 +117,8 @@ function RobotCall() {
         .single(),
     ])
     if (!aliveRef.current) return
-    if (q.data) setQueue(q.data as unknown as CallRow[])
+    const rows = q.data ? (q.data as unknown as CallRow[]) : null
+    if (rows) setQueue(rows)
     if (st.data) {
       const row = st.data as unknown as {
         state: string
@@ -127,6 +132,25 @@ function RobotCall() {
       setRobotUpdatedAt(row.updated_at ?? null)
     }
     setNowMs(Date.now())
+
+    // ★自分の呼出が一覧から消えたとき★
+    // 「本を取得した」（done）か自分の取り消しなら何もしない。ロボ側が canceled にした
+    // （席まで届かなかった・ブリッジを止めた）ときは、だまって消えると分からないので知らせる
+    if (rows) {
+      const me = getGuestName()
+      const mine = me ? rows.find((c) => c.requested_by === me) ?? null : null
+      const lost = myCallIdRef.current
+      myCallIdRef.current = mine?.id ?? null
+      if (lost && lost !== mine?.id && !selfCanceledRef.current.has(lost)) {
+        const r = await supabase.from('robot_calls').select('status').eq('id', lost).maybeSingle()
+        if (aliveRef.current && r.data?.status === 'canceled') {
+          setMessage({
+            kind: 'err',
+            text: 'ロボが席まで届きませんでした（走行の失敗か中止）。貸出は記録されていません。もう一度呼ぶか、自分で本を取ったときは本の画面の「直接借りる」で記録してください。',
+          })
+        }
+      }
+    }
   }, [])
 
   useEffect(() => {
@@ -209,6 +233,8 @@ function RobotCall() {
   // 借りた人は、ボタンを押した人ではなく「呼んだ人」（requested_by）。
   // 貸出中の本の呼出（返却のためにロボを呼んだ場合）は、貸出を記録しない。
   const handleReceive = async (callId: string) => {
+    if (isReceiving) return
+    setIsReceiving(true)
     const call = queue.find((c) => c.id === callId) ?? null
     const { data, error } = await supabase
       .from('robot_calls')
@@ -246,6 +272,7 @@ function RobotCall() {
       }
     }
     await fetchQueue()
+    setIsReceiving(false)
   }
 
   // 順番待ちの呼出を取り消す（移動開始後は取り消せない）
@@ -261,6 +288,7 @@ function RobotCall() {
     } else if (!data || data.length === 0) {
       setMessage({ kind: 'err', text: 'すでにロボが動き出しているため取り消せません' })
     } else {
+      selfCanceledRef.current.add(callId)
       setMessage({ kind: 'ok', text: '呼出を取り消しました。' })
     }
     await fetchQueue()
@@ -269,6 +297,8 @@ function RobotCall() {
   // ---------------- 表示 ----------------
 
   const selectedBook = books.find((b) => b.id === bookId)
+  // 「本を取得した」は、自分の呼出が到着したときだけ押せる（ボタン自体はいつも同じ場所に出しておく）
+  const canReceive = myActiveCall?.status === 'arrived'
 
   return (
     <main className="p-6 max-w-md mx-auto">
@@ -389,7 +419,7 @@ function RobotCall() {
               {myReturning
                 ? 'ロボが本棚の場所に戻ると、次の呼出ができます。'
                 : myActiveCall?.status === 'arrived'
-                  ? '下の「本を取得した」を押すとロボが本棚の場所へ帰ります。戻ったら次の呼出ができます。'
+                  ? 'すぐ下の「本を取得した」を押すとロボが本棚の場所へ帰ります。戻ったら次の呼出ができます。'
                   : myActiveCall?.status === 'queued'
                     ? 'ロボが本棚の場所に戻るまで、次の呼出はできません。やめるときは下の「呼出を取り消す」。'
                     : 'ロボが本を届けて本棚の場所に戻るまで、次の呼出はできません。'}
@@ -402,6 +432,30 @@ function RobotCall() {
             )}
           </div>
         )}
+
+        {/* 本を取得した（いつも見えている。ロボが席に着くまでは押せない） */}
+        <button
+          type="button"
+          onClick={() => myActiveCall && handleReceive(myActiveCall.id)}
+          disabled={!canReceive || isReceiving}
+          className={`mt-3 w-full rounded-md py-3 font-bold text-white transition-colors ${
+            canReceive && !isReceiving ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-400 cursor-not-allowed'
+          }`}
+        >
+          {isReceiving ? '記録中...' : '📗 本を取得した'}
+        </button>
+        <p className="mt-1 text-center text-xs text-gray-500">
+          {canReceive
+            ? myActiveCall?.books?.status === 'available'
+              ? `押すと「${myActiveCall.requested_by ?? 'ゲスト'}」さんの貸出として記録し、ロボは本棚の場所へ帰ります`
+              : '押すとロボは本棚の場所へ帰ります'
+            : myReturning
+              ? '本の取得は記録済みです。ロボは本棚の場所へ帰っています'
+              : myActiveCall
+                ? 'ロボが席に到着すると押せるようになります'
+                : 'ロボを呼んで、席に到着すると押せるようになります'}
+        </p>
+
         {guestName && (
           <p className="mt-2 text-center text-xs text-gray-400">「{guestName}」として呼び出します</p>
         )}
@@ -434,8 +488,8 @@ function RobotCall() {
                   </span>
                 </div>
 
-                {/* 状態に応じた操作 */}
-                {c.status === 'arrived' && (
+                {/* 状態に応じた操作（自分の呼出の「本を取得した」は上のボタン。ここはほかの人の分） */}
+                {c.status === 'arrived' && c.id !== myActiveCall?.id && (
                   <button
                     type="button"
                     onClick={() => handleReceive(c.id)}
@@ -444,7 +498,10 @@ function RobotCall() {
                     📗 本を取得した（ロボを本棚へ帰す）
                   </button>
                 )}
-                {c.status === 'arrived' && c.books?.status === 'available' && (
+                {c.status === 'arrived' && c.id === myActiveCall?.id && (
+                  <p className="mt-1 text-center text-xs text-green-700">上の「本を取得した」を押してください</p>
+                )}
+                {c.status === 'arrived' && c.id !== myActiveCall?.id && c.books?.status === 'available' && (
                   <p className="mt-1 text-center text-xs text-gray-500">
                     押すと「{c.requested_by ?? 'ゲスト'}」さんの貸出として記録されます
                   </p>
