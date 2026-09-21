@@ -39,6 +39,7 @@ ok "git / python3-serial / python3-requests / python3-yaml"
 # ---------------------------------------------------------------- 2
 step "2/7 リポジトリ（ブランチ: $BRANCH）"
 if [ -d "$REPO_DIR/.git" ]; then
+  SELF_BEFORE="$(cksum < "$ROBOT_DIR/pi_setup.sh" 2>/dev/null || true)"
   git -C "$REPO_DIR" fetch -q origin
   if ! git -C "$REPO_DIR" switch -q "$BRANCH" 2>/dev/null; then
     git -C "$REPO_DIR" switch -q -c "$BRANCH" --track "origin/$BRANCH"
@@ -48,6 +49,14 @@ if [ -d "$REPO_DIR/.git" ]; then
     exit 1
   fi
   ok "更新しました: $(git -C "$REPO_DIR" log -1 --format='%h %s')"
+  # このスクリプト自身が更新されたら、新しい版で最初からやり直す。
+  # （bash は走り出したときの中身を実行し続けるので、やり直さないと「更新した回だけ古い手順」になる）
+  SELF_AFTER="$(cksum < "$ROBOT_DIR/pi_setup.sh" 2>/dev/null || true)"
+  if [ "$SELF_BEFORE" != "$SELF_AFTER" ] && [ -z "${PI_SETUP_REEXEC:-}" ]; then
+    ok "pi_setup.sh 自身が更新されたので、新しい版でやり直します"
+    export PI_SETUP_REEXEC=1
+    exec bash "$ROBOT_DIR/pi_setup.sh" "$@"
+  fi
 else
   git clone -q --branch "$BRANCH" "$REPO_URL" "$REPO_DIR"
   ok "clone しました: $REPO_DIR"
