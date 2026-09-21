@@ -61,7 +61,7 @@
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（173 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（185 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
 | `slam/mapping_no_odom.yaml` ／ `slam/mapping_odom.yaml` | slam_toolbox の設定。前者はいつもの手順（仮の TF）のまま使える調整版、後者は**車輪オドメトリを使う地図づくり**用（§5-4） |
@@ -164,7 +164,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（173 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（185 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -297,8 +297,8 @@ Realtime も試すなら `--realtime` を足します。**動かなくても構�
 ```bash
 # 窓① LiDAR（いつもどおり）
 ros2 launch rplidar_ros rplidar.launch.py
-# 窓② 車輪オドメトリ（odom→base_footprint）。★temp_tf_launch.py は起動しない★ use_vy はラジコンの横移動を通すため
-cd ~/moving-bookshelf-app/robot && python3 mecanum_node.py --ros-args -p base_frame:=base_footprint -p use_vy:=true
+# 窓② 車輪オドメトリ（odom→base_footprint）。★temp_tf_launch.py は起動しない★ ★use_vy:=true は付けない（横移動は封印）★
+cd ~/moving-bookshelf-app/robot && python3 mecanum_node.py --ros-args -p base_frame:=base_footprint
 # 窓③ 残りの TF（base_footprint→base_link→laser）
 ros2 launch ~/moving-bookshelf-app/robot/nav2/robot_tf_launch.py
 # 窓④ SLAM（オドメトリあり用の設定）
@@ -315,8 +315,12 @@ cd ~/moving-bookshelf-app/robot && python3 manual_control.py --ros
    `旋回の速さ: 車輪 +0.47 / ジャイロ +0.41 rad/s（ジャイロ÷車輪 = 0.87）` と出る。② **符号が同じで、比が 0.5〜1.3 くらい**なら、窓②を `-p use_gyro:=true` 付きで起動し直す。
    `★符号が逆です★` と出たら使わない（報告してください）。この比は `WHEEL_GEOM_L` の較正の手がかりにもなります（本当の L ≒ 0.135 × 車輪÷ジャイロ）。
 
-   ピン建て・保存・`map_check.py` は同じ。実走（§5-3）へ移るときは **SLAM とラジコンの受信係だけ止めればよく、窓②③はそのまま使えます**
-   （ただし実走では横移動を使わないので、気になるなら窓②を `use_vy` なしで起動し直す）。
+   **横移動は使いません（2026-09-21 PM 決定）**: この機体は前（本棚側）が重く、横移動すると一緒に回ってしまいます。動きは **前進・後退・その場回転** だけ。
+   窓②を `use_vy:=true` なしで起動すれば、ラジコンの「左横・右横」も Nav2 の指令も横移動にはなりません（押すと窓②に「封印中なので無視します」と 1 回出る）。
+   Nav2 の側も、経路追従（RPP）は vx と ω しか出さず、`velocity_smoother` の vy の上限は 0 です。後退するのは、行き詰まったときの立て直し（backup）だけ。
+   この 3 か所は `test_logic.py` が検算します（`nav2_params_差分.yaml` の冒頭に一覧）。
+
+   ピン建て・保存・`map_check.py` は同じ。実走（§5-3）へ移るときは **SLAM とラジコンの受信係だけ止めればよく、窓②③はそのまま使えます**。
    `manual_control.py --ros` は、止まっているあいだ `/cmd_vel` に何も出しません（Nav2 の指令を打ち消さないため）。
 
 **地図の保存と点検**
@@ -466,7 +470,7 @@ python3 make_nav2_params.py --write --robot-radius 0.21    # 機体の半径 [m]
 
 `behavior_server`（後退・その場旋回のリカバリを外す）は既定では重ねません。ビヘイビアツリーの XML からも Spin / BackUp を外すのが条件で、片方だけ変えると `bt_navigator` が起動に失敗するためです（XML を直したら `--with-behavior-server`）。
 差分ファイルの値を変えたら、もう一度 `--write` で作り直します（`~/nav2/nav2_params.yaml` を直接編集しない）。
-とくに `robot_model_type: "nav2_amcl::OmniMotionModel"` は、入れないと横移動のたびに自己位置が破綻します。
+とくに `robot_model_type: "nav2_amcl::OmniMotionModel"` は、横移動を指令しないいまも入れておきます（メカナムは回転や発進で、指令していないのに横へ滑るため）。
 
 **`--robot-radius` は `0.21`（2026-09-20・Fusion 360 の「全体像 v4」の計測 ＋ 実機の採寸）**
 
@@ -531,6 +535,7 @@ Pi の `~/bringup/temp_tf_launch.py` に入っている値は `base_footprint→
 | 片方の基板の rpm が 0 のまま | その基板の USB が挿さっていない。**2 枚とも挿す**（エンコーダの電源を隣の基板から取っているため、片方だけだと暴走する） |
 | 前進で 4 輪の符号がバラバラ | Arduino 側の `MOTOR_DIR`／`MOTOR_INV_*` の問題。Arduino 担当へ |
 | アプリの表示が「残り 0.0 m」「残り 0.2 m」のまま、ロボがその場で回るだけで時間切れ | Nav2 が経路を作れていない。ピン（本棚の場所か席）が地図上の壁・机から機体の半径（0.21 m）より近い、通路が狭い、地図とピンが別の回のもの | `python3 map_check.py` で点検（§5-4）。Nav2 の窓に `Failed to create plan`・`Goal/Start occupied` などが出ていないか |
+| 前進はするのに、向きを変える場面で止まったまま動かない。Nav2 の窓に `Failed to make progress` がくり返し出て、立て直しの `spin` のときだけ回る | Nav2 のその場回転の指令が小さすぎて、`mecanum_node.py` の下限（10 rpm 未満＝0.31 rad/s 未満は停止）に消されている。RotationShim／RPP は回転の指令を「実測の回る速さ ± `max_angular_accel` × 制御周期」に切り詰めるので、`max_angular_accel` が小さいと止まった状態から永久に回り出せない（2026-09-21） | `nav2_params_差分.yaml` の `max_angular_accel` を 8.0 に（修正済み）→ `python3 nav2/make_nav2_params.py --write --robot-radius 0.21` で作り直して Nav2 を起動し直す |
 | /admin で「Pi 受信スクリプト オフライン」 | `manual_control.py` が動いていない、または `.env` の URL／キーが違う |
 | ボタンを押しても実機が動かない（オンライン表示はある） | `--serial` を付けていない。またはブリッジの `--nav2` と取り合っている |
 | Realtime が飛んでこない | `sql/01_realtime_と_updated_at.sql` を実行していない。Pi では `--realtime` を付けずポーリングで運用 |
