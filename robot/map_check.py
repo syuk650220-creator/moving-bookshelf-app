@@ -17,7 +17,9 @@ ROS 2 も RViz も使わずに Pi の画面だけで確かめる道具です（�
      ── 機体の半径（--radius、既定 0.21 m）より近いと、Nav2 はそこを「入れない場所」とみなし、
         経路を作れません（アプリの表示が「残り 0.0 m」のまま、その場で回るだけになる）
   4. 本棚の場所から各席まで、機体の半径ぶん障害物を太らせても通れる道があるか
-  5. 地図を文字で表示（# 障害物  . 空き  空白 未知  0〜9 ピン）
+  5. 地図を文字で表示（# 障害物  : 障害物に近すぎて機体の中心を置けない  . ピンを置ける  空白 未知  0〜9 ピン）
+  6. だめなピンには「いちばん近い OK の位置」と、いまの位置から前後・左右へ何 cm 動かせばよいか、
+     その座標を登録するコマンド（pin_tool.py --set）を出す
 
 地図の座標の決まり（map_server と同じ）
   ・.yaml の origin は「画像の左下の角」の map 座標 [x, y, yaw]
@@ -277,8 +279,56 @@ def judge_point(m: GridMap, x: float, y: float, radius: float, margin: float = 0
     return "OK", f"✓ 空きマス。{near}"
 
 
-def render_ascii(m: GridMap, marks: dict[tuple[int, int], str], max_cols: int = 110) -> str:
+GOOD_CLEARANCE = 0.30      # ピンを置くときの目標（機体の中心から障害物まで）[m]
+
+
+def suggest_spot(m: GridMap, x: float, y: float, radius: float, target: float | None = None,
+                 field: list[float] | None = None, search: float = 1.5):
+    """
+    (x, y) からいちばん近い「ピンを置ける位置」を返す: (x, y, 障害物までの距離)。無ければ None。
+    条件は 空きマス かつ 障害物まで target [m] 以上（既定は GOOD_CLEARANCE と 半径＋5 cm の大きいほう）。
+    """
+    target = max(GOOD_CLEARANCE, radius + 0.05) if target is None else target
+    field = field if field is not None else m.distance_field()
+    r = int(math.ceil(search / m.res))
+    c0 = math.floor((x - m.ox) / m.res)
+    u0 = math.floor((y - m.oy) / m.res)
+    cands = []
+    for up in range(max(0, u0 - r), min(m.h, u0 + r + 1)):
+        row = m.h - 1 - up
+        for col in range(max(0, c0 - r), min(m.w, c0 + r + 1)):
+            i = row * m.w + col
+            if m.cells[i] != FREE or field[i] < target * 0.9:     # field は近似なので、少し甘めにふるい分ける
+                continue
+            cx, cy = m.cell_center(col, row)
+            cands.append((math.hypot(cx - x, cy - y), cx, cy))
+    for _, cx, cy in sorted(cands):                              # 近い順に、正確な距離で確かめる
+        d = m.clearance(cx, cy)
+        if d is None or d >= target - 1e-9:
+            return cx, cy, d
+    return None
+
+
+def offset_in_robot_frame(dx: float, dy: float, theta: float) -> tuple[float, float]:
+    """地図の上でのずれ (dx, dy) を、向き theta のロボから見た (前へ, 左へ) [m] に直す。"""
+    return (math.cos(theta) * dx + math.sin(theta) * dy,
+            -math.sin(theta) * dx + math.cos(theta) * dy)
+
+
+def describe_move(forward: float, left: float) -> str:
+    """(前へ, 左へ) [m] → 「前へ 14 cm・右へ 6 cm」。1 cm 未満は書かない。"""
+    parts = []
+    if abs(forward) >= 0.01:
+        parts.append(f"{'前' if forward > 0 else '後ろ'}へ {abs(forward) * 100:.0f} cm")
+    if abs(left) >= 0.01:
+        parts.append(f"{'左' if left > 0 else '右'}へ {abs(left) * 100:.0f} cm")
+    return "・".join(parts) if parts else "ほぼ同じ位置"
+
+
+def render_ascii(m: GridMap, marks: dict[tuple[int, int], str], max_cols: int = 110,
+                 field: list[float] | None = None, keep_out: float = 0.0) -> str:
     """地図を文字で。# 障害物  . 空き  空白 未知。大きい地図は間引く（間引いたマスに障害物が 1 つでもあれば #）。
+    field と keep_out を渡すと、障害物まで keep_out [m] 未満の空きマスを : で描く（機体の中心を置けない帯）。
     端末の文字は縦長なので、幅に余裕があれば 1 マスを横 2 文字で描いて縦横の比を実物に近づける。"""
     step = max(1, math.ceil(m.w / max_cols))
     wide = 2 if math.ceil(m.w / step) * 2 <= max_cols else 1
@@ -290,9 +340,13 @@ def render_ascii(m: GridMap, marks: dict[tuple[int, int], str], max_cols: int = 
             kinds = set()
             for row in range(row0, min(m.h, row0 + step)):
                 for col in range(col0, min(m.w, col0 + step)):
-                    kinds.add(m.at(col, row))
+                    kind = m.at(col, row)
+                    if kind == FREE and field is not None and field[row * m.w + col] < keep_out:
+                        kind = "near"
+                    kinds.add(kind)
                     mark = marks.get((col, row), mark)
-            chars.append((mark if mark else "#" if OCC in kinds else "." if FREE in kinds else " ") * wide)
+            chars.append((mark if mark else "#" if OCC in kinds else "." if FREE in kinds
+                          else ":" if "near" in kinds else " ") * wide)
         lines.append("".join(chars).rstrip())
     return "\n".join(lines)
 
@@ -371,14 +425,31 @@ def main():
         rows = fetch_pins()
         for r in rows or []:
             pins.append({"id": int(r["id"]), "label": r.get("label") or f"id={r['id']}",
-                         "x": float(r["x"]), "y": float(r["y"]), "home": r.get("kind") == "home" or int(r["id"]) == 0})
+                         "x": float(r["x"]), "y": float(r["y"]), "theta": float(r.get("theta") or 0.0),
+                         "home": r.get("kind") == "home" or int(r["id"]) == 0})
     for i, (px, py) in enumerate(args.pin or []):
-        pins.append({"id": None, "label": f"指定した点 {i + 1}", "x": px, "y": py, "home": False})
+        pins.append({"id": None, "label": f"指定した点 {i + 1}", "x": px, "y": py, "theta": None, "home": False})
 
     marks: dict[tuple[int, int], str] = {}
+    field = m.distance_field()
+    keep_out = args.radius + 0.05
+    for p in pins:
+        cell = m.world_to_cell(p["x"], p["y"])
+        if cell is not None:
+            marks[cell] = str(p["id"]) if p["id"] is not None and 0 <= p["id"] <= 9 else "*"
+    if not args.no_ascii:
+        print("\n地図（# 障害物  : 障害物に近すぎる（ここにピンは置けない）  . ピンを置ける  空白 未知  数字 ピンの id）")
+        print("      上が y の大きい側、右が x の大きい側。1 マス ＝ %.0f cm" % (m.res * 100))
+        print(render_ascii(m, marks, field=field, keep_out=keep_out))
+    good = sum(1 for i, v in enumerate(m.cells) if v == FREE and field[i] >= keep_out)
+    print(f"\nピンを置ける広さ（. のマス）: {good} マス ＝ 約 {good * m.res * m.res:.2f} m²")
+    if good == 0:
+        problems.append(f"機体の中心を置ける場所が 1 マスもありません（障害物から {keep_out:.2f} m 以上あいた空きが無い）。"
+                        "スペースが狭すぎるか、地図の壁が太く写りすぎています")
+
+    fixes: list[str] = []
     if pins:
         print(f"\nピン（機体の半径 {args.radius:.2f} m で判定）:")
-        field = m.distance_field()
         home = next((p for p in pins if p["home"]), None)
         for p in pins:
             sym, text = judge_point(m, p["x"], p["y"], args.radius)
@@ -386,9 +457,20 @@ def main():
             print(f"  [{tag}] {p['label']:<10} ({p['x']:+.3f}, {p['y']:+.3f})  {text}")
             if sym == "NG":
                 problems.append(f"{p['label']}: {text}")
-            cell = m.world_to_cell(p["x"], p["y"])
-            if cell is not None:
-                marks[cell] = str(p["id"]) if p["id"] is not None and 0 <= p["id"] <= 9 else "*"
+            if sym != "OK":
+                spot = suggest_spot(m, p["x"], p["y"], args.radius, field=field)
+                if spot is None:
+                    print("        → 近く（1.5 m 以内）に、ピンを置ける位置が見つかりません")
+                else:
+                    sx, sy, sd = spot
+                    dx, dy = sx - p["x"], sy - p["y"]
+                    how = ("いまのピンの向きで " + describe_move(*offset_in_robot_frame(dx, dy, p["theta"]))
+                           if p["theta"] is not None else f"地図の x へ {dx:+.2f} m・y へ {dy:+.2f} m")
+                    clear = "1.5 m 以内に障害物なし" if sd is None else f"障害物まで {sd:.2f} m"
+                    print(f"        → いちばん近い OK の位置: ({sx:+.3f}, {sy:+.3f})（{clear}）＝ {how}")
+                    if p["id"] is not None:
+                        fixes.append(f"python3 pin_tool.py --set {p['id']} {sx:.3f} {sy:.3f} {p['theta']:.4f} --label {p['label']}"
+                                     + ("    # ★床のテープ（ロボを置く位置）も同じだけ動かすこと★" if p["home"] else ""))
         if home:
             print("\n本棚の場所からの道（障害物を半径ぶん太らせても通れるか。未知のマスは通れる扱い）:")
             for p in pins:
@@ -402,10 +484,6 @@ def main():
                 else:
                     print(f"  → {p['label']:<10} ✓ 道あり 約 {length:.2f} m（直線で {straight:.2f} m）")
 
-    if not args.no_ascii:
-        print("\n地図（# 障害物  . 空き  空白 未知  数字 ピンの id。上が y の大きい側、右が x の大きい側）:")
-        print(render_ascii(m, marks))
-
     print()
     if problems:
         print("=== ★気になるところ★ ===")
@@ -413,6 +491,11 @@ def main():
             print("  ・" + t)
         print("  → 壁や机に近すぎるピンは、少し離した位置に取り直します（pin_tool.py／アプリの /admin/pins）。\n"
               "    地図そのものがおかしいときは、地図づくりからやり直します（ピンも取り直し）。")
+        if fixes:
+            print("\n=== 直し方の案（上の「いちばん近い OK の位置」を数値で登録する。地図はそのまま使えます）===")
+            for f in fixes:
+                print("  " + f)
+            print("  登録したら、もう一度 python3 map_check.py で確かめてください。")
     else:
         print("✓ 地図は読めて、ピンも Nav2 が行ける場所にあります。")
 
