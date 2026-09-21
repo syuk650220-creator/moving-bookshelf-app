@@ -701,6 +701,34 @@ check("最終進入の速さ min_approach_linear_velocity も下限（0.042 m/s�
       _yaml_num("min_approach_linear_velocity") > P.rpm_to_mps(P.MIN_RPM), True)
 
 
+# =====================================================================
+print("\n=== 横移動をさせない（動きは 前進・後退・その場回転 だけ）===")
+# =====================================================================
+# 2026-09-21 PM 決定: 前（本棚側）が重く、横移動すると一緒に回ってしまう。
+# ① 経路追従が RPP（vx と ω しか出さない） ② velocity_smoother の vy の上限が 0 ③ mecanum_node の use_vy が既定 false
+check("① 経路追従の本体は RPP（vy を作らない）",
+      re.search(r"^\s*primary_controller:\s*\"([^\"]+)\"", _diff, flags=re.M).group(1),
+      "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController")
+_vs = _diff[_diff.index("velocity_smoother:"):]
+_vy = {k: [float(v) for v in re.search(r"^\s*" + k + r":\s*\[([^\]]+)\]", _vs, flags=re.M).group(1).split(",")][1]
+       for k in ("max_velocity", "min_velocity", "max_accel", "max_decel")}
+check("② velocity_smoother の vy は 4 つとも 0.0", _vy,
+      {"max_velocity": 0.0, "min_velocity": 0.0, "max_accel": 0.0, "max_decel": 0.0})
+check("経路追従では後退しない（allow_reversing: false。後退は立て直しの backup だけ）",
+      re.search(r"^\s*allow_reversing:\s*(\w+)", _diff, flags=re.M).group(1), "false")
+_node_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "mecanum_node.py"), encoding="utf-8").read()
+check("③ mecanum_node.py の use_vy は既定 false", 'declare_parameter("use_vy", False)' in _node_src, True)
+check("③ Quantizer の use_vy も既定 false", M.Quantizer().use_vy, False)
+_seen = set()
+for _vx in (-0.25, -0.1, 0.0, 0.1, 0.25):
+    for _vyv in (-0.25, -0.1, 0.0, 0.1, 0.25):
+        for _wz in (-1.0, -0.4, 0.0, 0.4, 1.0):
+            _seen.add(M.Quantizer()(_vx, _vyv, _wz, now=600.0)[0])
+check("封印中は、どんな指令（vx・vy・ω の 125 通り）でも 左横・右横 にならない",
+      sorted(_seen), sorted({M.STOP, M.FORWARD, M.BACKWARD, M.TURN_LEFT, M.TURN_RIGHT}))
+check("封印中に横移動だけの指令が来たら停止", M.Quantizer()(0.0, 0.25, 0.0, now=700.0), (M.STOP, 0.0))
+
+
 print()
 print("=" * 46)
 print("  すべて成功" if ok else "  ★失敗があります★")

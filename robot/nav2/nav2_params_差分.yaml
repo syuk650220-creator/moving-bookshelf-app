@@ -13,11 +13,20 @@
 #
 #  ★どの値も「実機で確かめるまでは仮」です★
 #  とくに alpha1〜5 と lookahead は床とタイヤで変わります。
+#
+#  ★この機体が Nav2 から受ける動きは「前進・その場回転・（立て直しのときだけ）後退」の 3 つ★
+#    横移動は使いません（2026-09-21 PM 決定）。前（本棚側）が重く、横移動すると一緒に回ってしまうためです。
+#    これは 3 か所で守っています。どれか 1 つを変えるときは、ほかも見直すこと:
+#      ① 経路追従が RPP … vx と ω しか出さない（vy を作らない）
+#      ② velocity_smoother の vy の上限が 0.0 … 何が来ても vy は 0 になる
+#      ③ mecanum_node.py の use_vy が既定 false … vy が来ても無視する
+#    後退は、経路追従では使いません（allow_reversing: false）。Nav2 が行き詰まったときの立て直し
+#    （backup。標準のビヘイビアツリー）だけです。test_logic.py が ①② と ③ を検算します。
 # =====================================================================
 
 
 # =====================================================================
-#  1. AMCL ― ★既定のままだと横移動で破綻します★
+#  1. AMCL ― ★既定（差動二輪用）のままにしない★
 # =====================================================================
 amcl:
   ros__parameters:
@@ -26,6 +35,9 @@ amcl:
     # 既定は "nav2_amcl::DifferentialMotionModel"（差動二輪用）です。
     # 横移動するメカナムでは、パーティクルの予測が横方向を想定しないため
     # 横行するたびに自己位置が破綻します。[会場 B2]
+    # ★横移動を指令しなくなっても（2026-09-21）Omni のままにします★
+    #   メカナムはその場回転や発進でローラーが滑って、指令していないのに横へずれます（前が重いこの機体はとくに）。
+    #   Omni モデルは「横にもずれるかもしれない」と見込んで粒子を広げるので、そのずれを LiDAR で拾い直せます。
     robot_model_type: "nav2_amcl::OmniMotionModel"
 
     # Omni モデルのノイズ。alpha5 は Omni 専用（並進方向のノイズ）で、
@@ -147,7 +159,10 @@ controller_server:
       # ★回ってから進む★ 量子化と噛み合う設定
       use_rotate_to_heading: true
       rotate_to_heading_min_angle: 0.5
-      allow_reversing: false      # 人混みで後退させない [会場 D3]
+      # 経路追従では後退しない。人混みで後退させない [会場 D3]。
+      # ※RPP は use_rotate_to_heading と allow_reversing を同時に true にできません（起動時にエラー）。
+      #   この機体は「回ってから進む」が要なので、こちらは false で固定。後退は立て直し（backup）だけ。
+      allow_reversing: false
 
       use_collision_detection: true
       max_allowed_time_to_collision_up_to_carrot: 1.0
@@ -160,7 +175,7 @@ controller_server:
 #  Arduino 側にも MAX_RPM=150 の蓋がありますが、そこに頼らないこと。
 velocity_smoother:
   ros__parameters:
-    # [vx, vy, ω]  ← vy は 0.0（v1 では横移動を使わない）
+    # [vx, vy, ω]  ← ★vy は 4 つとも 0.0 のままにすること★（横移動を使わない。冒頭の ② ）
     max_velocity: [0.25, 0.0, 1.0]
     min_velocity: [-0.25, 0.0, -1.0]
     max_accel: [0.5, 0.0, 2.0]

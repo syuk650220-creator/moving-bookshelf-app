@@ -27,7 +27,8 @@ manual_control.py ― 管理者画面の「ラジコンモード」を受け取�
   python manual_control.py --serial
 
   # 実機を mecanum_node.py 経由で動かす（/cmd_vel に出す）★地図づくりで車輪オドメトリを使うとき★
-  #   先に mecanum_node.py を use_vy:=true で起動しておくこと（横移動を通すため）
+  #   先に mecanum_node.py を起動しておくこと。横移動（左横・右横）は mecanum_node.py が封印しているので動きません
+  #   （前が重く、横移動すると一緒に回ってしまうため。2026-09-21）。前進・後退・その場回転で操作します
   python3 manual_control.py --ros
 
 環境変数（.env でも可）: SUPABASE_URL / SUPABASE_ANON_KEY
@@ -127,7 +128,9 @@ class RosDriver:
         self._lock = threading.Lock()
         self._th = threading.Thread(target=self._loop, daemon=True)
         self._th.start()
-        print("[ros] /cmd_vel に出します。mecanum_node.py（use_vy:=true）が動いていることを確かめてください。")
+        print("[ros] /cmd_vel に出します。mecanum_node.py が動いていることを確かめてください。")
+        print("      ※横移動（左横・右横）は mecanum_node.py が封印しているので動きません。"
+              "前進・後退・その場回転で操作してください。")
 
     def _publish(self, motion: int, rpm: int):
         vx, vy, wz = self._twist_for_motion(motion, rpm)

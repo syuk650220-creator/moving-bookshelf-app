@@ -27,7 +27,10 @@ IMU（加速度・角速度）は Telemetry.acc / .gyro に入っていますが
   ros2 topic echo /odom
 
   # パラメータを変える
-  python3 mecanum_node.py --ros-args -p use_vy:=true -p max_rpm:=30.0
+  python3 mecanum_node.py --ros-args -p max_rpm:=30.0
+
+  # 横移動の封印を解く（★ふだんは付けない★ 前が重く、横移動すると一緒に回ってしまう。K_STRAFE の較正など実験用）
+  python3 mecanum_node.py --ros-args -p use_vy:=true
 
   # 旋回をジャイロから取る（起動から 2 秒ほどは機体を静止させておくこと＝ゼロ点合わせ）
   python3 mecanum_node.py --ros-args -p base_frame:=base_footprint -p use_gyro:=true
@@ -72,7 +75,7 @@ class MecanumNode(Node):
         # ---------------- パラメータ ----------------
         self.declare_parameter("left_port", "")     # 空なら自動で探す
         self.declare_parameter("right_port", "")
-        self.declare_parameter("use_vy", False)     # ★v1 は横移動を封印する★
+        self.declare_parameter("use_vy", False)     # ★横移動は封印（既定）。動きは 前進・後退・その場回転 だけ★
         self.declare_parameter("max_rpm", float(P.MAX_RPM_NAV))
         self.declare_parameter("cmd_timeout", P.CMD_TIMEOUT)
         self.declare_parameter("hysteresis", 1.5)
@@ -108,8 +111,15 @@ class MecanumNode(Node):
             hold_sec=gp("hold_sec").value,
             max_rpm=float(gp("max_rpm").value),
         )
-        if not gp("use_vy").value:
-            self.get_logger().info("横移動は封印しています（use_vy:=true で解除）")
+        self._vy_sealed = not gp("use_vy").value
+        self._vy_warned = False
+        if self._vy_sealed:
+            self.get_logger().info(
+                "横移動は封印しています。動きは 前進・後退・その場回転 だけです（use_vy:=true で解除）")
+        else:
+            self.get_logger().warn(
+                "use_vy:=true（横移動を解除）で起動しました。この機体は前が重く、横移動すると一緒に回ってしまいます"
+                "（2026-09-21 実機）。地図づくり・Nav2 の走行では付けないでください")
 
         # ---------------- 通信 ----------------
         # Nav2 の cmd_vel は「最新の1つだけ届けばよい」ので best_effort / depth 1
@@ -153,6 +163,11 @@ class MecanumNode(Node):
     # =================================================================
 
     def on_cmd(self, msg: Twist):
+        # 封印中に横移動の指令が来たら、だまって止まるのではなく 1 回だけ知らせる
+        # （ラジコンの「左横・右横」を押したとき。Nav2 は横移動の指令を出さない設定）
+        if self._vy_sealed and not self._vy_warned and abs(msg.linear.y) >= 0.02:
+            self._vy_warned = True
+            self.get_logger().warn("横移動の指令が来ましたが、封印中なので無視します（前進・後退・その場回転だけ動きます）")
         motion, rpm = self.quant(msg.linear.x, msg.linear.y, msg.angular.z)
         self.link.set_command(motion, rpm)
 
