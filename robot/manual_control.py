@@ -26,6 +26,10 @@ manual_control.py ― 管理者画面の「ラジコンモード」を受け取�
   # 実機を動かす（ラズパイ上・Arduino 2枚接続時のみ）
   python manual_control.py --serial
 
+  # 実機を mecanum_node.py 経由で動かす（/cmd_vel に出す）★地図づくりで車輪オドメトリを使うとき★
+  #   先に mecanum_node.py を use_vy:=true で起動しておくこと（横移動を通すため）
+  python3 manual_control.py --ros
+
 環境変数（.env でも可）: SUPABASE_URL / SUPABASE_ANON_KEY
 
 ★ bookshelf_bridge.py と同時に実機へつながないこと ★
@@ -84,6 +88,84 @@ class SimDriver:
         print("    [sim] 停止して終了")
 
 
+class RosDriver:
+    """
+    /cmd_vel に Twist を出して、mecanum_node.py 経由で実機を動かす。★ラズパイ上でのみ★
+
+    --serial は Arduino を直接つかむので、mecanum_node.py と同時には動かせません。すると地図づくりの
+    あいだ車輪オドメトリが出せず、SLAM は LiDAR の形の重ね合わせだけが頼りになって、壁が二重・三重に
+    写りやすくなります（2026-09-21）。こちらは指令を mecanum_node.py に渡すので、Arduino へ行く指令は
+    同じまま、/odom と TF（odom→base_footprint）が出続けます。
+
+    ・指令は 20 Hz で出し続ける（mecanum_node.py は 0.2 秒指令が来ないと止める。ポーリングは 0.2 秒ごとなので
+      受け取ったときだけ出すのでは間に合わない）
+    ・止まっているあいだは何も出さない（停止に変わった直後の 1 秒だけ 0 を出す）。
+      Nav2 が同じ /cmd_vel を使うので、出し続けると Nav2 の指令を打ち消してしまうため
+    ・このスクリプトが落ちても、mecanum_node.py が 0.2 秒で停止、Arduino が 0.5 秒で停止する
+    """
+
+    RATE_HZ = 20.0
+    ZERO_TAIL_SEC = 1.0
+
+    def __init__(self):
+        try:
+            import rclpy
+            from geometry_msgs.msg import Twist
+            from mecanum_serial import twist_for_motion
+        except ImportError as e:
+            sys.exit(f"ROS 2 か mecanum_serial.py が読み込めません（{e}）。\n"
+                     "  ラズパイ上で ROS 2 の環境を source してから実行してください。")
+        import threading
+        self._rclpy, self._Twist, self._twist_for_motion = rclpy, Twist, twist_for_motion
+        if not rclpy.ok():
+            rclpy.init()
+        self.node = rclpy.create_node("manual_control")
+        self.pub = self.node.create_publisher(Twist, "cmd_vel", 10)
+        self._cmd = (0, 0)
+        self._last_moving = 0.0
+        self._alive = True
+        self._lock = threading.Lock()
+        self._th = threading.Thread(target=self._loop, daemon=True)
+        self._th.start()
+        print("[ros] /cmd_vel に出します。mecanum_node.py（use_vy:=true）が動いていることを確かめてください。")
+
+    def _publish(self, motion: int, rpm: int):
+        vx, vy, wz = self._twist_for_motion(motion, rpm)
+        msg = self._Twist()
+        msg.linear.x, msg.linear.y, msg.angular.z = float(vx), float(vy), float(wz)
+        self.pub.publish(msg)
+
+    def _loop(self):
+        while self._alive:
+            with self._lock:
+                motion, rpm = self._cmd
+            now = time.time()
+            if motion != 0:
+                self._last_moving = now
+                self._publish(motion, rpm)
+            elif now - self._last_moving < self.ZERO_TAIL_SEC:
+                self._publish(0, 0)
+            time.sleep(1.0 / self.RATE_HZ)
+
+    def apply(self, motion: int, rpm: int):
+        with self._lock:
+            self._cmd = (int(motion), int(rpm))
+
+    def stop(self):
+        self.apply(0, 0)
+
+    def close(self):
+        self._alive = False
+        self._th.join(timeout=1.0)
+        for _ in range(5):                 # 停止を確実に届けてから終わる
+            self._publish(0, 0)
+            time.sleep(0.05)
+        self.node.destroy_node()
+        if self._rclpy.ok():
+            self._rclpy.shutdown()
+        print("    [ros] 停止を送って終了")
+
+
 class SerialDriver:
     """
     実機（Arduino 2枚）を MecanumLink で動かす。★ラズパイ上でのみ★
@@ -126,9 +208,13 @@ def main():
     ap = argparse.ArgumentParser(description="管理者画面の手動操作を受け取る")
     ap.add_argument("--serial", action="store_true",
                     help="実機（Arduino）を動かす（既定はログのみのシミュレータ）")
+    ap.add_argument("--ros", action="store_true",
+                    help="/cmd_vel に出して mecanum_node.py 経由で動かす（地図づくりで車輪オドメトリを使うとき）")
     ap.add_argument("--left", help="左基板のポート（--serial 時。省略で自動）")
     ap.add_argument("--right", help="右基板のポート（--serial 時。省略で自動）")
     args = ap.parse_args()
+    if args.serial and args.ros:
+        sys.exit("--serial と --ros は同時に使えません（--ros のときは mecanum_node.py が Arduino をつかみます）。")
 
     load_env()
     url = os.environ.get("SUPABASE_URL")
@@ -140,10 +226,12 @@ def main():
     headers = {"apikey": key, "Authorization": f"Bearer {key}",
                "Content-Type": "application/json"}
 
-    driver = SerialDriver(args.left, args.right) if args.serial else SimDriver()
+    driver = (SerialDriver(args.left, args.right) if args.serial
+              else RosDriver() if args.ros else SimDriver())
 
     print(f"接続先 : {url}")
-    print(f"モード : {'★実機（Arduinoを動かします）★' if args.serial else 'シミュレータ（ログのみ）'}")
+    print("モード : " + ("★実機（Arduinoを動かします）★" if args.serial
+                        else "★実機（/cmd_vel → mecanum_node.py 経由）★" if args.ros else "シミュレータ（ログのみ）"))
     print(f"デッドマン: 指令が {DEADMAN_SEC} 秒更新されなければ停止")
     print("Ctrl-C で終了。\n")
 

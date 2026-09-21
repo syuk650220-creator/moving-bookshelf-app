@@ -478,6 +478,34 @@ class MecanumLink:
 
 
 # =====================================================================
+#  7動作 → cmd_vel（量子化の逆。ラジコンの指令を mecanum_node.py 経由で流すときに使う）
+# =====================================================================
+
+def twist_for_motion(motion: int, rpm: float) -> tuple[float, float, float]:
+    """
+    動作番号と回転数を、同じ動きになる (vx, vy, wz) [m/s, m/s, rad/s] に直す。
+
+    下の Quantizer（use_vy=True）に通すと、元の動作番号と回転数に戻ります。
+    ラジコンの指令を /cmd_vel に出して mecanum_node.py に渡すと、Arduino へ行く指令は同じまま、
+    mecanum_node.py が車輪オドメトリ（/odom と TF）を出し続けられます（地図づくりで使う）。
+    """
+    v = P.rpm_to_mps(max(0.0, float(rpm)))
+    if motion == FORWARD:
+        return v, 0.0, 0.0
+    if motion == BACKWARD:
+        return -v, 0.0, 0.0
+    if motion == LEFT:
+        return 0.0, v * P.K_STRAFE, 0.0
+    if motion == RIGHT:
+        return 0.0, -v * P.K_STRAFE, 0.0
+    if motion == TURN_LEFT:
+        return 0.0, 0.0, v / P.WHEEL_GEOM_L
+    if motion == TURN_RIGHT:
+        return 0.0, 0.0, -v / P.WHEEL_GEOM_L
+    return 0.0, 0.0, 0.0
+
+
+# =====================================================================
 #  cmd_vel → 7動作 の量子化（A1）
 # =====================================================================
 

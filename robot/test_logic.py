@@ -636,6 +636,19 @@ check("文字の地図: 行数と、1 行目は壁（1 マスを横 2 文字で�
 check("文字の地図: ピンの数字が入る", "00" in art.splitlines()[MH - 1 - 5], True)
 
 
+# =====================================================================
+print("\n=== ラジコンの指令 → cmd_vel → 量子化 で元に戻るか（地図づくりで mecanum_node を通す）===")
+# =====================================================================
+for mot in (M.FORWARD, M.BACKWARD, M.LEFT, M.RIGHT, M.TURN_LEFT, M.TURN_RIGHT):
+    for rpm_in in (15, 30, 60):
+        q = M.Quantizer(use_vy=True)
+        mo, rp = q(*M.twist_for_motion(mot, rpm_in), now=100.0)
+        check(f"{M.MOTION_NAME[mot]} {rpm_in} rpm → cmd_vel → 量子化", (mo, round(rp, 3)), (mot, float(rpm_in)))
+check("停止は (0, 0, 0)", M.twist_for_motion(M.STOP, 30), (0.0, 0.0, 0.0))
+vx_, vy_, wz_ = M.twist_for_motion(M.TURN_LEFT, 15)
+check("左回転 15 rpm は約 0.47 rad/s（1 秒に約 27°）", (vx_, vy_, round(wz_, 2)), (0.0, 0.0, 0.47))
+
+
 print()
 print("=" * 46)
 print("  すべて成功" if ok else "  ★失敗があります★")

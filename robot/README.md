@@ -55,15 +55,16 @@
 |---|---|
 | `bookshelf_bridge.py` | ブリッジ本体（Issue #8 / #9 / #14 ／ 段階3）。`robot_calls` を 1 秒ポーリング（`--realtime` で購読も併用）し、自己位置推定（本棚の場所を初期位置に）→ 席へ走行 → 受取待ち → 本棚の場所へ帰還、と status を進める。`--nav2` で実走 |
 | `pin_tool.py` | ★ピン建て★ 席1〜3 と本棚の場所（id=0）の map 座標を `stop_points` に登録。ロボを置いた場所（TF `map→base_link` の中央値）か RViz のクリック（2D Goal Pose ／ Publish Point）から。ROS 2 が無くても `--set` で数値登録できる |
-| `manual_control.py` | 管理者画面（/admin）ラジコンモードの受け側。`robot_manual` を 0.2 秒ポーリングし、指令が 1.2 秒更新されなければ停止（デッドマン）。`--serial` で実機接続 |
+| `manual_control.py` | 管理者画面（/admin）ラジコンモードの受け側。`--ros` なら `/cmd_vel` に出して `mecanum_node.py` 経由で動かす（地図づくりで車輪オドメトリを使うとき）。`robot_manual` を 0.2 秒ポーリングし、指令が 1.2 秒更新されなければ停止（デッドマン）。`--serial` で実機接続 |
 | `mecanum_serial.py` | Arduino 2 枚との USB シリアル通信ライブラリ（送信ループ・テレメトリ＋IMU・量子化 `Quantizer`・暴走防止の検出） |
 | `mecanum_node.py` | ROS 2 ノード。`/cmd_vel` → パケット、テレメトリ → `/odom` と TF |
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（146 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（166 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
+| `slam/mapping_no_odom.yaml` ／ `slam/mapping_odom.yaml` | slam_toolbox の設定。前者はいつもの手順（仮の TF）のまま使える調整版、後者は**車輪オドメトリを使う地図づくり**用（§5-4） |
 | `map_check.py` | ★段階3★ 保存した地図（`~/maps/my_map.yaml`＋`.pgm`）とピンの点検。地図の大きさ・中身、ピンが壁から機体の半径より離れているか、本棚の場所から各席へ道があるかを調べ、地図を文字で表示する。ROS 2 不要・何も書き換えない |
 | `nav2/robot_tf_launch.py` | ★段階3★ 実走のときの静的 TF（`base_footprint→base_link→laser`）。`temp_tf_launch.py` のかわりに使う（§7） |
 | `sql/01_realtime_と_updated_at.sql` | schema.sql に足りない 2 つ（Realtime publication ／ updated_at 自動更新トリガ）。SQL Editor で 1 回実行 |
@@ -163,7 +164,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（146 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（166 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -281,6 +282,34 @@ Realtime も試すなら `--realtime` を足します。**動かなくても構�
 
 
 ピンは 4 つです。**本棚の場所（id=0）は床にテープで印を付け、毎回同じ向きに置く**こと（ここが帰る先であり、自己位置推定の初期位置です）。
+
+**地図の壁が二重・三重に写るとき（2026-09-21）**
+
+いつもの手順は `odom→base_footprint` が「動かない仮の TF」なので、SLAM は LiDAR の形の重ね合わせだけで動きを追います。
+重ね合わせがずれるたびに同じ壁が別の位置に描かれ、本物の壁の手前に**にせの障害物**ができます。狭い場所（2 m 四方など）では、
+それだけで「機体の中心を置ける場所」（`map_check.py` の `.` のマス）がほとんど無くなり、Nav2 が経路を作れません。対策は 2 段あります。★どちらも実機では未検証★
+
+1. **設定だけ変える（手順はそのまま）** … 窓③の `slam_params_file:=` を `$HOME/moving-bookshelf-app/robot/slam/mapping_no_odom.yaml` にする。
+   スキャンの取り込み間隔 0.5 → 0.2 秒、照合に使う直近のスキャン 10 → 30 枚、障害物とみなす割合 0.1 → 0.25。
+   走らせ方も効く: 回転は 15 rpm で少しずつ・止まりながら、人は LiDAR の視界（床から 32 cm の高さ）に入らない。
+2. **車輪オドメトリを使う地図づくり（本命）** … 地図づくりでも `mecanum_node.py` を動かし、ラジコンの指令をそこへ通す。
+
+```bash
+# 窓① LiDAR（いつもどおり）
+ros2 launch rplidar_ros rplidar.launch.py
+# 窓② 車輪オドメトリ（odom→base_footprint）。★temp_tf_launch.py は起動しない★ use_vy はラジコンの横移動を通すため
+cd ~/moving-bookshelf-app/robot && python3 mecanum_node.py --ros-args -p base_frame:=base_footprint -p use_vy:=true
+# 窓③ 残りの TF（base_footprint→base_link→laser）
+ros2 launch ~/moving-bookshelf-app/robot/nav2/robot_tf_launch.py
+# 窓④ SLAM（オドメトリあり用の設定）
+ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false slam_params_file:=$HOME/moving-bookshelf-app/robot/slam/mapping_odom.yaml
+# 窓Ｒ ラジコンの受信係。★--serial ではなく --ros★（Arduino は mecanum_node.py がつかんでいる）
+cd ~/moving-bookshelf-app/robot && python3 manual_control.py --ros
+```
+
+   ピン建て・保存・`map_check.py` は同じ。実走（§5-3）へ移るときは **SLAM とラジコンの受信係だけ止めればよく、窓②③はそのまま使えます**
+   （ただし実走では横移動を使わないので、気になるなら窓②を `use_vy` なしで起動し直す）。
+   `manual_control.py --ros` は、止まっているあいだ `/cmd_vel` に何も出しません（Nav2 の指令を打ち消さないため）。
 
 **地図の保存と点検**
 

@@ -1,0 +1,98 @@
+# =====================================================================
+#  slam_toolbox の設定 ― 車輪オドメトリ「あり」の地図づくり用  ★本命★
+#
+#  地図づくりでも mecanum_node.py を動かし、エンコーダから作った「これだけ進んだ」（odom→base_footprint）
+#  を SLAM に渡します。SLAM は、その見込みのまわりだけを LiDAR の形の重ね合わせで微調整すればよくなるので、
+#  壁が二重・三重に写りにくくなります（とくにその場回転で効きます）。
+#
+#  窓の構成（robot/README.md §5-4「車輪オドメトリを使う地図づくり」）:
+#    窓①  ros2 launch rplidar_ros rplidar.launch.py
+#    窓②  python3 mecanum_node.py --ros-args -p base_frame:=base_footprint -p use_vy:=true
+#    窓③  ros2 launch ~/moving-bookshelf-app/robot/nav2/robot_tf_launch.py
+#    窓④  ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false \
+#             slam_params_file:=$HOME/moving-bookshelf-app/robot/slam/mapping_odom.yaml
+#    窓Ｒ  python3 manual_control.py --ros        ← --serial ではない（Arduino は mecanum_node.py がつかむ）
+#  ★~/bringup/temp_tf_launch.py（動かない仮の TF）は起動しないこと。odom→base_footprint が二重になります★
+#
+#  Pi の ~/slam/temp_mapping.yaml との違いは ★印の 5 か所です。
+#  ★実機では未検証★（2026-09-21 作成）
+# =====================================================================
+slam_toolbox:
+  ros__parameters:
+
+    # Plugin params
+    solver_plugin: solver_plugins::CeresSolver
+    ceres_linear_solver: SPARSE_NORMAL_CHOLESKY
+    ceres_preconditioner: SCHUR_JACOBI
+    ceres_trust_strategy: LEVENBERG_MARQUARDT
+    ceres_dogleg_type: TRADITIONAL_DOGLEG
+    ceres_loss_function: None
+
+    # ROS Parameters
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_footprint
+    scan_topic: /scan
+    use_map_saver: true
+    mode: mapping
+
+    debug_logging: false
+    throttle_scans: 1
+    transform_publish_period: 0.02
+    map_update_interval: 5.0
+    resolution: 0.05
+    restamp_tf: false
+    min_laser_range: 0.0
+    max_laser_range: 12.0
+    # ★0.5 → 0.2★ スキャンを取り込む間隔の下限 [s]
+    minimum_time_interval: 0.2
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+    enable_interactive_mode: true
+
+    # General Parameters
+    use_scan_matching: true
+    use_scan_barycenter: true
+    # ★0.0 → 0.05★ オドメトリが「5 cm 進んだ」か「0.05 rad（約 3°）回った」と言ったときだけスキャンを取り込みます。
+    #   止まっているあいだは取り込まないので、同じ場所のスキャンで地図があふれません。
+    #   （slam_toolbox の標準は 0.5 / 0.5 ですが、2 m 四方のスペースには粗すぎます）
+    minimum_travel_distance: 0.05
+    minimum_travel_heading: 0.05
+    check_min_dist_and_heading_precisely: false
+    # ★10 → 20★ 重ね合わせの相手にする直近のスキャンの枚数
+    scan_buffer_size: 20
+    scan_buffer_maximum_scan_distance: 10.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # Correlation Parameters
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    # Loop Closure Parameters
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # Scan Matcher Parameters
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
+    min_pass_through: 2
+    # ★0.1 → 0.2★ 当たった割合がこれを超えたマスを障害物にします。0.1 だと、少しずれて描かれた
+    #   にせの線まで障害物として残ります。
+    occupancy_threshold: 0.2
