@@ -57,11 +57,11 @@
 | `pin_tool.py` | ★ピン建て★ 席1〜3 と本棚の場所（id=0）の map 座標を `stop_points` に登録。ロボを置いた場所（TF `map→base_link` の中央値）か RViz のクリック（2D Goal Pose ／ Publish Point）から。ROS 2 が無くても `--set` で数値登録できる |
 | `manual_control.py` | 管理者画面（/admin）ラジコンモードの受け側。`--ros` なら `/cmd_vel` に出して `mecanum_node.py` 経由で動かす（地図づくりで車輪オドメトリを使うとき）。`robot_manual` を 0.2 秒ポーリングし、指令が 1.2 秒更新されなければ停止（デッドマン）。`--serial` で実機接続 |
 | `mecanum_serial.py` | Arduino 2 枚との USB シリアル通信ライブラリ（送信ループ・テレメトリ＋IMU・量子化 `Quantizer`・暴走防止の検出） |
-| `mecanum_node.py` | ROS 2 ノード。`/cmd_vel` → パケット、テレメトリ → `/odom` と TF |
+| `mecanum_node.py` | ROS 2 ノード。`/cmd_vel` → パケット、テレメトリ → `/odom` と TF。`use_gyro:=true` で、向きの変化だけを基板の IMU（ジャイロ）から取る（§5-4） |
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（166 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（173 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
 | `slam/mapping_no_odom.yaml` ／ `slam/mapping_odom.yaml` | slam_toolbox の設定。前者はいつもの手順（仮の TF）のまま使える調整版、後者は**車輪オドメトリを使う地図づくり**用（§5-4） |
@@ -164,7 +164,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（166 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（173 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -306,6 +306,14 @@ ros2 launch slam_toolbox online_async_launch.py use_sim_time:=false slam_params_
 # 窓Ｒ ラジコンの受信係。★--serial ではなく --ros★（Arduino は mecanum_node.py がつかんでいる）
 cd ~/moving-bookshelf-app/robot && python3 manual_control.py --ros
 ```
+
+   **エンコーダ・ジャイロ・LiDAR の補い合い**: この形では、エンコーダの「これだけ進んだ」が SLAM の**見込み**になり、SLAM はそのまわり（±25 cm・±20°）だけを
+   LiDAR の形の重ね合わせで探して**答え合わせ**をします（実走の AMCL も同じ構造）。エンコーダが多少ずれていても LiDAR が直し、見込みがあるので LiDAR は重ね合わせを外しにくくなります。
+   さらに、メカナムがいちばん数え間違える**その場回転**は、`mecanum_node.py` に `-p use_gyro:=true` を足すとジャイロから取れます
+   （進んだ量＝車輪、回った量＝ジャイロ、止まっている判定とジャイロのゼロ点合わせ＝車輪）。手順:
+   ① まず `use_gyro` なしで窓②を起動し、**2 秒ほど静止**（ゼロ点合わせ。`ジャイロのゼロ点: +0.31 dps` と出る）→ ラジコンで左回転すると 2 秒ごとに
+   `旋回の速さ: 車輪 +0.47 / ジャイロ +0.41 rad/s（ジャイロ÷車輪 = 0.87）` と出る。② **符号が同じで、比が 0.5〜1.3 くらい**なら、窓②を `-p use_gyro:=true` 付きで起動し直す。
+   `★符号が逆です★` と出たら使わない（報告してください）。この比は `WHEEL_GEOM_L` の較正の手がかりにもなります（本当の L ≒ 0.135 × 車輪÷ジャイロ）。
 
    ピン建て・保存・`map_check.py` は同じ。実走（§5-3）へ移るときは **SLAM とラジコンの受信係だけ止めればよく、窓②③はそのまま使えます**
    （ただし実走では横移動を使わないので、気になるなら窓②を `use_vy` なしで起動し直す）。

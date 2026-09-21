@@ -478,6 +478,60 @@ class MecanumLink:
 
 
 # =====================================================================
+#  旋回の速さをジャイロから取る（エンコーダと IMU の補い合い）
+# =====================================================================
+
+class GyroYaw:
+    """
+    オドメトリの「向きの変化」を、車輪（エンコーダ）ではなく IMU のジャイロから取るための部品。
+
+    ★お互いの弱点を補う分担★
+      車輪（エンコーダ）… 進んだ量に強い。止まっていれば正確に 0。
+                          ただしメカナムはその場回転と横移動でローラーが滑り、回った量を数え間違える。
+      ジャイロ          … 滑りと無関係に、回る速さそのものを測る。
+                          ただしゼロ点がずれていて（バイアス）、止まっていても少しずつ回って見える。
+
+      → 並進 (vx, vy) は車輪、旋回 wz はジャイロから取る。
+        「止まっている」の判定は車輪に任せ、止まっているあいだは wz = 0 にしつつ、
+        そのときのジャイロの値をゼロ点として覚えて引く。ゼロ点が決まるまでは車輪の wz を使う。
+
+    使い方: 周期ごとに update(ジャイロの角速度Z [rad/s], 車輪から出した wz, 車輪が回っているか, stamp) を呼ぶ。
+            戻り値がその周期に使う wz。stamp はテレメトリの受信時刻など「新しいサンプルか」の見分けに使う
+            （オドメトリは 50 Hz、テレメトリは 10 Hz なので、同じサンプルを何度も数えないため）。
+    """
+
+    def __init__(self, calib_samples: int = 15, bias_alpha: float = 0.02,
+                 still_limit: float = math.radians(3.0)):
+        self.calib_samples = calib_samples      # 最初のゼロ点合わせに使うサンプル数（10 Hz なら 1.5 秒）
+        self.bias_alpha = bias_alpha            # その後のゼロ点の追従の速さ（小さいほどゆっくり）
+        self.still_limit = still_limit          # 静止中でもこれ以上ずれた値は、ゼロ点の更新に使わない（手で回された等）
+        self.bias = 0.0
+        self._sum = 0.0
+        self._n = 0
+        self._last_stamp = None
+
+    @property
+    def ready(self) -> bool:
+        return self._n >= self.calib_samples
+
+    def update(self, gyro_z: float, wheel_wz: float, moving: bool, stamp=None) -> float:
+        fresh = stamp is None or stamp != self._last_stamp
+        self._last_stamp = stamp
+        if not moving:
+            if fresh:
+                if not self.ready:
+                    self._sum += gyro_z
+                    self._n += 1
+                    self.bias = self._sum / self._n
+                elif abs(gyro_z - self.bias) < self.still_limit:
+                    self.bias += self.bias_alpha * (gyro_z - self.bias)
+            return 0.0                          # 車輪が止まっている ＝ 回っていない
+        if not self.ready:
+            return wheel_wz                     # ゼロ点がまだ決まっていない
+        return gyro_z - self.bias
+
+
+# =====================================================================
 #  7動作 → cmd_vel（量子化の逆。ラジコンの指令を mecanum_node.py 経由で流すときに使う）
 # =====================================================================
 
