@@ -244,6 +244,50 @@ class LoggingNavigator:
         pass
 
 
+# 動いている Nav2（controller_server）から読む値。check_nav2_motion_params() に渡す
+NAV2_CHECK_PARAMS = (
+    "controller_frequency",
+    "FollowPath.max_angular_accel",
+    "FollowPath.rotate_to_heading_angular_vel",
+    "FollowPath.min_approach_linear_velocity",
+    "progress_checker.movement_time_allowance",
+)
+NAV2_FIX_HINT = ("直し方: Nav2 の窓を Ctrl+C → bash ~/moving-bookshelf-app/robot/pi_setup.sh → "
+                 "cd ~/moving-bookshelf-app/robot/nav2 && python3 make_nav2_params.py --write --robot-radius 0.21 → "
+                 "このブリッジを起動し直す → Nav2 を起動し直す")
+
+
+def check_nav2_motion_params(p: dict) -> list[str]:
+    """
+    Nav2 の設定が、この機体の「10 rpm 未満の指令は停止にする」決まりと噛み合っているかを調べる。
+    p は {パラメータ名: 値}（取れなかったものは None か、キーなし）。問題を文章のリストで返す（空なら OK）。
+
+    古い ~/nav2/nav2_params.yaml のまま走らせると「向きを変える場面で動けない」になるが、
+    Nav2 のログだけでは気づきにくい。ブリッジが起動時に、動いている Nav2 の値そのものを見る。
+    """
+    import robot_params as P
+    out = []
+    dead_w = P.rpm_to_mps(P.MIN_RPM) / P.WHEEL_GEOM_L      # これ未満の回る速さは停止になる [rad/s]
+    dead_v = P.rpm_to_mps(P.MIN_RPM)                       # これ未満の速さは停止になる [m/s]
+    acc = p.get("FollowPath.max_angular_accel")
+    hz = p.get("controller_frequency")
+    if acc is not None and hz:
+        first = acc / hz
+        if first <= dead_w:
+            out.append(f"その場回転の最初の指令が {first:.2f} rad/s（max_angular_accel {acc:g} ÷ {hz:g} Hz）で、"
+                       f"この機体の下限 {dead_w:.2f} rad/s に届きません → 向きを変える場面で動けません")
+    w = p.get("FollowPath.rotate_to_heading_angular_vel")
+    if w is not None and w <= dead_w:
+        out.append(f"回頭の速さ rotate_to_heading_angular_vel {w:g} rad/s が、下限 {dead_w:.2f} rad/s 以下です")
+    v = p.get("FollowPath.min_approach_linear_velocity")
+    if v is not None and v <= dead_v:
+        out.append(f"最終進入の速さ min_approach_linear_velocity {v:g} m/s が、下限 {dead_v:.3f} m/s 以下です")
+    t = p.get("progress_checker.movement_time_allowance")
+    if t is not None and t < 14.9:
+        out.append(f"進み具合の見張りが {t:g} 秒（この機体用は 15 秒）→ 古い設定ファイルのままの目印です")
+    return out
+
+
 class Nav2Navigator:
     """
     本物のナビ。★Issue #9 / タスク B3 ／ 段階3★
@@ -325,6 +369,52 @@ class Nav2Navigator:
             self.nav.waitUntilNav2Active(localizer="robot_localization")
         self._nav_ready = True
         print("    [nav] Nav2 が有効になりました")
+        self.check_motion_params()
+
+    # ---------------- 動いている Nav2 の設定の点検 ----------------
+
+    def _get_remote_params(self, node_name: str, names, timeout: float = 3.0):
+        """ほかのノードのパラメータを読む。{名前: 値}。読めなければ None。"""
+        from rcl_interfaces.srv import GetParameters
+        cli = self.nav.create_client(GetParameters, f"{node_name}/get_parameters")
+        try:
+            if not cli.wait_for_service(timeout_sec=timeout):
+                return None
+            req = GetParameters.Request()
+            req.names = list(names)
+            fut = cli.call_async(req)
+            self._rclpy.spin_until_future_complete(self.nav, fut, timeout_sec=timeout)
+            res = fut.result() if fut.done() else None
+            if res is None:
+                return None
+            out = {}
+            for n, v in zip(names, res.values):       # type: 1=bool 2=integer 3=double 4=string（0=未設定）
+                out[n] = {1: v.bool_value, 2: v.integer_value, 3: v.double_value, 4: v.string_value}.get(v.type)
+            return out
+        finally:
+            self.nav.destroy_client(cli)
+
+    def check_motion_params(self) -> list[str]:
+        """動いている Nav2 の値を読んで、この機体と噛み合わない設定を知らせる。点検の失敗では止めない。"""
+        self.param_problems = []
+        try:
+            got = self._get_remote_params("controller_server", NAV2_CHECK_PARAMS)
+            if got is None:
+                print("    [nav] （Nav2 の設定の点検は省略しました: controller_server から値を読めません）")
+                return []
+            self.param_problems = check_nav2_motion_params(got)
+        except Exception as e:                        # 点検はおまけ。ここで落ちて走れなくなるのは本末転倒
+            print(f"    [nav] （Nav2 の設定の点検は省略しました: {e}）")
+            return []
+        if self.param_problems:
+            print("\n    ★★★ Nav2 の設定が、この機体に合っていません（古い ~/nav2/nav2_params.yaml のまま？）★★★")
+            for t in self.param_problems:
+                print("      ・" + t)
+            print("      " + NAV2_FIX_HINT + "\n")
+        else:
+            print(f"    [nav] Nav2 の設定を点検しました: max_angular_accel {got.get('FollowPath.max_angular_accel')}・"
+                  f"見張り {got.get('progress_checker.movement_time_allowance')} 秒 → OK")
+        return self.param_problems
 
     # ---------------- AMCL の現在地 ----------------
 
@@ -873,6 +963,14 @@ def main():
                 print("    [nav] ★初期位置が入っていません★ RViz の 2D Pose Estimate で初期位置を与えてください"
                       "（与えるまで Nav2 は起動を完了できません）")
             navigator.wait_navigation_ready()
+            if getattr(navigator, "param_problems", None):
+                # アプリ（管理者画面の「ロボットの状態」）からも分かるようにしておく
+                try:
+                    bridge.set_status("idle", None, pose=navigator.current_pose(),
+                                      detail="★Nav2 の設定が古いようです（向きを変える場面で動けません）。"
+                                             "ブリッジの窓の案内に従って作り直してください★")
+                except requests.RequestException as e:
+                    print(f"    [warn] 状態の書き込みに失敗（続行します）: {e}")
         except KeyboardInterrupt:
             bridge.shutdown()
             print("終了しました。")

@@ -61,7 +61,7 @@
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（185 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（193 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
 | `slam/mapping_no_odom.yaml` ／ `slam/mapping_odom.yaml` | slam_toolbox の設定。前者はいつもの手順（仮の TF）のまま使える調整版、後者は**車輪オドメトリを使う地図づくり**用（§5-4） |
@@ -164,7 +164,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（185 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（193 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -261,7 +261,7 @@ python3 bookshelf_bridge.py --live --nav2
 - Ctrl-C で止めると走行を中止（`cancelTask`）し、処理中の呼出を canceled、状態を idle に戻してから終了します。
 
 > ★`--nav2` の経路は 2026-09-18 時点で実機未検証です★ 実機なしで検証できる部分（状態機械・DB への書き込み・失敗時の扱い）は
-> `test_logic.py` の「Bridge」の項で通してあります。初回は `--nav-timeout 60` など短めで、非常停止に手を添えて試してください。
+> `test_logic.py` の「Bridge」の項で通してあります。初回は `--nav-timeout 120` など短めで、非常停止に手を添えて試してください（席まで 1〜2 m なら走行そのものは 10〜20 秒。Nav2 の立て直し＝15 秒の見張り＋回転・待ち・後退を 2〜3 回はさんでも着ける長さ。**時間切れになるときは、時間を延ばす前に「ロボが動いているか」を見ること** ── 動いていないなら、待っても着きません）。
 
 Realtime も試すなら `--realtime` を足します。**動かなくても構いません** ― ポーリング（1 秒）だけで運用できる設計です。
 会場の Wi-Fi は不通前提という裁定が出ているため、意図的にこうしてあります。
@@ -466,7 +466,10 @@ cd ~/moving-bookshelf-app/robot/nav2
 python3 make_nav2_params.py                          # 何を変えるかを見るだけ（書かない）
 python3 make_nav2_params.py --write                  # ~/nav2/nav2_params.yaml を作る
 python3 make_nav2_params.py --write --robot-radius 0.21    # 機体の半径 [m]（回転の中心からいちばん遠い角まで＋0.02。この機体は 0.21）
+python3 make_nav2_params.py --check                  # いまの ~/nav2/nav2_params.yaml が最新か（差分ファイルと同じか）だけ調べる。何も書かない
 ```
+
+**★差分ファイルが更新されたら、`--write` で作り直して Nav2 を起動し直す★**（Nav2 は起動したときのファイルを読むだけで、あとから変わっても気づきません）。作り忘れに気づけるよう、3 か所で見張っています: ① `pi_setup.sh` が最後に `--check` を走らせ、古ければ黄色で知らせる　② `bookshelf_bridge.py --nav2` が、Nav2 が立ち上がったあとに**動いている Nav2 の値そのもの**を読み、この機体に合わなければ `★★★ Nav2 の設定が、この機体に合っていません ★★★` と直し方を出す（アプリの管理者画面の「ロボットの状態」にも出る）　③ Nav2 の窓で `Failed to make progress` が **10 秒おき**に出ていたら古い設定（この機体用は 15 秒）。
 
 `behavior_server`（後退・その場旋回のリカバリを外す）は既定では重ねません。ビヘイビアツリーの XML からも Spin / BackUp を外すのが条件で、片方だけ変えると `bt_navigator` が起動に失敗するためです（XML を直したら `--with-behavior-server`）。
 差分ファイルの値を変えたら、もう一度 `--write` で作り直します（`~/nav2/nav2_params.yaml` を直接編集しない）。
@@ -535,7 +538,7 @@ Pi の `~/bringup/temp_tf_launch.py` に入っている値は `base_footprint→
 | 片方の基板の rpm が 0 のまま | その基板の USB が挿さっていない。**2 枚とも挿す**（エンコーダの電源を隣の基板から取っているため、片方だけだと暴走する） |
 | 前進で 4 輪の符号がバラバラ | Arduino 側の `MOTOR_DIR`／`MOTOR_INV_*` の問題。Arduino 担当へ |
 | アプリの表示が「残り 0.0 m」「残り 0.2 m」のまま、ロボがその場で回るだけで時間切れ | Nav2 が経路を作れていない。ピン（本棚の場所か席）が地図上の壁・机から機体の半径（0.21 m）より近い、通路が狭い、地図とピンが別の回のもの | `python3 map_check.py` で点検（§5-4）。Nav2 の窓に `Failed to create plan`・`Goal/Start occupied` などが出ていないか |
-| 前進はするのに、向きを変える場面で止まったまま動かない。Nav2 の窓に `Failed to make progress` がくり返し出て、立て直しの `spin` のときだけ回る | Nav2 のその場回転の指令が小さすぎて、`mecanum_node.py` の下限（10 rpm 未満＝0.31 rad/s 未満は停止）に消されている。RotationShim／RPP は回転の指令を「実測の回る速さ ± `max_angular_accel` × 制御周期」に切り詰めるので、`max_angular_accel` が小さいと止まった状態から永久に回り出せない（2026-09-21） | `nav2_params_差分.yaml` の `max_angular_accel` を 8.0 に（修正済み）→ `python3 nav2/make_nav2_params.py --write --robot-radius 0.21` で作り直して Nav2 を起動し直す |
+| 前進はするのに、向きを変える場面で止まったまま動かない。Nav2 の窓に `Failed to make progress` がくり返し出て、立て直しの `spin` のときだけ回る | Nav2 のその場回転の指令が小さすぎて、`mecanum_node.py` の下限（10 rpm 未満＝0.31 rad/s 未満は停止）に消されている。RotationShim／RPP は回転の指令を「実測の回る速さ ± `max_angular_accel` × 制御周期」に切り詰めるので、`max_angular_accel` が小さいと止まった状態から永久に回り出せない（2026-09-21） | `~/nav2/nav2_params.yaml` が古い（`max_angular_accel` が 1.0 のまま）。`python3 nav2/make_nav2_params.py --check` で確かめ、`--write --robot-radius 0.21` で作り直して **Nav2 を起動し直す**。ブリッジの起動時の点検（`Nav2 の設定を点検しました … → OK`）でも分かる。`Failed to make progress` が 10 秒おきなら古い設定、15 秒おきなら別の原因 |
 | /admin で「Pi 受信スクリプト オフライン」 | `manual_control.py` が動いていない、または `.env` の URL／キーが違う |
 | ボタンを押しても実機が動かない（オンライン表示はある） | `--serial` を付けていない。またはブリッジの `--nav2` と取り合っている |
 | Realtime が飛んでこない | `sql/01_realtime_と_updated_at.sql` を実行していない。Pi では `--realtime` を付けずポーリングで運用 |
