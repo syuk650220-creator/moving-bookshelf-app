@@ -17,6 +17,7 @@
 #    4. robot/.env が無ければ .env.example から作り、値の入力を促す
 #    5. udev の固定名 /dev/mecanum_left /dev/mecanum_right を確認
 #    6. test_logic.py で計算部分を検証
+#    7. ~/nav2/nav2_params.yaml があれば、いまの差分ファイルと同じ（＝最新）かを確認
 # =====================================================================
 set -euo pipefail
 
@@ -31,12 +32,12 @@ ok()   { printf '   \033[1;32m✓\033[0m %s\n' "$*"; }
 warn() { printf '   \033[1;33m★\033[0m %s\n' "$*"; }
 
 # ---------------------------------------------------------------- 1
-step "1/6 依存パッケージ（apt）"
+step "1/7 依存パッケージ（apt）"
 sudo apt-get install -y -q git python3-serial python3-requests python3-yaml >/dev/null
 ok "git / python3-serial / python3-requests / python3-yaml"
 
 # ---------------------------------------------------------------- 2
-step "2/6 リポジトリ（ブランチ: $BRANCH）"
+step "2/7 リポジトリ（ブランチ: $BRANCH）"
 if [ -d "$REPO_DIR/.git" ]; then
   git -C "$REPO_DIR" fetch -q origin
   if ! git -C "$REPO_DIR" switch -q "$BRANCH" 2>/dev/null; then
@@ -53,7 +54,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 3
-step "3/6 古い ~/pi の退避"
+step "3/7 古い ~/pi の退避"
 if [ -d "$OLD_PI" ] && [ ! -d "$OLD_PI/.git" ]; then
   if [ -f "$OLD_PI/.env" ] && [ ! -f "$ROBOT_DIR/.env" ]; then
     cp "$OLD_PI/.env" "$ROBOT_DIR/.env"
@@ -72,7 +73,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 4
-step "4/6 接続情報 robot/.env"
+step "4/7 接続情報 robot/.env"
 if [ -f "$ROBOT_DIR/.env" ]; then
   if grep -q 'xxxxxxxxxxxx' "$ROBOT_DIR/.env"; then
     warn "robot/.env がひな形のままです。nano $ROBOT_DIR/.env で SUPABASE_URL と SUPABASE_ANON_KEY を書いてください"
@@ -86,7 +87,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 5
-step "5/6 udev の固定名"
+step "5/7 udev の固定名"
 if [ -e /dev/mecanum_left ] && [ -e /dev/mecanum_right ]; then
   ok "/dev/mecanum_left → $(readlink /dev/mecanum_left)   /dev/mecanum_right → $(readlink /dev/mecanum_right)"
 elif [ -f /etc/udev/rules.d/99-mecanum.rules ]; then
@@ -96,11 +97,28 @@ else
 fi
 
 # ---------------------------------------------------------------- 6
-step "6/6 計算部分の検証（実機なし）"
+step "6/7 計算部分の検証（実機なし）"
 ( cd "$ROBOT_DIR" && python3 -B test_logic.py | tail -3 )
+
+# ---------------------------------------------------------------- 7
+step "7/7 Nav2 の設定ファイル（~/nav2/nav2_params.yaml）が最新か"
+NAV2_STALE=0
+if [ ! -f "$HOME/nav2/nav2_params.yaml" ]; then
+  ok "まだ作っていません（段階3 で python3 nav2/make_nav2_params.py --write --robot-radius 0.21）"
+elif [ ! -f /opt/ros/jazzy/share/nav2_bringup/params/nav2_params.yaml ]; then
+  ok "Nav2 が未導入なので確認を省略しました"
+elif ( cd "$ROBOT_DIR/nav2" && python3 -B make_nav2_params.py --check ); then
+  :
+else
+  NAV2_STALE=1
+fi
 
 printf '\n次にやること:  cd %s\n' "$ROBOT_DIR"
 printf '  段階1 手動操作 : python3 manual_control.py --serial\n'
 printf '  段階2 呼出フロー: python3 bookshelf_bridge.py --live --simulate 5\n'
 printf '  段階3 Nav2 設定 : python3 nav2/make_nav2_params.py   （確認だけ。--write で ~/nav2/nav2_params.yaml を作る）\n'
 printf '  （両方を同時に動かさないこと）\n'
+if [ "$NAV2_STALE" = "1" ]; then
+  printf '\n\033[1;33m★★★ ~/nav2/nav2_params.yaml が古いです。上の「作り直すコマンド」を実行し、Nav2 が動いていたら起動し直してください ★★★\033[0m\n'
+  printf '    （古いままだと、ロボは前進できても、向きを変える場面で動けなくなります）\n'
+fi

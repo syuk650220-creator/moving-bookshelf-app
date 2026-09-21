@@ -124,6 +124,15 @@ def set_robot_radius(params: dict, radius: float, changes: list) -> list[str]:
     return warns
 
 
+def stale_items(existing, merged: dict) -> list:
+    """いまの出力ファイル existing を、あるべき姿 merged にするのに変える必要がある所。
+    [(path, いまの値, あるべき値)]。空なら最新。"""
+    if existing == merged:
+        return []
+    _, changes = deep_merge(existing if isinstance(existing, dict) else {}, merged)
+    return changes or [(("(ファイル全体)",), "…", "…")]
+
+
 def find_unsupported(d, path=()):
     """ROS 2 のパラメータ読み込みが苦手な値（null・空のリスト）を探す。"""
     bad = []
@@ -154,8 +163,12 @@ def main():
     ap.add_argument("--base", default=DEFAULT_BASE, help=f"標準ファイル（既定: {DEFAULT_BASE}）")
     ap.add_argument("--diff", default=DEFAULT_DIFF, help="差分ファイル（既定: このフォルダの nav2_params_差分.yaml）")
     ap.add_argument("--out", default=DEFAULT_OUT, help=f"出力先（既定: {DEFAULT_OUT}）")
-    ap.add_argument("--robot-radius", type=float, default=0.22,
-                    help="機体の半径 [m]。中心からいちばん遠い角まで＋余裕 0.02（既定 0.22 = Nav2 の標準値）")
+    ap.add_argument("--robot-radius", type=float, default=None,
+                    help="機体の半径 [m]。中心からいちばん遠い角まで＋余裕 0.02（既定 0.22 = Nav2 の標準値。"
+                         "--check のときは、いまのファイルに入っている値）")
+    ap.add_argument("--check", action="store_true",
+                    help="何も書かずに、いまの出力ファイルが「標準＋いまの差分ファイル」と同じか（＝最新か）だけを調べる。"
+                         "古ければ終了コード 1")
     ap.add_argument("--with-behavior-server", action="store_true",
                     help="behavior_server の差分（後退・その場旋回を外す）も重ねる。"
                          "★ビヘイビアツリーの XML から Spin/BackUp を外してあるときだけ★")
@@ -172,6 +185,18 @@ def main():
             hint = ("  Nav2 が未導入なら: sudo apt install -y ros-jazzy-navigation2 ros-jazzy-nav2-bringup"
                     if p == args.base else "")
             sys.exit(f"{label}が見つかりません: {p}\n{hint}")
+    existing = None
+    if args.check:
+        if not os.path.exists(args.out):
+            sys.exit(f"★まだ作られていません★ {args.out}\n"
+                     f"  python3 make_nav2_params.py --write --robot-radius 0.21")
+        with open(args.out, encoding="utf-8") as f:
+            existing = yaml.safe_load(f)
+        if args.robot_radius is None:                 # いまのファイルの半径のまま比べる
+            r = get_path(existing, ("local_costmap", "local_costmap", "ros__parameters", "robot_radius"))
+            args.robot_radius = float(r) if isinstance(r, (int, float)) else 0.22
+    if args.robot_radius is None:
+        args.robot_radius = 0.22
     if not 0.05 <= args.robot_radius <= 1.0:
         sys.exit("--robot-radius は m 単位です（例: 0.22）。0.05〜1.0 の範囲で指定してください。")
 
@@ -190,6 +215,20 @@ def main():
 
     merged, changes = deep_merge(base, diff)
     warns = set_robot_radius(merged, args.robot_radius, changes)
+
+    if args.check:
+        stale = stale_items(existing, merged)
+        if not stale:
+            print(f"✓ {args.out} は最新です（標準＋いまの差分ファイル＋半径 {args.robot_radius} m と同じ）")
+            return
+        print(f"★{args.out} が古いです★ いまの差分ファイルと {len(stale)} か所ちがいます:")
+        for path, old, new in stale[:12]:
+            print(f"  {fmt_path(path)}\n      いまのファイル {fmt_val(old)}  →  あるべき値 {fmt_val(new)}")
+        if len(stale) > 12:
+            print(f"  …ほか {len(stale) - 12} か所")
+        print("\n作り直すコマンド（Nav2 が動いていたら、作り直したあとで Nav2 を起動し直すこと）:")
+        print(f"  cd {os.path.dirname(os.path.abspath(__file__))} && python3 make_nav2_params.py --write --robot-radius {args.robot_radius}")
+        sys.exit(1)
 
     print(f"標準 : {args.base}")
     print(f"差分 : {args.diff}")

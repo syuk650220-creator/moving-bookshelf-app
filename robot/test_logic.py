@@ -729,6 +729,34 @@ check("封印中は、どんな指令（vx・vy・ω の 125 通り）でも 左
 check("封印中に横移動だけの指令が来たら停止", M.Quantizer()(0.0, 0.25, 0.0, now=700.0), (M.STOP, 0.0))
 
 
+# =====================================================================
+print("\n=== 古い Nav2 の設定に気づく（ブリッジの起動時の点検・make_nav2_params --check）===")
+# =====================================================================
+# 古い ~/nav2/nav2_params.yaml のまま走らせると「向きを変える場面で動けない」。ログだけでは気づきにくい。
+_new = {"controller_frequency": 20.0, "FollowPath.max_angular_accel": _yaml_num("max_angular_accel"),
+        "FollowPath.rotate_to_heading_angular_vel": _yaml_num("rotate_to_heading_angular_vel"),
+        "FollowPath.min_approach_linear_velocity": _yaml_num("min_approach_linear_velocity"),
+        "progress_checker.movement_time_allowance": _yaml_num("movement_time_allowance")}
+check("いまの差分ファイルの値なら、問題なし", B.check_nav2_motion_params(_new), [])
+_old = dict(_new, **{"FollowPath.max_angular_accel": 1.0, "progress_checker.movement_time_allowance": 10.0})
+_probs = B.check_nav2_motion_params(_old)
+check("古い値（max_angular_accel 1.0・見張り 10 秒）は 2 つとも指摘する", len(_probs), 2)
+check("指摘に「最初の指令 0.05 rad/s」と「下限 0.31 rad/s」が入る",
+      ("0.05 rad/s" in _probs[0], "0.31 rad/s" in _probs[0]), (True, True))
+check("値が読めなかった項目（None）は指摘しない", B.check_nav2_motion_params({"controller_frequency": 20.0}), [])
+check("Nav2 の標準値のまま（3.2 rad/s²）でも指摘する",
+      len(B.check_nav2_motion_params({"controller_frequency": 20.0, "FollowPath.max_angular_accel": 3.2})), 1)
+
+_base = {"controller_server": {"ros__parameters": {"FollowPath": {"max_angular_accel": 3.2}, "x": 1}}, "amcl": {"a": 1}}
+_want, _ = NP.deep_merge(_base, {"controller_server": {"ros__parameters": {"FollowPath": {"max_angular_accel": 8.0}}}})
+check("--check: 同じなら「最新」", NP.stale_items(_want, _want), [])
+_st = NP.stale_items(_base, _want)
+check("--check: 古いファイルは、ちがう所を 1 か所だけ挙げる",
+      [(NP.fmt_path(p), o, n) for p, o, n in _st],
+      [(NP.fmt_path(("controller_server", "ros__parameters", "FollowPath", "max_angular_accel")), 3.2, 8.0)])
+check("--check: 読めないファイル（None）も「古い」あつかい", len(NP.stale_items(None, _want)) > 0, True)
+
+
 print()
 print("=" * 46)
 print("  すべて成功" if ok else "  ★失敗があります★")
