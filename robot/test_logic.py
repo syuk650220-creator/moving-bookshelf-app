@@ -674,6 +674,33 @@ for k in range(200):                    # 温度でゼロ点がゆっくり動�
 check("ゼロ点はゆっくり追従する", round(gy2.bias, 3), 0.05)
 
 
+# =====================================================================
+print("\n=== Nav2 のその場回転の指令が、量子化の下限（MIN_RPM）を超えるか ===")
+# =====================================================================
+# 2026-09-21 実機: max_angular_accel 1.0 × 制御周期 0.05 s = 0.05 rad/s が最初の指令になり、
+# 10 rpm 未満（0.31 rad/s 未満）を停止に丸める量子化に消されて、その場回転が永久に始まらなかった。
+_diff = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "nav2", "nav2_params_差分.yaml"),
+             encoding="utf-8").read()
+
+
+def _yaml_num(key):
+    m_ = re.search(r"^\s*" + re.escape(key) + r":\s*([0-9.]+)", _diff, flags=re.M)
+    return float(m_.group(1)) if m_ else None
+
+
+deadband_w = P.rpm_to_mps(P.MIN_RPM) / P.WHEEL_GEOM_L          # これ未満の回る速さは「停止」になる [rad/s]
+first_cmd = _yaml_num("max_angular_accel") / _yaml_num("controller_frequency")
+check("量子化の下限は約 0.31 rad/s", round(deadband_w, 2), 0.31)
+check("止まった状態からの最初の回転指令（max_angular_accel ÷ controller_frequency）が下限を超える",
+      first_cmd > deadband_w, True)
+check("回頭の速さ rotate_to_heading_angular_vel が下限を超える",
+      _yaml_num("rotate_to_heading_angular_vel") > deadband_w, True)
+mo_, rp_ = M.Quantizer(use_vy=False)(0.0, 0.0, first_cmd, now=500.0)
+check("その最初の指令は、量子化で「左回転」になる（停止に丸められない）", mo_, M.TURN_LEFT)
+check("最終進入の速さ min_approach_linear_velocity も下限（0.042 m/s）を超える",
+      _yaml_num("min_approach_linear_velocity") > P.rpm_to_mps(P.MIN_RPM), True)
+
+
 print()
 print("=" * 46)
 print("  すべて成功" if ok else "  ★失敗があります★")

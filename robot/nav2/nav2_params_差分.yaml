@@ -82,6 +82,13 @@ controller_server:
     min_y_velocity_threshold: 0.04
     min_theta_velocity_threshold: 0.10
 
+    # ---- 進み具合の見張り ----
+    # 既定は「10 秒で 0.5 m 進めなければ失敗」。この機体は最終進入が 0.10 m/s で、席までが 1 m 前後と短く、
+    # 途中でその場回転（進まない時間）もはさむので、既定のままだと正常に走っていても失敗あつかいになりやすい。
+    progress_checker:
+      required_movement_radius: 0.15
+      movement_time_allowance: 15.0
+
     # ---- 停止判定 ----
     goal_checker_plugins: ["general_goal_checker"]
     general_goal_checker:
@@ -104,7 +111,16 @@ controller_server:
       angular_dist_threshold: 0.785
       forward_sampling_distance: 0.5
       rotate_to_heading_angular_vel: 0.6
-      max_angular_accel: 1.0
+      # ★1.0 → 8.0（2026-09-21 実機で判明した不具合の修正）★
+      #   RotationShim も RPP も、その場回転の指令を「いま実測している回る速さ ± max_angular_accel × 制御周期」に
+      #   切り詰めます。止まっている（実測 0）ときの最初の指令は 1.0 × 0.05 s = 0.05 rad/s にしかなりません。
+      #   一方 mecanum_node.py は 10 rpm 未満（回転なら 0.31 rad/s 未満）を「停止」に丸めるので、
+      #   ロボは回り出さない → 実測は 0 のまま → 指令も 0.05 のまま、で永久に動けませんでした
+      #   （前進はできるのに、向きを変える場面で止まる。Nav2 の立て直しの spin だけは最低 0.4 rad/s なので回れた）。
+      #   1 周期ぶんで下限を超えるには max_angular_accel ≥ 0.31 × 20 Hz = 6.2 が必要。8.0 なら最初の指令が
+      #   0.4 rad/s（約 13 rpm）になります。この値は同じ FollowPath の節から RPP 本体にも読まれます。
+      #   ★MIN_RPM・WHEEL_GEOM_L・controller_frequency を変えたら、test_logic.py の検算が教えてくれます★
+      max_angular_accel: 8.0
       simulate_ahead_time: 1.0
 
       # ---- ここから下は RPP 本体 ----
