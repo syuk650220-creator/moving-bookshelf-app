@@ -185,6 +185,15 @@ def yaw_from_quat(x: float, y: float, z: float, w: float) -> float:
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
+def heading_fix(goal_theta: float, yaw: float, tolerance: float) -> float | None:
+    """
+    着いたあとに回すべき角度 [rad]（＋が反時計回り。近いほうへ回る）。許容の中なら None。
+    Nav2 には位置だけを合わせさせ、向きはこの角度ぶんの spin 1 回で合わせる。
+    """
+    err = math.atan2(math.sin(goal_theta - yaw), math.cos(goal_theta - yaw))
+    return None if abs(err) <= tolerance else err
+
+
 # =====================================================================
 #  ナビゲータ（走行の差し替え口）
 #
@@ -287,9 +296,10 @@ def check_nav2_motion_params(p: dict) -> list[str]:
     if t is not None and t < 14.9:
         out.append(f"進み具合の見張りが {t:g} 秒（この機体用は 15 秒）→ 古い設定ファイルのままの目印です")
     y = p.get("general_goal_checker.yaw_goal_tolerance")
-    if y is not None and y < 0.5:
-        out.append(f"着いたときの向きの許容が {y:g} rad（約 {math.degrees(y):.0f}°。この機体用は 0.52 rad＝30°）"
-                   "→ 着いてから向きを合わせるのに時間がかかります。古い設定ファイルのままの目印です")
+    if y is not None and y < 3.0:
+        out.append(f"Nav2 が向きまで合わせようとする設定です（yaw_goal_tolerance {y:g} rad。この機体用は 3.14）"
+                   "→ 着いてから「到着」になるまで何十秒もかかります。向きはブリッジが spin で合わせます。"
+                   "古い設定ファイルのままの目印です")
     return out
 
 
@@ -315,7 +325,8 @@ class Nav2Navigator:
 
     def __init__(self, timeout: float = 180.0, verbose: bool = True,
                  init_sigma_xy: float = 0.15, init_sigma_yaw: float = 0.17,
-                 localize_timeout: float = 20.0, settle: float = 2.0):
+                 localize_timeout: float = 20.0, settle: float = 2.0,
+                 heading_tolerance: float = math.radians(30.0)):
         import rclpy
         from rclpy.qos import (QoSProfile, ReliabilityPolicy, DurabilityPolicy,
                                HistoryPolicy)
@@ -332,6 +343,7 @@ class Nav2Navigator:
         self.init_sigma_yaw = init_sigma_yaw
         self.localize_timeout = localize_timeout
         self.settle = settle
+        self.heading_tolerance = heading_tolerance     # 着いたときの向きの許容 [rad]。0 以下なら向きは合わせない
 
         self._pose: tuple[float, float, float] | None = None
         self._pose_count = 0          # /amcl_pose を受け取った回数（初期位置が効いたかの判定に使う）
@@ -530,11 +542,49 @@ class Nav2Navigator:
 
         result = self.nav.getResult()
         if result == self._TaskResult.SUCCEEDED:
+            self.align_heading(goal, t0)
             print("    [nav] 到着しました")
             return True
         name = getattr(result, "name", str(result))
         print(f"    [nav] 失敗しました（{name}）")
         return False
+
+    # ---------------- 着いたあとの向き合わせ ----------------
+
+    def align_heading(self, goal: dict, t0: float, max_spins: int = 2):
+        """
+        Nav2 は位置だけ合わせて終わる（yaw_goal_tolerance 3.14）。向きはここで、Nav2 の spin を呼んで合わせる。
+        うまくいかなくても走行は「到着」のまま（位置が合っていれば本は取れる。向きの優先度は低い）。
+        """
+        if self.heading_tolerance <= 0:
+            return
+        for _ in range(max_spins):
+            if self._pose is None:
+                return
+            turn = heading_fix(goal["theta"], self._pose[2], self.heading_tolerance)
+            if turn is None:
+                return
+            print(f"    [nav] 向きのずれ {math.degrees(turn):+.0f}° → その場で回して合わせます")
+            try:
+                accepted = self.nav.spin(spin_dist=turn, time_allowance=15)
+            except Exception as e:                    # 版のちがいなどで呼べなくても、到着は到着
+                print(f"    [nav] （向き合わせは省略しました: {e}）")
+                return
+            if not accepted:
+                print("    [nav] （向き合わせを受け付けてもらえませんでした。近くに障害物？ 到着として進めます）")
+                return
+            while not self.nav.isTaskComplete():
+                if time.time() - t0 > self.timeout:
+                    self.nav.cancelTask()
+                    print("    [nav] （向き合わせの途中で時間切れ。到着として進めます）")
+                    return
+                time.sleep(0.1)
+            t1 = time.time()
+            while time.time() - t1 < 1.0:             # AMCL の推定が落ち着くのを少し待つ
+                self._spin(0.1)
+        if self._pose is not None:
+            left = heading_fix(goal["theta"], self._pose[2], 0.0) or 0.0
+            print(f"    [nav] 向きのずれは {math.degrees(left):+.0f}° です")
 
     def cancel(self):
         try:
@@ -906,6 +956,9 @@ def main():
                     help="初期位置の位置のばらつき σ [m]（本棚の場所に置く精度）")
     ap.add_argument("--init-sigma-yaw", type=float, default=0.17,
                     help="初期位置の向きのばらつき σ [rad]（0.17 ≒ 10°）")
+    ap.add_argument("--heading-tolerance-deg", type=float, default=30.0,
+                    help="着いたときの向きの許容 [度]。これより大きくずれていたら、着いたあとに spin で 1 回合わせる"
+                         "（既定 30。0 で向きは合わせない）")
     ap.add_argument("--pose-interval", type=float, default=1.0,
                     help="走行中に現在地を robot_status へ書く間隔 [s]")
     args = ap.parse_args()
@@ -954,7 +1007,8 @@ def main():
                                       init_sigma_xy=args.init_sigma_xy,
                                       init_sigma_yaw=args.init_sigma_yaw,
                                       localize_timeout=args.localize_timeout,
-                                      settle=args.localize_settle)
+                                      settle=args.localize_settle,
+                                      heading_tolerance=math.radians(args.heading_tolerance_deg))
         except ImportError as e:
             sys.exit(f"Nav2 に接続できません（{e}）。\n"
                      "  ラズパイ上で ROS2 環境を source してから実行してください。\n"

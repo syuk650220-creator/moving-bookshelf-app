@@ -160,13 +160,20 @@ class RosDriver:
     def close(self):
         self._alive = False
         self._th.join(timeout=1.0)
-        for _ in range(5):                 # 停止を確実に届けてから終わる
-            self._publish(0, 0)
-            time.sleep(0.05)
-        self.node.destroy_node()
-        if self._rclpy.ok():
-            self._rclpy.shutdown()
-        print("    [ros] 停止を送って終了")
+        # Ctrl+C では rclpy が先に通信を閉じてしまうことがあり、そのあとの publish は例外になる。
+        # 閉じていても危なくはない（mecanum_node.py は指令が 0.2 秒来なければ止める）ので、静かに終わる
+        try:
+            for _ in range(5):             # 停止を確実に届けてから終わる
+                if not self._rclpy.ok():
+                    break
+                self._publish(0, 0)
+                time.sleep(0.05)
+            self.node.destroy_node()
+            if self._rclpy.ok():
+                self._rclpy.shutdown()
+            print("    [ros] 停止を送って終了")
+        except Exception:
+            print("    [ros] 終了（停止は mecanum_node.py の 0.2 秒タイムアウトに任せます）")
 
 
 class SerialDriver:

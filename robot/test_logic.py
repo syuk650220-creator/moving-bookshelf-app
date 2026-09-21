@@ -698,12 +698,26 @@ first_cmd = _yaml_num("max_angular_accel") / _yaml_num("controller_frequency")
 check("量子化の下限は約 0.31 rad/s", round(deadband_w, 2), 0.31)
 check("止まった状態からの最初の回転指令（max_angular_accel ÷ controller_frequency）が下限を超える",
       first_cmd > deadband_w, True)
-# 位置はきっちり、向きはゆるく（2026-09-21 PM 決定: 向きは ±30° でよい）
-check("ゴールの許容: 位置 8 cm・向き 30°（0.52 rad）",
-      (_yaml_num("xy_goal_tolerance"), round(math.degrees(_yaml_num("yaw_goal_tolerance")))), (0.08, 30))
-# 回頭は 0.31 rad/s より遅くできない。的に入ってから止まるまでの行きすぎ（0.4 秒ぶん）が、的の幅に収まること
-check("回頭の行きすぎ（回頭の速さ × 0.4 秒）が、向きの許容の幅（±）に収まる",
-      _yaml_num("rotate_to_heading_angular_vel") * 0.4 < 2 * _yaml_num("yaw_goal_tolerance"), True)
+# 位置はきっちり、向きはゆるく（2026-09-21 PM 決定: 向きは ±30° でよい）。
+# Nav2 には位置だけを合わせさせ（向きは 3.14＝どの向きでも可）、向きはブリッジが spin 1 回で合わせる。
+#   実機のログ: RPP はゴールから 8 cm 以内のあいだだけゴールの向きへ回る。回るあいだに位置の推定が数 cm ずれて
+#   8 cm の外へ出ると「位置へ戻る」に切り替わり、これをくり返して席2 で 46〜72 秒かかった（走行は 20 秒ほど）
+check("Nav2 のゴールの許容: 位置 8 cm・向きは問わない（3.14）",
+      (_yaml_num("xy_goal_tolerance"), _yaml_num("yaw_goal_tolerance")), (0.08, 3.14))
+_tol = math.radians(30)
+check("向き合わせ: 許容（30°）の中なら回さない", B.heading_fix(1.0, 1.0 + math.radians(29), _tol), None)
+check("向き合わせ: 席2 の例（着いた向き 34°・ピン 104°）は +70° 回す",
+      round(math.degrees(B.heading_fix(math.radians(104), math.radians(34), _tol))), 70)
+check("向き合わせ: ±180° をまたぐときは近いほうへ（+170° と −170° は 20° 差＝回さない。100° → −175° は +85°）",
+      (B.heading_fix(math.radians(170), math.radians(-170), _tol),
+       round(math.degrees(B.heading_fix(math.radians(-175), math.radians(100), _tol)))), (None, 85))
+check("向き合わせ: 本棚へ帰ったとき（ほぼ逆向き）は約 180° 回す",
+      round(abs(math.degrees(B.heading_fix(0.03, 0.03 + math.radians(179), _tol)))), 179)
+_bridge_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "bookshelf_bridge.py"), encoding="utf-8").read()
+check("向き合わせは「到着しました」の前に 1 か所で呼ぶ・失敗しても到着のまま",
+      (_bridge_src.count("self.align_heading(goal, t0)"),
+       _bridge_src.index("self.align_heading(goal, t0)") < _bridge_src.index('print("    [nav] 到着しました")')), (1, True))
+check("--heading-tolerance-deg の既定は 30", 'add_argument("--heading-tolerance-deg", type=float, default=30.0' in _bridge_src, True)
 check("回頭の速さ rotate_to_heading_angular_vel が下限を超える",
       _yaml_num("rotate_to_heading_angular_vel") > deadband_w, True)
 mo_, rp_ = M.Quantizer(use_vy=False)(0.0, 0.0, first_cmd, now=500.0)
@@ -755,8 +769,9 @@ _probs = B.check_nav2_motion_params(_old)
 check("古い値（max_angular_accel 1.0・見張り 10 秒）は 2 つとも指摘する", len(_probs), 2)
 check("指摘に「最初の指令 0.05 rad/s」と「下限 0.31 rad/s」が入る",
       ("0.05 rad/s" in _probs[0], "0.31 rad/s" in _probs[0]), (True, True))
-check("向きの許容が 0.25 rad のまま（古い設定）も指摘する",
-      ["向きの許容" in t for t in B.check_nav2_motion_params(dict(_new, **{"general_goal_checker.yaw_goal_tolerance": 0.25}))], [True])
+for _y in (0.25, 0.52):
+    check(f"Nav2 が向きまで合わせる設定（yaw_goal_tolerance {_y}＝古い設定）は指摘する",
+          ["yaw_goal_tolerance" in t for t in B.check_nav2_motion_params(dict(_new, **{"general_goal_checker.yaw_goal_tolerance": _y}))], [True])
 check("値が読めなかった項目（None）は指摘しない", B.check_nav2_motion_params({"controller_frequency": 20.0}), [])
 check("Nav2 の標準値のまま（3.2 rad/s²）でも指摘する",
       len(B.check_nav2_motion_params({"controller_frequency": 20.0, "FollowPath.max_angular_accel": 3.2})), 1)
