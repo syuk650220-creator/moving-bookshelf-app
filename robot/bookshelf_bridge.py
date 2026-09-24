@@ -616,6 +616,7 @@ class Bridge:
         self.current: dict | None = None
         self.busy = False
         self._state_now: str = "idle"    # 走行中の進捗書き込み（_progress）が使う「いまの state」
+        self._call_finished = False      # 処理中の呼出が受取（done）まで済んだか。帰還中の Ctrl-C で canceled に戻さないため
         self._call_now: str | None = None
         # ★起動時はロボが「本棚の場所」に置かれている前提★
         #   at_home … いま本棚の場所に居るか。席へ動き出したら False、帰り着いたら True。
@@ -706,6 +707,7 @@ class Bridge:
         self.seen.add(cid)
         self.busy = True
         self.current = call
+        self._call_finished = False
         try:
             self._process(call)
         except (KeyboardInterrupt, SystemExit):
@@ -770,6 +772,7 @@ class Bridge:
         self.set_status("arrived", cid, detail=f"{label} に到着。アプリの「本を取得した」を待っています",
                         pose=self.nav.current_pose())
         self.wait_for_receipt(cid)
+        self._call_finished = True      # ここから先（帰還）で中断しても、呼出は done（または app の canceled）のまま
 
         # ---- ④ 本棚の場所へ帰る ----
         self.go_home(cid)
@@ -849,14 +852,22 @@ class Bridge:
 
     def shutdown(self):
         self.nav.cancel()
-        if self.live and self.current:
-            print("\n[終了] 処理中の呼出を canceled にして idle へ戻します。")
-            try:
+        if not (self.live and self.current):
+            return
+        try:
+            if self._call_finished:
+                # 受取（done）まで済んで帰還中だった。呼出はもう利用者の手を離れているので触らない
+                # （canceled に戻すと、本は届いているのにアプリが「届かなかった」と知らせてしまう）
+                print("\n[終了] 帰還を中断します（呼出は完了済みのまま）。手で本棚の場所へ戻してください。")
+                self.set_status("idle", None, detail="ブリッジ停止（帰還を中断。呼出は完了済み。手で本棚の場所へ戻してください）",
+                                pose=self.nav.current_pose())
+            else:
+                print("\n[終了] 処理中の呼出を canceled にして idle へ戻します。")
                 self.set_call(self.current["id"], "canceled")
                 self.set_status("idle", None, detail="ブリッジ停止（処理中の呼出を取り消しました）",
                                 pose=self.nav.current_pose())
-            except Exception as e:
-                print(f"    [err] 後始末に失敗: {e}")
+        except Exception as e:
+            print(f"    [err] 後始末に失敗: {e}")
 
 
 # =====================================================================
