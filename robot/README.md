@@ -61,7 +61,7 @@
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（204 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（210 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
 | `slam/mapping_no_odom.yaml` ／ `slam/mapping_odom.yaml` | slam_toolbox の設定。前者はいつもの手順（仮の TF）のまま使える調整版、後者は**車輪オドメトリを使う地図づくり**用（§5-4） |
@@ -164,7 +164,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（204 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（210 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -258,7 +258,7 @@ python3 bookshelf_bridge.py --live --nav2
 - RViz の 2D Pose Estimate で人が初期位置を与える運用なら `--no-localize`。受取後に席で待たせるなら `--no-return-home`。
 - 初期位置のばらつきは `--init-sigma-xy 0.15`（m）`--init-sigma-yaw 0.17`（rad ≒ 10°）。本棚の場所に置く精度に合わせます。
 - `nav2_simple_commander` の `waitUntilNav2Active()` は**使っていません**。Jazzy では初期位置が未設定だと地図原点 (0,0,0) を勝手に送るためです（②完全ガイド E3 の注記）。
-- Ctrl-C で止めると走行を中止（`cancelTask`）し、処理中の呼出を canceled、状態を idle に戻してから終了します。
+- Ctrl-C で止めると走行を中止（`cancelTask`）し、処理中の呼出を canceled、状態を idle に戻してから終了します。**受取（done）が済んで帰還中だったときは、呼出は done のまま触らず**（本は届いているので）、`detail` に「帰還を中断。手で本棚の場所へ戻してください」と書いて idle に戻します。
 
 > ★`--nav2` の経路は 2026-09-18 時点で実機未検証です★ 実機なしで検証できる部分（状態機械・DB への書き込み・失敗時の扱い）は
 > `test_logic.py` の「Bridge」の項で通してあります。初回は `--nav-timeout 120` など短めで、非常停止に手を添えて試してください（席まで 1〜2 m なら走行そのものは 10〜20 秒。Nav2 の立て直し＝15 秒の見張り＋回転・待ち・後退を 2〜3 回はさんでも着ける長さ。**時間切れになるときは、時間を延ばす前に「ロボが動いているか」を見ること** ── 動いていないなら、待っても着きません）。
