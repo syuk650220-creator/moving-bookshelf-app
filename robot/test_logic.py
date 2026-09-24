@@ -274,13 +274,14 @@ class FakeSupa:
 class FakeNav:
     """呼ばれた順番を記録するナビ。fail_go_at=n で n 回目の go を失敗させる。"""
 
-    def __init__(self, fail_go_at=None, fail_localize=False, interrupt_go=False):
+    def __init__(self, fail_go_at=None, fail_localize=False, interrupt_go=False, interrupt_go_at=None):
         self.events = []
         self.pose = (0.0, 0.0, 0.0)
         self.n_go = 0
         self.fail_go_at = fail_go_at
         self.fail_localize = fail_localize
         self.interrupt_go = interrupt_go
+        self.interrupt_go_at = interrupt_go_at   # n 回目の go で Ctrl-C（2 なら帰還中）
 
     def localize(self, init_goal):
         self.events.append(("localize", None if init_goal is None else init_goal["label"]))
@@ -289,7 +290,7 @@ class FakeNav:
     def go(self, goal, on_progress=None):
         self.n_go += 1
         self.events.append(("go", goal["label"]))
-        if self.interrupt_go:
+        if self.interrupt_go or self.n_go == self.interrupt_go_at:
             raise KeyboardInterrupt
         if on_progress:
             on_progress(1.23, (goal["x"] / 2, goal["y"] / 2, goal["theta"]))
@@ -428,6 +429,23 @@ check("中断中の呼出を覚えている", br.current["id"], "c12")
 br.shutdown()
 check("shutdown: ナビを止め、呼出を canceled、idle に戻す",
       (n.events[-1], s.calls["c12"], s.status["state"]), (("cancel",), "canceled", "idle"))
+
+print("  --- Ctrl-C（受取後の帰還中）→ done の呼出は canceled に戻さない ---")
+s, n = FakeSupa(PINS), FakeNav(interrupt_go_at=2)
+br = make_bridge(s, n)
+try:
+    br.handle(call("c13", 1))
+    check("KeyboardInterrupt は握りつぶさない", "例外なし", "KeyboardInterrupt")
+except KeyboardInterrupt:
+    check("KeyboardInterrupt は握りつぶさない", "KeyboardInterrupt", "KeyboardInterrupt")
+check("中断は 2 回目の go（帰還）で起きた", n.events[-1], ("go", "本棚の場所"))
+check("受取まで済んでいる（done）", s.calls["c13"], "done")
+br.shutdown()
+check("shutdown: ナビは止めるが、呼出は done のまま・idle に戻す",
+      (n.events[-1], s.calls["c13"], s.status["state"]), (("cancel",), "done", "idle"))
+check("detail に「帰還を中断」「完了済み」と書く",
+      ("帰還を中断" in s.status["detail"], "完了済み" in s.status["detail"]), (True, True))
+check("robot_calls への canceled 書き込みは無い", "canceled" in s.call_states(), False)
 
 print("  --- 起動時の自己位置推定（--nav2 のとき main が呼ぶ）---")
 s, n = FakeSupa(PINS), FakeNav()
