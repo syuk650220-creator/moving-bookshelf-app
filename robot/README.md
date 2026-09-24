@@ -179,6 +179,7 @@ python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 cd ~/moving-bookshelf-app/robot
 python3 manual_control.py            # PC: 受信した指令をログ表示（実機なし）
 python3 manual_control.py --serial   # Pi: 実機（Arduino 2 枚）を動かす
+python3 manual_control.py --ros      # Pi: mecanum_node.py 経由で動かす（地図づくり。§5-4）
 ```
 
 合格の目印:
@@ -189,7 +190,9 @@ python3 manual_control.py --serial   # Pi: 実機（Arduino 2 枚）を動かす
 
 安全設計: アプリはボタンを押している間だけ指令を更新し続け、Pi 側は
 「指令が 1.2 秒更新されなければ停止」（経過秒は DB の時計で判定＝クロックずれ無関係）。
-実機側はさらに `MecanumLink` の 0.5 秒タイムアウトと Arduino のウォッチドッグが控える三重構えです。
+Pi 側はさらに「指令を 0.5 秒渡せなければ停止」（`--serial` は `MecanumLink` の `cmd_timeout=0.5`、`--ros` は
+`RosDriver` が同じ 0.5 秒で `/cmd_vel` に 0 を出す。Pi 自身の Wi-Fi が切れて Supabase への問い合わせが
+最長 5 秒待たされるあいだも走り続けない）、実機側は Arduino の 0.5 秒ウォッチドッグが控える三重構えです。
 
 > ★`--serial` は同じフォルダの `mecanum_serial.py` と `robot_params.py` を使います。
 > 別の場所へコピーして使うときは、この 2 つも一緒に置いてください。
@@ -322,6 +325,7 @@ cd ~/moving-bookshelf-app/robot && python3 manual_control.py --ros
 
    ピン建て・保存・`map_check.py` は同じ。実走（§5-3）へ移るときは **SLAM とラジコンの受信係だけ止めればよく、窓②③はそのまま使えます**。
    `manual_control.py --ros` は、止まっているあいだ `/cmd_vel` に何も出しません（Nav2 の指令を打ち消さないため）。
+   指令が 0.5 秒途切れたら `--serial` と同じく止まります（§4 の三重構え）。
 
 **地図の保存と点検**
 

@@ -15,6 +15,9 @@ manual_control.py ― 管理者画面の「ラジコンモード」を受け取�
   DEADMAN_SEC を超えたら motion=0（停止）に落とす
 ・ブラウザが閉じられても、Wi-Fi が切れても、最大 DEADMAN_SEC + ポーリング
   1周期で止まる。さらに実機側は Arduino の 0.5秒ウォッチドッグが最後の砦
+・Pi 自身の Wi-Fi が切れて manual_poll() の問い合わせが返ってこないとき（最長 5 秒）は、
+  ドライバが「apply() が 0.5 秒来なければ停止」で止める（--serial は MecanumLink の
+  cmd_timeout=0.5、--ros は RosDriver.CMD_TIMEOUT_SEC=0.5。どちらも同じ 0.5 秒）
 
 ────────────────────────────────────────────────────────────
 使い方
@@ -102,11 +105,15 @@ class RosDriver:
       受け取ったときだけ出すのでは間に合わない）
     ・止まっているあいだは何も出さない（停止に変わった直後の 1 秒だけ 0 を出す）。
       Nav2 が同じ /cmd_vel を使うので、出し続けると Nav2 の指令を打ち消してしまうため
+    ・apply() が CMD_TIMEOUT_SEC（0.5 秒）来なければ、最後の指令ではなく 0 を出す（--serial の MecanumLink
+      cmd_timeout=0.5 と同じ守り）。Pi 自身の Wi-Fi が切れると manual_poll() の問い合わせが最長 5 秒待たされ、
+      そのあいだ前の指令を出し続けてしまっていたため（2026-09-24）
     ・このスクリプトが落ちても、mecanum_node.py が 0.2 秒で停止、Arduino が 0.5 秒で停止する
     """
 
     RATE_HZ = 20.0
     ZERO_TAIL_SEC = 1.0
+    CMD_TIMEOUT_SEC = 0.5      # apply() がこの秒数来なければ 0 を出す（MecanumLink の cmd_timeout と同じ値）
 
     def __init__(self):
         try:
@@ -123,7 +130,9 @@ class RosDriver:
         self.node = rclpy.create_node("manual_control")
         self.pub = self.node.create_publisher(Twist, "cmd_vel", 10)
         self._cmd = (0, 0)
+        self._last_apply = time.time()
         self._last_moving = 0.0
+        self._stale_logged = False
         self._alive = True
         self._lock = threading.Lock()
         self._th = threading.Thread(target=self._loop, daemon=True)
@@ -138,21 +147,33 @@ class RosDriver:
         msg.linear.x, msg.linear.y, msg.angular.z = float(vx), float(vy), float(wz)
         self.pub.publish(msg)
 
+    def _tick(self, now: float):
+        """1 周期ぶん: /cmd_vel に何を出すか決めて出す（_loop から分けてあるのは test_logic.py で検算するため）。"""
+        with self._lock:
+            motion, rpm = self._cmd
+            stale = now - self._last_apply > self.CMD_TIMEOUT_SEC
+        if stale and motion != 0:
+            # 上位（ポーリング）が黙ったら止める。MecanumLink の cmd_timeout と同じ
+            if not self._stale_logged:
+                print(f"[ros] 指令が {self.CMD_TIMEOUT_SEC} 秒来ないので停止を出します（ポーリングが止まっている？）")
+                self._stale_logged = True
+            motion, rpm = 0, 0
+        if motion != 0:
+            self._last_moving = now
+            self._publish(motion, rpm)
+        elif now - self._last_moving < self.ZERO_TAIL_SEC:
+            self._publish(0, 0)
+
     def _loop(self):
         while self._alive:
-            with self._lock:
-                motion, rpm = self._cmd
-            now = time.time()
-            if motion != 0:
-                self._last_moving = now
-                self._publish(motion, rpm)
-            elif now - self._last_moving < self.ZERO_TAIL_SEC:
-                self._publish(0, 0)
+            self._tick(time.time())
             time.sleep(1.0 / self.RATE_HZ)
 
-    def apply(self, motion: int, rpm: int):
+    def apply(self, motion: int, rpm: int, now: float | None = None):
         with self._lock:
             self._cmd = (int(motion), int(rpm))
+            self._last_apply = time.time() if now is None else now
+            self._stale_logged = False
 
     def stop(self):
         self.apply(0, 0)
@@ -185,6 +206,7 @@ class SerialDriver:
 
     cmd_timeout=0.5 を渡しているため、このスクリプトごと落ちても
     MecanumLink の送信スレッドが 0.5 秒で停止指令に切り替えます（多重の安全網）。
+    --ros の RosDriver も同じ 0.5 秒（CMD_TIMEOUT_SEC）で止まるので、どちらのドライバでも守りは同じです。
     """
 
     def __init__(self, left: str | None, right: str | None):
@@ -259,6 +281,7 @@ def main():
                 rows = r.json()
             except requests.RequestException as e:
                 # 通信が切れたら安全側＝停止して、つながるまでリトライ
+                # （返事を待っているあいだ（timeout=5）も、ドライバは apply() が 0.5 秒来なければ自分で止まっている）
                 print(f"[warn] 通信エラー → 停止して再試行します: {e}")
                 driver.stop()
                 last = (None, None, None)
@@ -287,7 +310,7 @@ def main():
                 motion, rpm = 0, 0
 
             # ★毎周期 apply する★
-            #   MecanumLink は cmd_timeout=0.5 で「指令が途切れたら停止」するため、
+            #   MecanumLink（--serial）も RosDriver（--ros）も「指令が 0.5 秒途切れたら停止」するため、
             #   変化したときだけ渡す実装だと押しっぱなしで止まってしまう。
             #   ログだけ変化時に出す。
             driver.apply(motion, rpm)
