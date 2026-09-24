@@ -8,12 +8,14 @@ pyserial と requests をスタブ（にせもの）に差し替えて import �
 ★パケットの形・順運動学の符号・量子化のヒステリシスを変えたら、必ずこれを実行★
 """
 
+import contextlib
 import io
 import math
 import os
 import re
 import struct
 import sys
+import threading
 import types
 
 # --- pyserial / requests をスタブ化（インストール不要で走らせるため）---
@@ -36,6 +38,7 @@ import robot_params as P          # noqa: E402
 import mecanum_serial as M        # noqa: E402
 import bookshelf_bridge as B      # noqa: E402
 import pin_tool as PT             # noqa: E402
+import manual_control as MCTL     # noqa: E402  （requests は上でスタブ化済み。rclpy は RosDriver.__init__ の中でしか import しない）
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nav2"))
 import make_nav2_params as NP     # noqa: E402  （yaml は main() の中でしか import しない）
 import map_check as MC            # noqa: E402
@@ -802,6 +805,53 @@ check("--check: 古いファイルは、ちがう所を 1 か所だけ挙げる"
       [(NP.fmt_path(p), o, n) for p, o, n in _st],
       [(NP.fmt_path(("controller_server", "ros__parameters", "FollowPath", "max_angular_accel")), 3.2, 8.0)])
 check("--check: 読めないファイル（None）も「古い」あつかい", len(NP.stale_items(None, _want)) > 0, True)
+
+
+# =====================================================================
+print("\n=== manual_control --ros の指令途切れ（apply が 0.5 秒来なければ 0 を出す）===")
+# =====================================================================
+# 2026-09-24 文書の見直しで発覚: Pi 自身の Wi-Fi が切れると manual_poll() の問い合わせが最長 5 秒待たされ、
+# そのあいだ RosDriver は最後の指令（前進など）を 20 Hz で出し続けていた。--serial の MecanumLink は
+# cmd_timeout=0.5 で止まるのに、--ros だけ守りが弱かった。ROS 2 が無い PC でも確かめられるよう、
+# rclpy を使う __init__ は通さず、publish を記録するだけの偽物を差し込む。
+check("RosDriver.CMD_TIMEOUT_SEC は MecanumLink に渡している cmd_timeout と同じ 0.5 秒",
+      (MCTL.RosDriver.CMD_TIMEOUT_SEC, "cmd_timeout=0.5" in inspect.getsource(MCTL.SerialDriver.__init__)), (0.5, True))
+check("_loop は毎周期 _tick を呼ぶ（ここで検算しているのと同じ道を通る）",
+      "self._tick(time.time())" in inspect.getsource(MCTL.RosDriver._loop), True)
+
+_rd = MCTL.RosDriver.__new__(MCTL.RosDriver)      # ROS を import する __init__ は通さない
+_rd._lock, _rd._cmd, _rd._last_apply, _rd._last_moving, _rd._stale_logged = threading.Lock(), (0, 0), 0.0, 0.0, False
+_pubs = []
+_rd._publish = lambda m, r: _pubs.append((m, r))
+
+_rd.apply(M.FORWARD, 30, now=100.0)
+_rd._tick(100.05); _rd._tick(100.45)
+check("apply から 0.5 秒以内: 最後の指令（前進 30 rpm）を出し続ける", _pubs, [(M.FORWARD, 30), (M.FORWARD, 30)])
+_pubs.clear()
+with contextlib.redirect_stdout(io.StringIO()) as _log:
+    _rd._tick(100.51)
+check("apply が 0.5 秒途切れたら、前進ではなく停止 (0, 0) を出す", _pubs, [(0, 0)])
+check("途切れたことをログに出す", "0.5 秒" in _log.getvalue(), True)
+with contextlib.redirect_stdout(io.StringIO()) as _log2:
+    _rd._tick(100.6)
+check("その後も 0 を出し続ける（ZERO_TAIL_SEC のあいだ）・ログは一度だけ", (_pubs, _log2.getvalue()), ([(0, 0), (0, 0)], ""))
+_rd._tick(101.6)                                   # 最後に動いた 100.45 から 1 秒過ぎた
+check("停止から 1 秒過ぎたら何も出さない（Nav2 の指令を打ち消さない。従来どおり）", _pubs, [(0, 0), (0, 0)])
+
+_pubs.clear()
+_rd.apply(M.BACKWARD, 20, now=102.0)
+_rd._tick(102.01)
+check("指令がまた来れば、そのまま動く", _pubs, [(M.BACKWARD, 20)])
+_pubs.clear()
+_rd.apply(M.STOP, 0, now=102.1)                    # 明示的な停止（stop() と同じ）
+_rd._tick(102.2); _rd._tick(102.9); _rd._tick(103.2)
+check("明示的な停止は 1 秒だけ 0 を出して、その後は出さない（従来どおり）", _pubs, [(0, 0), (0, 0)])
+_pubs.clear()
+_rd.apply(M.FORWARD, 30, now=104.0)
+_rd._tick(104.1)
+with contextlib.redirect_stdout(io.StringIO()) as _log3:
+    _rd._tick(104.7)
+check("2 回目の途切れも、また止めてログを出す", (_pubs, "0.5 秒" in _log3.getvalue()), ([(M.FORWARD, 30), (0, 0)], True))
 
 
 print()

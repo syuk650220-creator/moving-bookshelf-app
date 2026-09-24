@@ -61,7 +61,7 @@
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
 | `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（210 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（220 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
 | `slam/mapping_no_odom.yaml` ／ `slam/mapping_odom.yaml` | slam_toolbox の設定。前者はいつもの手順（仮の TF）のまま使える調整版、後者は**車輪オドメトリを使う地図づくり**用（§5-4） |
@@ -164,7 +164,7 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（210 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（220 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -179,6 +179,7 @@ python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 cd ~/moving-bookshelf-app/robot
 python3 manual_control.py            # PC: 受信した指令をログ表示（実機なし）
 python3 manual_control.py --serial   # Pi: 実機（Arduino 2 枚）を動かす
+python3 manual_control.py --ros      # Pi: mecanum_node.py 経由で動かす（地図づくり。§5-4）
 ```
 
 合格の目印:
@@ -189,7 +190,9 @@ python3 manual_control.py --serial   # Pi: 実機（Arduino 2 枚）を動かす
 
 安全設計: アプリはボタンを押している間だけ指令を更新し続け、Pi 側は
 「指令が 1.2 秒更新されなければ停止」（経過秒は DB の時計で判定＝クロックずれ無関係）。
-実機側はさらに `MecanumLink` の 0.5 秒タイムアウトと Arduino のウォッチドッグが控える三重構えです。
+Pi 側はさらに「指令を 0.5 秒渡せなければ停止」（`--serial` は `MecanumLink` の `cmd_timeout=0.5`、`--ros` は
+`RosDriver` が同じ 0.5 秒で `/cmd_vel` に 0 を出す。Pi 自身の Wi-Fi が切れて Supabase への問い合わせが
+最長 5 秒待たされるあいだも走り続けない）、実機側は Arduino の 0.5 秒ウォッチドッグが控える三重構えです。
 
 > ★`--serial` は同じフォルダの `mecanum_serial.py` と `robot_params.py` を使います。
 > 別の場所へコピーして使うときは、この 2 つも一緒に置いてください。
@@ -322,6 +325,7 @@ cd ~/moving-bookshelf-app/robot && python3 manual_control.py --ros
 
    ピン建て・保存・`map_check.py` は同じ。実走（§5-3）へ移るときは **SLAM とラジコンの受信係だけ止めればよく、窓②③はそのまま使えます**。
    `manual_control.py --ros` は、止まっているあいだ `/cmd_vel` に何も出しません（Nav2 の指令を打ち消さないため）。
+   指令が 0.5 秒途切れたら `--serial` と同じく止まります（§4 の三重構え）。
 
 **地図の保存と点検**
 
