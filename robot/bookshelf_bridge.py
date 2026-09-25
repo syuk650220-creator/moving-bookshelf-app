@@ -188,7 +188,7 @@ def yaw_from_quat(x: float, y: float, z: float, w: float) -> float:
 def heading_fix(goal_theta: float, yaw: float, tolerance: float) -> float | None:
     """
     着いたあとに回すべき角度 [rad]（＋が反時計回り。近いほうへ回る）。許容の中なら None。
-    Nav2 には位置だけを合わせさせ、向きはこの角度ぶんの spin 1 回で合わせる。
+    Nav2 には位置だけを合わせさせ、向きはこの角度ぶんの spin で合わせる（1 回。収まらなければもう 1 回）。
     """
     err = math.atan2(math.sin(goal_theta - yaw), math.cos(goal_theta - yaw))
     return None if abs(err) <= tolerance else err
@@ -968,7 +968,7 @@ def main():
     ap.add_argument("--init-sigma-yaw", type=float, default=0.17,
                     help="初期位置の向きのばらつき σ [rad]（0.17 ≒ 10°）")
     ap.add_argument("--heading-tolerance-deg", type=float, default=30.0,
-                    help="着いたときの向きの許容 [度]。これより大きくずれていたら、着いたあとに spin で 1 回合わせる"
+                    help="着いたときの向きの許容 [度]。これより大きくずれていたら、着いたあとに spin で合わせる（1 回。収まらなければもう 1 回）"
                          "（既定 30。0 で向きは合わせない）")
     ap.add_argument("--pose-interval", type=float, default=1.0,
                     help="走行中に現在地を robot_status へ書く間隔 [s]")
