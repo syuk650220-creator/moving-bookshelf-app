@@ -1,0 +1,14 @@
+# web.Dockerfile 専用の除外リスト（BuildKit は「<Dockerfile 名>.dockerignore」を優先して読む）
+# 画面のビルドに要らないもの・持ち込んではいけないもの（.env の鍵）を外す
+**/node_modules
+.next
+.git
+**/.env*
+*.tsbuildinfo
+next-env.d.ts
+.claude
+.github
+docs
+robot
+scripts
+supabase

@@ -72,6 +72,7 @@
 | `sql/03_pins_home_pose.sql` | ★段階3★ `stop_points.kind`（本棚の場所＝id 0）と insert/update ポリシー、`robot_status` の `localizing` と現在地（`pose_*`・`detail`）。SQL Editor で 1 回実行 |
 | `.env.example` | Supabase 接続情報のひな形。`.env` にコピーして値を入れる（`.env` はコミットされない） |
 | `requirements.txt` | PC／venv 用の参考。**Pi では apt を使う** |
+| `selfhost/` | ★ネットの無い会場用★ アプリと DB を Pi の中（Docker）だけで動かすセルフホストと、クラウドとの切り替え（`mode.sh self` / `mode.sh cloud`）・同期。手順は [selfhost/README.md](selfhost/README.md) |
 
 ---
 
@@ -122,6 +123,10 @@ SUPABASE_URL=https://zljswppciglhvwjyquow.supabase.co
 SUPABASE_ANON_KEY=sb_publishable_Ebl1Rfth5d2_Kikh6nK2wA_PEM75NnJ
 EOF
 ```
+
+> **★セルフホスト（[selfhost/](selfhost/README.md)）を入れたあとは★** `robot/.env` は `.env.cloud` か `.env.self` を指すリンクになります。
+> クラウドの値を書き直すときは、上のコマンドの `robot/.env` を `robot/.env.cloud` に読み替えてください
+> （`.env` に書くと、いまセルフホストのモードなら `.env.self` を上書きしてしまいます）。
 
 **service_role キーは絶対に Pi に置かないこと。** anon（publishable）キーで足ります。
 Supabase のプロジェクトを作り直したときは、ダッシュボードの Settings → API の値に差し替えてください。

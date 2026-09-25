@@ -1,0 +1,105 @@
+# =====================================================================
+#  移動本棚ロボ セルフホスト ― インターネットなしで、アプリと DB を Pi の中（Docker）だけで動かす
+#
+#  使い方は README.md。起動・停止・切り替えは mode.sh が行う（docker compose を直接打たなくてよい）
+#  ★Pi 本体に入れるのは Docker だけ。DB も画面もコンテナの中なので、Pi の設定は汚れない★
+#    まるごと消す: bash setup.sh uninstall（コンテナ・イメージ・DB のデータを消す）
+#
+#  入口は caddy の 80 番だけ。ほかのコンテナは Docker の中のネットワークにしか居ない（外から見えない）
+#    http://<Pi の IP>/          → web  （アプリの画面。Next.js）
+#    http://<Pi の IP>/rest/v1/  → rest （PostgREST。Supabase と同じ読み書きの窓口）→ db（PostgreSQL）
+#  ロボ側（ブリッジ・手動操作・pin_tool）は Pi の上から http://127.0.0.1/rest/v1 を使う（robot/.env.self）
+# =====================================================================
+
+name: bookshelf-selfhost
+
+# ログが SD カードを食いつぶさないように、各コンテナ 1 MB × 3 世代まで
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "1m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bookshelf
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?robot/selfhost/.env がありません。bash setup.sh を実行してください}
+      AUTHENTICATOR_PASSWORD: ${AUTHENTICATOR_PASSWORD:?robot/selfhost/.env がありません。bash setup.sh を実行してください}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      # ↓ 初回（db-data が空のとき）だけ、ファイル名の順に流れる。2 回目以降の起動では流れない（データは残る）
+      #   テーブルの定義はクラウドと同じファイル（supabase/schema.sql・robot/sql/01〜03）をそのまま使う
+      - ./sql/00_prelude.sh:/docker-entrypoint-initdb.d/00_prelude.sh:ro
+      - ../../supabase/schema.sql:/docker-entrypoint-initdb.d/10_schema.sql:ro
+      - ../sql/01_realtime_と_updated_at.sql:/docker-entrypoint-initdb.d/21_realtime_updated_at.sql:ro
+      - ../sql/02_manual_control.sql:/docker-entrypoint-initdb.d/22_manual_control.sql:ro
+      - ../sql/03_pins_home_pose.sql:/docker-entrypoint-initdb.d/23_pins_home_pose.sql:ro
+      - ./sql/90_grants.sql:/docker-entrypoint-initdb.d/90_grants.sql:ro
+    healthcheck:
+      # -h 127.0.0.1 … 初回の準備中（ソケットだけで待ち受ける仮のサーバー）を「準備完了」と見なさないため
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d bookshelf"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    cpus: ${DB_CPUS:-1.0}
+    logging: *logging
+    networks: [inner]
+
+  rest:
+    image: postgrest/postgrest:v14.18
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgres://authenticator:${AUTHENTICATOR_PASSWORD}@db:5432/bookshelf
+      PGRST_DB_SCHEMAS: public
+      PGRST_DB_ANON_ROLE: anon          # 鍵なしのリクエスト＝anon。Supabase の anon キーと同じ権限（RLS もクラウドと同じ）
+      PGRST_DB_POOL: 5
+      PGRST_SERVER_PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
+    cpus: ${REST_CPUS:-0.5}
+    logging: *logging
+    networks: [inner]
+
+  web:
+    build:
+      context: ../..
+      dockerfile: robot/selfhost/web.Dockerfile
+    image: bookshelf-selfhost-web
+    restart: unless-stopped
+    environment:
+      SELFHOST_INTERNAL_URL: http://caddy   # 本一覧をサーバー側で描くときの読み書き先（lib/supabaseClient.ts）
+    cpus: ${WEB_CPUS:-1.0}
+    logging: *logging
+    networks: [inner]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [rest, web]
+    cpus: ${CADDY_CPUS:-0.5}
+    logging: *logging
+    networks: [inner]
+
+volumes:
+  db-data:        # DB の中身。bash setup.sh reset-db / uninstall で消える
+  caddy-data:
+  caddy-config:
+
+networks:
+  inner:
+    ipam:
+      config:
+        # 範囲を固定しておく。Docker が自動で選ぶと 172.20.x.x を取ることがあり、
+        # iPhone のテザリング（172.20.10.x）とぶつかって Pi がネットに出られなくなるため
+        - subnet: 172.31.250.0/24
