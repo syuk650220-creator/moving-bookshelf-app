@@ -62,7 +62,7 @@ after_switch() {
     lan_urls | sed 's/^/     /'
     echo "   画面のいちばん上に「セルフホスト版」の帯が出ていれば、Pi につながっています"
   else
-    echo "   スマホはいつもの Vercel の URL を開く（スマホにもネットが要ります）"
+    echo "   スマホはいつもの Vercel の URL（https://moving-bookshelf-app.vercel.app）を開く（スマホにもネットが要ります）"
   fi
   local procs
   procs="$(robot_procs)"

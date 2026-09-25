@@ -6,7 +6,7 @@
 
 | | クラウド（今まで） | セルフホスト（Pi） |
 |---|---|---|
-| スマホで開くページ | いつもの Vercel の URL | `http://<Pi の IP>/`（画面の上に「セルフホスト版」の帯が出る） |
+| スマホで開くページ | いつもの Vercel の URL（`https://moving-bookshelf-app.vercel.app`） | `http://<Pi の IP>/`（画面の上に「セルフホスト版」の帯が出る） |
 | データの置き場所 | Supabase（クラウド） | Pi の中の PostgreSQL（Docker） |
 | インターネット | スマホにも Pi にも要る（テザリングなど） | **要らない**（ルーターの LAN だけ） |
 | ロボ側の接続先 `robot/.env` | → `.env.cloud` | → `.env.self` |
@@ -117,6 +117,8 @@ bash ~/moving-bookshelf-app/robot/selfhost/mode.sh status   # いまどちらか
 - 画面のいちばん上に **「セルフホスト版（ロボの Pi で動作中）」** の帯が出ていれば、Pi につながっています。
   帯が無いのは Vercel 版です（セルフホスト中に Vercel 版から呼んでも、ロボには届きません）
 - アドレス欄に「保護されていない通信」と出ますが、このアプリは https 専用のブラウザ機能を使っていないので、そのまま動きます
+  （https のときだけ使える `crypto.subtle`・`crypto.randomUUID`・`navigator.locks`・`navigator.clipboard`・`serviceWorker` を消した状態で、
+  呼出・本の詳細・履歴・ピン管理を開いて確認済み。ピン管理の「コピー」はクリップボードが無いと何もしないだけで、画面は止まらない）
 - **Android で開けないとき**: モバイルデータを一時的に OFF にするか、Wi-Fi の「インターネット接続なし」の確認で「接続を維持」を選ぶ
   （ネットの無い Wi-Fi を避けて、通信をモバイル回線に流す機種があるため）
 - Android は `http://<名前>.local/` の形で開けないことがあるので、数字の URL を使ってください
