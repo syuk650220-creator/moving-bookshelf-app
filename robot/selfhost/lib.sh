@@ -59,7 +59,7 @@ cloud_ok() {
 # スマホで開く URL（Docker の中の住所は除く）
 lan_urls() {
   ip -4 -o addr show scope global 2>/dev/null \
-    | awk '$2 !~ /^(docker|br-|veth)/ { split($4, a, "/"); print "http://" a[1] "/" }'
+    | awk '$2 !~ /^(lo|docker|br-|veth)/ { split($4, a, "/"); print "http://" a[1] "/" }'
   echo "http://$(hostname).local/   （iPhone・PC なら名前でも開ける。Android は上の数字の URL で）"
 }
 

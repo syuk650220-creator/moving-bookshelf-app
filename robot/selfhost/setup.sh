@@ -49,7 +49,7 @@ settle() {
   if [ "$(current_mode)" = self ]; then
     ok "いまはセルフホストのモードなので、動かしたままにします"
   else
-    dc stop >/dev/null
+    dc stop >/dev/null 2>&1
     ok "いまはクラウドのモードなので、コンテナは止めておきます（bash $HERE/mode.sh self で動き出します）"
   fi
 }

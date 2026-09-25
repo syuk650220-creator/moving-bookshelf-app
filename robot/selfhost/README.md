@@ -144,6 +144,8 @@ bash ~/moving-bookshelf-app/robot/selfhost/mode.sh status   # いまどちらか
   （[lib/supabaseClient.ts](../../lib/supabaseClient.ts)）。Pi の IP が変わってもビルドし直さなくて済みます。Vercel 版は今までどおりです。
 - **Nav2 を守る**: コンテナごとに CPU の上限（DB 1.0・画面 1.0・窓口 0.5・入口 0.5 コア。`robot/selfhost/.env` で変えられる）。
   ログは 1 MB × 3 世代まで（SD カードを食いつぶさない）。
+  重さの目安（2026-09-25、PC の WSL〔Ubuntu 24.04・x86〕での実測。Pi 5 での実測はまだ）: 4 つ合わせてメモリ約 150 MB
+  （DB 56・画面 60・窓口 22・入口 11 MB）、何もしていないときの CPU はほぼ 0 %。ディスクはイメージ 4 つで約 1.1 GB。
 - **Docker の中の住所は `172.31.250.0/24` に固定**しています。自動で選ばせると iPhone のテザリング（172.20.10.x）とぶつかることがあるためです。
 - コンテナは `restart: unless-stopped` なので、セルフホストのまま Pi を再起動すれば自動で立ち上がり、クラウドのモードなら止まったままです。
 
