@@ -117,7 +117,8 @@ create policy upd_stat   on robot_status for update using (true);
 create policy upd_stops  on stop_points  for update using (true);
 
 -- 削除：ポリシーを作らない → 誰も削除不可（全削除事故の防止）
-
+-- 削除：本は管理者画面からのみ導線を提供する。貸出履歴・呼出履歴がある本は外部キー制約によって削除できず、履歴を保護する。
+create policy del_books on books for delete using (true);
 -- ========== 続けて実行するもの ==========
 --   robot/sql/01_realtime_と_updated_at.sql … Realtime publication と updated_at トリガ
 --   robot/sql/02_manual_control.sql       … 管理者画面の手動操作用 robot_manual
