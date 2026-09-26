@@ -32,12 +32,13 @@ services:
     volumes:
       - db-data:/var/lib/postgresql/data
       # ↓ 初回（db-data が空のとき）だけ、ファイル名の順に流れる。2 回目以降の起動では流れない（データは残る）
-      #   テーブルの定義はクラウドと同じファイル（supabase/schema.sql・robot/sql/01〜03）をそのまま使う
+      #   テーブルの定義はクラウドと同じファイル（supabase/schema.sql・robot/sql/01〜04）をそのまま使う
       - ./sql/00_prelude.sh:/docker-entrypoint-initdb.d/00_prelude.sh:ro
       - ../../supabase/schema.sql:/docker-entrypoint-initdb.d/10_schema.sql:ro
       - ../sql/01_realtime_と_updated_at.sql:/docker-entrypoint-initdb.d/21_realtime_updated_at.sql:ro
       - ../sql/02_manual_control.sql:/docker-entrypoint-initdb.d/22_manual_control.sql:ro
       - ../sql/03_pins_home_pose.sql:/docker-entrypoint-initdb.d/23_pins_home_pose.sql:ro
+      - ../sql/04_books_delete_policy.sql:/docker-entrypoint-initdb.d/24_books_delete_policy.sql:ro
       - ./sql/90_grants.sql:/docker-entrypoint-initdb.d/90_grants.sql:ro
     healthcheck:
       # -h 127.0.0.1 … 初回の準備中（ソケットだけで待ち受ける仮のサーバー）を「準備完了」と見なさないため

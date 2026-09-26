@@ -4,7 +4,7 @@
 #
 #    bash ~/moving-bookshelf-app/robot/selfhost/setup.sh              # 初回・やり直し（★インターネットが要る★）
 #    bash ~/moving-bookshelf-app/robot/selfhost/setup.sh rebuild-web  # アプリ（画面）を更新したとき（★要ネット★）
-#    bash ~/moving-bookshelf-app/robot/selfhost/setup.sh sql <file>   # あとから足した SQL を Pi の DB にも流す
+#    bash ~/moving-bookshelf-app/robot/selfhost/setup.sh sql <file>   # あとから足した SQL を Pi の DB にも流す（権限も付け直す）
 #    bash ~/moving-bookshelf-app/robot/selfhost/setup.sh reset-db     # Pi の DB を空から作り直す
 #    bash ~/moving-bookshelf-app/robot/selfhost/setup.sh uninstall    # セルフホストをまるごと片付ける
 #
@@ -134,7 +134,7 @@ EOF
     dc logs --tail 40 db rest web caddy || true
     die "起動を確かめられませんでした（上のログを見てください）"
   fi
-  if [ "$fresh" = 1 ]; then first_fill; fi
+  if [ "$fresh" = 1 ]; then rm -f "$HERE/.sync_state.json"; first_fill; fi   # 控え（前回両方にあった本）は新しい DB には合わない
 
   step "7/7 いまのモードに合わせる"
   settle
@@ -180,6 +180,7 @@ cmd_reset_db() {
   confirm "作り直しますか？" || exit 1
   dc down
   docker_ volume rm "$VOLUME_DB" >/dev/null 2>&1 || true
+  rm -f "$HERE/.sync_state.json"     # 「前回両方にあった本」の控え。残すと、空の DB を「全部消された」と見誤るもとになる
   dc up -d
   wait_ready 240 || { dc logs --tail 40 db; die "起動を確かめられませんでした"; }
   ok "作り直しました"
@@ -197,7 +198,7 @@ cmd_uninstall() {
     mv "$ROBOT_DIR/.env.cloud" "$ROBOT_DIR/.env"
     ok "robot/.env をクラウドの接続先（普通のファイル）に戻しました"
   fi
-  rm -f "$ROBOT_DIR/.env.self" "$HERE/.env"
+  rm -f "$ROBOT_DIR/.env.self" "$HERE/.env" "$HERE/.sync_state.json"
   ok "片付けました"
   echo "   Docker そのものも消すなら: sudo apt purge docker.io docker-compose-v2 docker-buildx"
 }

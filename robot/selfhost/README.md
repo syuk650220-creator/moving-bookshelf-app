@@ -35,6 +35,7 @@ Pi の設定ファイルは触りません。要らなくなったら `bash setu
 | 貸出の記録（`loans`） | ◯ | 足りない記録を**両方向**に足す。片方で返却済みなら、もう片方も返却済みにする（**返却は取り消さない**） |
 | 本の状態（貸出中／在庫あり） | ◯ | 貸出の記録が届いた側で、記録から決め直す（未返却の貸出がある＝貸出中）。前からの食い違いは直さずに「★要確認」で知らせる |
 | 席・本棚のピン（`stop_points`） | ◯ | 直前まで使っていた側 → もう片方の**一方向**（ピンは Pi の地図に合わせたものだから） |
+| 本の削除（管理者画面 `/admin/books`。2026-09-26〜） | ◯ | 前回そろえたときに両方にあった本（`.sync_state.json` に控える）が片方にだけ無ければ、その側で消されたと見て**もう片方でも消す**。貸出・呼出の記録が残っている本は消さずに足し戻す。消える本が多すぎるとき（DB を作り直した直後など）も消さずに足し戻す（`--max-delete` で上限を変えられる） |
 | 呼出（`robot_calls`） | ✕ | その場かぎり。持ち込むと、古い呼出でロボが動き出す危険があるので揃えない |
 | ロボの状態・現在地（`robot_status`）・手動操作（`robot_manual`） | ✕ | その場かぎりの状態 |
 
@@ -43,7 +44,8 @@ Pi の設定ファイルは触りません。要らなくなったら `bash setu
   登録できた本は揃います。会場で使う本は、前もってクラウドで登録しておいてください。
 - **同じ本を、2 つの DB で別々に借りた**（例: セルフホスト中に、別の人が家から Vercel 版で借りた）ときは、
   自動では決めずに「★要確認」と表示します。アプリの本の詳細で返却して、実物と揃えてください。
-- どちらの DB も削除を許していないので、「消えたものを消し合う」ことはありません。
+- **本の削除**（2026-09-26 に管理者画面へ追加）は上の表のとおり相手側にも伝えます。控え（`robot/selfhost/.sync_state.json`）が無いとき（初回・`reset-db` の直後）は消さず、足りない本を足すだけです。
+  消えなかったときは「★…消えませんでした」と出ます（クラウドに `robot/sql/04` を流していないのが典型。控えに残して、次回もう一度消そうとします）。
 - 揃えるのは何度やっても安全です（2 回目は「変更なし」）。途中でネットが切れても、もう一度実行すれば続きから揃います。
 - 中身だけ見たいとき: `python3 sync.py sync --from self --to cloud --dry-run`（書き込まない）
 
@@ -54,7 +56,7 @@ Pi の設定ファイルは触りません。要らなくなったら `bash setu
 Pi にテザリングなどでネットがある状態で、Nav2 を止めてから実行します（画面のイメージ作りで CPU を長く使うため）。
 
 ```bash
-bash ~/moving-bookshelf-app/robot/pi_setup.sh          # コードを最新に（マージ前は BRANCH=feature/robot-selfhost を前に付ける）
+bash ~/moving-bookshelf-app/robot/pi_setup.sh          # コードを最新に（main。2026-09-26 にマージ済み）
 bash ~/moving-bookshelf-app/robot/selfhost/setup.sh    # セルフホストの準備（初回は 10〜20 分）
 ```
 
@@ -137,17 +139,19 @@ bash ~/moving-bookshelf-app/robot/selfhost/mode.sh status   # いまどちらか
 - **Supabase をまるごと載せない理由**: アプリもロボも Supabase の「読み書きの窓口（REST）」しか使っていないため
   （ログイン・Realtime・ファイル置き場は使っていない）。公式のセルフホスト版は 11 個のサービスで、最低でもメモリ 4GB・2 コア。
   Nav2 と同じ Pi に載せるには重いので、要る 4 つだけにしています。
-- **テーブルの定義はクラウドと同じファイル**（`supabase/schema.sql`・`robot/sql/01〜03`）を、DB を初めて作るときに流します。
+- **テーブルの定義はクラウドと同じファイル**（`supabase/schema.sql`・`robot/sql/01〜04`）を、DB を初めて作るときに流します。
   Supabase にしか無いもの（ログイン用の `auth.users`、Realtime の入れ物、`anon` の役）は [sql/00_prelude.sh](sql/00_prelude.sh) で最小限だけ用意し、
-  権限は [sql/90_grants.sql](sql/90_grants.sql) で Supabase の anon と同じ範囲にしています。RLS（誰が何を読み書きできるか）もクラウドと同じです。
+  権限は [sql/90_grants.sql](sql/90_grants.sql) で Supabase の anon と同じ範囲（select・insert・update・delete）にしています。
+  実際に消せるかは RLS（誰が何を読み書きできるか）が決め、これもクラウドと同じです（2026-09-26 時点で delete できるのは `books` だけ）。
 - **鍵**: クラウドでは Supabase のキーで anon になります。セルフホストでは全員が anon なので鍵を使わず、入口（[Caddyfile](Caddyfile)）が
   `Authorization` を外してから渡します。アプリとロボのコードは、接続先の URL が違うだけで同じです。
 - **画面の接続先**: セルフホスト版は `NEXT_PUBLIC_SUPABASE_URL=same-origin` でビルドし、「開いているページと同じ場所」を使います
   （[lib/supabaseClient.ts](../../lib/supabaseClient.ts)）。Pi の IP が変わってもビルドし直さなくて済みます。Vercel 版は今までどおりです。
 - **Nav2 を守る**: コンテナごとに CPU の上限（DB 1.0・画面 1.0・窓口 0.5・入口 0.5 コア。`robot/selfhost/.env` で変えられる）。
   ログは 1 MB × 3 世代まで（SD カードを食いつぶさない）。
-  重さの目安（2026-09-25、PC の WSL〔Ubuntu 24.04・x86〕での実測。Pi 5 での実測はまだ）: 4 つ合わせてメモリ約 150 MB
-  （DB 56・画面 60・窓口 22・入口 11 MB）、何もしていないときの CPU はほぼ 0 %。ディスクはイメージ 4 つで約 1.1 GB。
+  重さの目安: Pi 5 実機（2026-09-26、待機中）で 4 つ合わせてメモリ約 120 MB（入口 10・窓口 38・DB 27・画面 46 MB）。
+  PC の WSL〔Ubuntu 24.04・x86〕では約 150 MB（DB 56・画面 60・窓口 22・入口 11 MB）、何もしていないときの CPU はほぼ 0 %。
+  ディスクはイメージ 4 つで約 1.1 GB。Nav2 と同時に動かしたときの負荷は未計測。
 - **Docker の中の住所は `172.31.250.0/24` に固定**しています。自動で選ばせると iPhone のテザリング（172.20.10.x）とぶつかることがあるためです。
 - コンテナは `restart: unless-stopped` なので、セルフホストのまま Pi を再起動すれば自動で立ち上がり、クラウドのモードなら止まったままです。
 
@@ -158,7 +162,8 @@ bash ~/moving-bookshelf-app/robot/selfhost/mode.sh status   # いまどちらか
 | 変えたもの | やること |
 |---|---|
 | アプリの画面（`app/`・`lib/`・`components/` など） | `git pull`（pi_setup.sh）→ `bash setup.sh rebuild-web`（★要ネット★）。`mode.sh status` が古いと知らせます |
-| テーブル（例: `robot/sql/04_xxx.sql` を足した） | クラウドは今までどおり SQL Editor で流す。Pi の DB には `bash setup.sh sql ../sql/04_xxx.sql` |
+| テーブル（例: `robot/sql/05_xxx.sql` を足した） | クラウドは今までどおり SQL Editor で流す。Pi の DB には `bash setup.sh sql ../sql/05_xxx.sql`（権限も付け直す） |
+| main に入った変更を Pi へ（例: 2026-09-26 の「本の削除」画面 `app/admin/books/` と `robot/sql/04`） | `pi_setup.sh` → `bash setup.sh rebuild-web`（画面）。2026-09-26 より前に作った Pi の DB には `bash setup.sh sql ~/moving-bookshelf-app/robot/sql/04_books_delete_policy.sql`（delete のポリシーと delete の権限が付く。新しく作る DB には自動で入る） |
 | ロボ側の Python（`robot/*.py`） | 何もしなくてよい（Docker の外で動いている） |
 
 ---
@@ -175,6 +180,8 @@ bash ~/moving-bookshelf-app/robot/selfhost/mode.sh status   # いまどちらか
 | 起動を確かめられない | `sudo docker compose -f ~/moving-bookshelf-app/robot/selfhost/compose.yaml logs --tail 50` |
 | 「NanoCPUs can not be set」 | `robot/selfhost/.env` の `*_CPUS` を `0` にする（上限なし） |
 | Pi の DB を作り直したい | `bash setup.sh reset-db`（Pi にしか無い記録は消えるので、先に `mode.sh cloud`） |
+| 本を消したのに、次の同期で相手側から復活する | 控え（`robot/selfhost/.sync_state.json`）が無い（初回・`reset-db` 直後）か、消した本に貸出・呼出の記録がある（外部キーで消せないので足し戻す）。`python3 sync.py sync --from self --to cloud --dry-run` に「本を n 冊消す」「足し戻します」のどちらが出るか見る |
+| 「★…消えませんでした（delete のポリシーが無い？）」 | クラウドに `robot/sql/04_books_delete_policy.sql` を流していない → Supabase の SQL Editor で 1 回。Pi の DB なら `bash setup.sh sql …/robot/sql/04_books_delete_policy.sql`。控えに残るので、流したあとの同期で消える |
 
 ---
 
@@ -199,4 +206,5 @@ sudo apt purge docker.io docker-compose-v2 docker-buildx       # Docker その�
 | [setup.sh](setup.sh) | 準備・画面の作り直し・SQL の追加・DB の作り直し・片付け |
 | [mode.sh](mode.sh) | 切り替えと状態表示 |
 | [sync.py](sync.py) / [test_sync.py](test_sync.py) | クラウドと Pi の DB を揃える／その検証（`python3 test_sync.py`） |
+| `.sync_state.json` | 前回そろえたときに両方の DB にあった本の id の控え（`sync.py` が作る。git には入らない。`reset-db`・`uninstall` で消える） |
 | [lib.sh](lib.sh) | setup.sh と mode.sh の共通部品 |

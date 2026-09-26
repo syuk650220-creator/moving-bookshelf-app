@@ -46,10 +46,12 @@ def pin(id_, x=0.0, y=0.0, theta=0.0, label=None):
 class FakeRest:
     """sync.Rest と同じ呼び方で、メモリ上の表を読み書きする偽の DB。"""
 
-    def __init__(self, books=(), loans=(), pins=()):
+    def __init__(self, books=(), loans=(), pins=(), calls=(), can_delete=True):
         self.t = {"books": [copy.deepcopy(r) for r in books],
                   "loans": [copy.deepcopy(r) for r in loans],
-                  "stop_points": [copy.deepcopy(r) for r in pins]}
+                  "stop_points": [copy.deepcopy(r) for r in pins],
+                  "robot_calls": [copy.deepcopy(r) for r in calls]}
+        self.can_delete = can_delete      # False … delete のポリシーが無いクラウド（sql/04 未適用）の再現。0 件で返る
 
     def select_all(self, table, cols, order="id.asc", where=""):
         return [{c: r.get(c) for c in cols} for r in sorted(self.t[table], key=lambda r: r["id"])]
@@ -72,11 +74,20 @@ class FakeRest:
             if r["id"] == id_ and not (only_if_open and r.get("returned_at")):
                 r.update(copy.deepcopy(body))
 
+    def delete(self, table, id_):
+        if not self.can_delete:
+            return 0
+        if any(r.get("book_id") == id_ for r in self.t["loans"] + self.t["robot_calls"]):
+            raise RuntimeError("23503 foreign key violation")       # 履歴のある本は外部キーで消えない
+        before = len(self.t[table])
+        self.t[table] = [r for r in self.t[table] if r["id"] != id_]
+        return before - len(self.t[table])
 
-def run(src, dst):
-    """1 回揃えて、その計画を返す。"""
-    plan = sync.plan_sync(sync.fetch(src), sync.fetch(dst))
-    sync.apply(plan, {"src": src, "dst": dst})
+
+def run(src, dst, known=None):
+    """1 回揃えて、その計画を返す（plan.failed に、消せなかった本の id）。"""
+    plan = sync.plan_sync(sync.fetch(src), sync.fetch(dst), known=known)
+    plan.failed = sync.apply(plan, {"src": src, "dst": dst})
     return plan
 
 
@@ -196,6 +207,65 @@ class TestSync(unittest.TestCase):
         self.assertConverged(pi, cloud)
         self.assertEqual(self.status(cloud, B1), "available")
         self.assertEqual(self.status(cloud, B3), "on_loan")
+
+    # ---- 本の削除（2026-09-26。管理者画面 /admin/books で消せるようになった）
+
+    def test_片方で消された本はもう片方でも消える(self):
+        cloud = FakeRest(books=[book(B1), book(B2, title="消した本")])
+        pi = FakeRest(books=[book(B1)])                          # Pi（会場）で B2 を消した
+        plan = run(cloud, pi, known={B1, B2})                    # mode.sh self（クラウド → Pi）
+        self.assertEqual([r["id"] for r in cloud.t["books"]], [B1], "クラウドでも消える")
+        self.assertEqual(plan.failed, set())
+        self.assertEqual(plan.both_after, {B1})
+        self.assertIn("本を 1 冊消す", "\n".join(sync.describe(plan, {"src": "A", "dst": "B"})))
+        self.assertConverged(cloud, pi)
+
+    def test_前回の控えが無ければ消さずに足し戻す(self):
+        cloud = FakeRest(books=[book(B1), book(B2)])
+        pi = FakeRest(books=[book(B1)])
+        plan = run(cloud, pi)                                    # known なし（初回・reset-db の直後）
+        self.assertEqual(len(pi.t["books"]), 2)
+        self.assertEqual([op for op in plan.ops if op.kind == "delete"], [])
+        self.assertConverged(cloud, pi)
+
+    def test_貸出の記録がある本は消さずに足し戻して知らせる(self):
+        cloud = FakeRest(books=[book(B1), book(B2, status="on_loan")], loans=[loan(L1, B2)])
+        pi = FakeRest(books=[book(B1)])                          # Pi で B2 を消した（Pi には記録が無かった）
+        plan = run(cloud, pi, known={B1, B2})
+        self.assertEqual(len(cloud.t["books"]), 2, "クラウドの B2 は残る")
+        self.assertEqual(len(pi.t["books"]), 2, "Pi に足し戻される")
+        self.assertTrue(any("足し戻します" in n for n in plan.notes))
+        self.assertConverged(cloud, pi)
+
+    def test_呼出の記録がある本も消さない(self):
+        cloud = FakeRest(books=[book(B1), book(B2)],
+                         calls=[{"id": "c1", "book_id": B2, "status": "done"}])
+        pi = FakeRest(books=[book(B1)])
+        plan = run(cloud, pi, known={B1, B2})
+        self.assertEqual(len(cloud.t["books"]), 2)
+        self.assertEqual(len(pi.t["books"]), 2)
+        self.assertTrue(any("足し戻します" in n for n in plan.notes))
+
+    def test_消える本が多すぎるときは消さない(self):
+        ids = [f"b{i:07d}-0000-0000-0000-00000000000{i}" for i in range(1, 6)]
+        cloud = FakeRest(books=[book(i) for i in ids])
+        pi = FakeRest()                                          # 空（DB を作り直した直後の見た目）
+        plan = run(cloud, pi, known=set(ids))                    # 5 冊 > 上限 3 冊
+        self.assertEqual(len(cloud.t["books"]), 5, "クラウドは消えない")
+        self.assertEqual(len(pi.t["books"]), 5, "足し戻される")
+        self.assertTrue(any("自動では消しません" in n for n in plan.notes))
+        plan2 = sync.plan_sync(sync.fetch(cloud), sync.fetch(FakeRest()), known=set(ids), max_delete=5)
+        self.assertEqual(len([op for op in plan2.ops if op.kind == "delete"]), 5, "--max-delete で上限を上げれば消す")
+
+    def test_消せなかった本は控えに残して次回もう一度消そうとする(self):
+        cloud = FakeRest(books=[book(B1), book(B2)], can_delete=False)   # sql/04 未適用のクラウド
+        pi = FakeRest(books=[book(B1)])
+        plan = run(cloud, pi, known={B1, B2})
+        self.assertEqual(plan.failed, {B2})
+        self.assertEqual(len(cloud.t["books"]), 2)
+        self.assertEqual(len(pi.t["books"]), 1, "Pi には足し戻さない（消したい意図を保つ）")
+        again = sync.plan_sync(sync.fetch(cloud), sync.fetch(pi), known=plan.both_after | plan.failed)
+        self.assertEqual(len([op for op in again.ops if op.kind == "delete"]), 1)
 
     def test_要約の文(self):
         empty = sync.Plan([], [])

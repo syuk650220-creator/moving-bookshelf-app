@@ -4,7 +4,7 @@
 #  （/docker-entrypoint-initdb.d。2 回目以降の起動では流れない）
 #
 #  Supabase にはあって素の PostgreSQL には無いものを、最小限だけ用意する。
-#  このあと 10_schema.sql（= supabase/schema.sql）→ 21〜23（= robot/sql/01〜03）→ 90_grants.sql の順に流れる
+#  このあと 10_schema.sql（= supabase/schema.sql）→ 21〜24（= robot/sql/01〜04）→ 90_grants.sql の順に流れる
 # =====================================================================
 set -e
 
