@@ -123,3 +123,4 @@ create policy del_books on books for delete using (true);
 --   robot/sql/01_realtime_と_updated_at.sql … Realtime publication と updated_at トリガ
 --   robot/sql/02_manual_control.sql       … 管理者画面の手動操作用 robot_manual
 --   robot/sql/03_pins_home_pose.sql       … stop_points の updated_at トリガ（上の列は作成済みだが、トリガはこちらで付く）
+--   robot/sql/04_books_delete_policy.sql  … books の delete ポリシー（上で作成済みだが、既存プロジェクトに足すときはこちら）

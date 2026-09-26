@@ -238,7 +238,7 @@ export default function AdminPage() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">管理者画面</h1>
         <div className="flex gap-3">
-          <Link href="admin/books" className="text-sm text-red-600 underline">
+          <Link href="/admin/books" className="text-sm text-red-600 underline">
             本の削除
           </Link>
           <Link href="/admin/pins" className="text-sm text-blue-600 underline">
