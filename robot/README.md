@@ -70,6 +70,7 @@
 | `sql/01_realtime_と_updated_at.sql` | schema.sql に足りない 2 つ（Realtime publication ／ updated_at 自動更新トリガ）。SQL Editor で 1 回実行 |
 | `sql/02_manual_control.sql` | 手動操作用の `robot_manual` テーブル・RPC・ビュー。SQL Editor で 1 回実行 |
 | `sql/03_pins_home_pose.sql` | ★段階3★ `stop_points.kind`（本棚の場所＝id 0）と insert/update ポリシー、`robot_status` の `localizing` と現在地（`pose_*`・`detail`）。SQL Editor で 1 回実行 |
+| `sql/04_books_delete_policy.sql` | 管理者画面の「本の削除」（`/admin/books`）用に `books` の delete ポリシーを足す。貸出・呼出履歴のある本は外部キー制約で消えない。SQL Editor で 1 回実行 |
 | `.env.example` | Supabase 接続情報のひな形。`.env` にコピーして値を入れる（`.env` はコミットされない） |
 | `requirements.txt` | PC／venv 用の参考。**Pi では apt を使う** |
 
@@ -132,7 +133,7 @@ Supabase のプロジェクトを作り直したときは、ダッシュボー�
 cd ~/moving-bookshelf-app/robot && python3 bookshelf_bridge.py
 ```
 
-Supabase の SQL Editor で `sql/01_realtime_と_updated_at.sql`・`sql/02_manual_control.sql`・`sql/03_pins_home_pose.sql` を 1 回ずつ実行しておきます
+Supabase の SQL Editor で `sql/01_realtime_と_updated_at.sql`・`sql/02_manual_control.sql`・`sql/03_pins_home_pose.sql`・`sql/04_books_delete_policy.sql` を 1 回ずつ実行しておきます
 （何度実行しても壊れないように書いてあります。済んでいれば不要）。
 03 を流すと `stop_points` に本棚の場所（id=0）の行ができ、`robot_status` に `localizing` と現在地の列が増えます。
 ブリッジは起動時に「スキーマ : 段階3（sql/03 適用済み）」と表示して判定結果を教えてくれます。
