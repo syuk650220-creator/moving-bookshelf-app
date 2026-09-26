@@ -48,3 +48,6 @@ next-env.d.ts
 # python (robot/)
 __pycache__/
 *.pyc
+
+# セルフホストの同期の控え（前回両方の DB にあった本の id。robot/selfhost/sync.py が作る）
+robot/selfhost/.sync_state.json

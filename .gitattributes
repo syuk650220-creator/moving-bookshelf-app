@@ -1,1 +1,2 @@
 robot/*.sh text eol=lf
+robot/selfhost/**/*.sh text eol=lf
