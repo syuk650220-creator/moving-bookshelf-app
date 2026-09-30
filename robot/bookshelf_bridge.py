@@ -25,6 +25,9 @@ bookshelf_bridge.py ― アプリ（Supabase）とロボをつなぐブリッジ
     アプリの管理者画面（/admin/pins）の地図に出します。
   ・上の 3 つは sql/03_pins_home_pose.sql を実行してあることが前提です。未適用でも動きますが、
     localizing と現在地は書かず（列が無いため）、ホームは id=0 の行を探します。
+  ・前回の取り残し … 走行中や受取待ちのあいだに電池が切れると、呼出が moving / arrived のまま残ります。
+    ブリッジは起動時にそれを canceled にし、robot_status を idle に戻します（Bridge.cleanup_stale_calls）。
+    ★ブリッジは 1 つだけ動かすこと★（2 つ目を --live で起動すると、1 つ目が処理中の呼出を取り消してしまう）
 
 ────────────────────────────────────────────────────────────
 ★なぜポーリングが主で、Realtime が従なのか★
@@ -672,6 +675,57 @@ class Bridge:
 
         return cb
 
+    # ---------------- 起動時の片付け（前回の取り残し） ----------------
+
+    def cleanup_stale_calls(self) -> int:
+        """
+        前回の取り残しを片付ける。取り消した（dry-run なら、取り消すはずだった）呼出の件数を返す。
+
+        走行中や受取待ちのあいだに Pi の電池が切れたり、ブリッジが kill されたりすると、
+        その呼出は moving / arrived のまま残る（Ctrl-C なら shutdown() が canceled にするが、電源断ではできない）。
+        ブリッジが拾うのは queued だけなので、残った呼出は誰も片付けず、
+        アプリでは「移動中」のまま固まって、呼んだ人は取り消すことも次を呼ぶこともできない。
+
+        起動した時点では、このブリッジが処理中の呼出は 1 件も無い。★つまり moving / arrived はすべて取り残し★
+        なので canceled にする。アプリは canceled を見て「ロボが席まで届きませんでした」と知らせ、呼び直せるようになる。
+        robot_status が idle 以外のまま止まっていたら（returning のまま等）idle に戻す。
+
+        ・arrived も取り消す: ブリッジを起動し直す＝ロボを本棚の場所へ置き直した、が前提（at_home の説明）。
+          席に残って受取を待っているロボは、もう居ない。
+        ・done / canceled / queued には触らない。受取（done）まで済んだ呼出を「届かなかった」にしないため、
+          書き込みは「いまも moving / arrived なら」の条件つきにしてある。
+        ・★ブリッジは 1 つだけ動かすこと★ 別のブリッジが動いている最中に --live で起動すると、
+          そちらが処理中の呼出を取り残しと見なして取り消してしまう。
+        """
+        rows = self.supa.select(
+            "robot_calls", "status=in.(moving,arrived)&order=created_at.asc&select=*")
+        st = self.supa.select("robot_status", "id=eq.1&select=*")
+        state = (st[0].get("state") if st else None) or "idle"
+        if not rows and state == "idle":
+            return 0
+
+        note = "" if self.live else "（dry-run なので書き込みません）"
+        print(f"\n[起動] 前回の取り残しを片付けます{note}")
+        n = 0
+        for r in rows:
+            cid = str(r["id"])
+            print(f"    [db] robot_calls {cid[:8]}…  {r.get('status')} のまま残っていた呼出"
+                  f"（seat={r.get('seat_id')} requested_by={r.get('requested_by')}）→ canceled{note}")
+            if not self.live:
+                n += 1
+                continue
+            out = self.supa.patch("robot_calls", f"id=eq.{cid}&status=in.(moving,arrived)", {"status": "canceled"})
+            if out:
+                n += 1
+            else:
+                print("         （書く直前に状態が変わっていたので、触りませんでした）")
+        if n:
+            detail = f"ブリッジを起動しました。前回の取り残しの呼出 {n} 件を取り消しました"
+        else:
+            detail = f"ブリッジを起動しました（前回は {state} のまま止まっていました）"
+        self.set_status("idle", None, detail=detail)
+        return n
+
     # ---------------- 起動時の自己位置推定 ----------------
 
     def startup_localize(self) -> bool:
@@ -1032,6 +1086,12 @@ def main():
                     home=home, return_home=not args.no_return_home,
                     localize=not args.no_localize, pose_interval=args.pose_interval,
                     schema_v3=v3)
+
+    # 前回の取り残し（電池切れ・kill で moving / arrived のまま残った呼出）を片付けてから始める
+    try:
+        bridge.cleanup_stale_calls()
+    except requests.RequestException as e:
+        print(f"[warn] 取り残しの片付けに失敗（続行します）: {e}")
 
     if args.nav2:
         # 順番が大事: 初期位置を与える → それで Nav2 の残り（costmap・bt_navigator）が起動を完了できる
