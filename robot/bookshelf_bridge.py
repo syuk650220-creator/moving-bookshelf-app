@@ -1004,6 +1004,12 @@ def main():
     v3 = probe_schema_v3(supa)
     print(f"スキーマ : {'段階3（sql/03 適用済み）' if v3 else '★sql/03 未適用★ localizing と現在地は書きません'}")
 
+    try:        # robot_params.py が無い PC（ブリッジだけ試す）でも動くように
+        import robot_params as _P
+        print(f"機体の前 : {_P.FRONT_NAME}（ROBOT_FRONT={_P.FRONT}）。ピンの theta は「この前が向く向き」です")
+    except Exception:
+        pass
+
     home = load_home(supa, args.home_id)
     if home:
         print(f"ホーム   : id={home['id']} {home.get('label')} "

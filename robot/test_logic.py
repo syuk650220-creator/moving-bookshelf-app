@@ -151,6 +151,7 @@ check("hold 中でも停止は通る", q3(0.0, 0, 0.0, now=t), (M.STOP, 0.0))
 print("\n=== body_velocity（順運動学。符号は動作表と一致すること）===")
 # =====================================================================
 link = M.MecanumLink.__new__(M.MecanumLink)
+link.front_is_shelf = True          # ここは Arduino の向き（前＝本棚側）そのままの式を確かめる。入れ替えは下の「機体の前」で
 
 
 def tlm(front, rear):
@@ -852,6 +853,169 @@ _rd._tick(104.1)
 with contextlib.redirect_stdout(io.StringIO()) as _log3:
     _rd._tick(104.7)
 check("2 回目の途切れも、また止めてログを出す", (_pubs, "0.5 秒" in _log3.getvalue()), ([(M.FORWARD, 30), (0, 0)], True))
+
+
+# =====================================================================
+print("\n=== 機体の前（前後の入れ替え。robot_params.py の 0 章）===")
+# =====================================================================
+check("既定は 前＝電池・基板の側（ROBOT_FRONT を指定していないとき）",
+      (P.FRONT, P.FRONT_IS_SHELF) if "ROBOT_FRONT" not in os.environ else ("board", False), ("board", False))
+
+print("  --- hw_motion（車体から見た動作 → Arduino へ送る動作）---")
+check("前＝本棚側なら、そのまま",
+      [M.hw_motion(m, True) for m in range(7)], list(range(7)))
+check("前＝電池・基板の側なら、前進と後退・左横と右横を入れ替える（停止と回転はそのまま）",
+      [M.hw_motion(m, False) for m in range(7)],
+      [M.STOP, M.BACKWARD, M.FORWARD, M.RIGHT, M.LEFT, M.TURN_LEFT, M.TURN_RIGHT])
+check("2 回かけると元に戻る", [M.hw_motion(M.hw_motion(m, False), False) for m in range(7)], list(range(7)))
+check("引数を省くと robot_params に従う", M.hw_motion(M.FORWARD),
+      M.FORWARD if P.FRONT_IS_SHELF else M.BACKWARD)
+
+print("  --- body_velocity（オドメトリの符号）---")
+_fl = M.MecanumLink.__new__(M.MecanumLink)
+_fl.front_is_shelf = False
+_fl.tlm_left, _fl.tlm_right = tlm(-50, -50), tlm(-50, -50)      # Arduino の「後退」＝電池・基板の側へ進んでいる
+vx, vy, wz = _fl.body_velocity()
+check("電池・基板の側へ進むと vx > 0（前進）", round(vx, 4), round(P.rpm_to_mps(50), 4))
+check("そのとき vy = 0・wz = 0", (round(vy, 6) + 0.0, round(wz, 6) + 0.0), (0.0, 0.0))
+_fl.tlm_left, _fl.tlm_right = tlm(-50, -50), tlm(50, 50)        # 左回転 FL- RL- FR+ RR+（上から見て反時計回り）
+vx, vy, wz = _fl.body_velocity()
+check("回転の向きは入れ替えても同じ（反時計が正）", round(wz, 4), round(P.rpm_to_mps(50) / P.WHEEL_GEOM_L, 4))
+_fl.tlm_left, _fl.tlm_right = tlm(50, -50), tlm(-50, 50)        # Arduino の「左横」＝本棚側を前としたときの左へ
+vx, vy, wz = _fl.body_velocity()
+check("Arduino の左横は、入れ替え後は右（vy < 0）", round(vy, 4), round(-P.rpm_to_mps(50) * P.K_STRAFE, 4))
+_fn = M.MecanumLink.__new__(M.MecanumLink)                       # front_is_shelf を入れなければ robot_params に従う
+_fn.tlm_left, _fn.tlm_right = tlm(50, 50), tlm(50, 50)
+check("指定が無ければ robot_params に従う", _fn.body_velocity()[0] > 0, P.FRONT_IS_SHELF)
+
+print("  --- 指令 → 送信 → 報告 → オドメトリ が一周して合うこと ---")
+import time as _time     # noqa: E402
+
+
+class _CapSer:
+    """書き込まれたパケットを控えるだけのシリアル。"""
+    is_open = True
+
+    def __init__(self):
+        self.pkts = []
+
+    def write(self, b):
+        self.pkts.append(bytes(b))
+
+
+def _sent_motion(front_is_shelf, motion, rpm=30):
+    """MecanumLink に指令を入れ、送信スレッドが実際に書いた動作番号を返す。"""
+    lk = M.MecanumLink("L", "R", cmd_timeout=None, front_is_shelf=front_is_shelf)
+    lk._ser_l, lk._ser_r = _CapSer(), _CapSer()
+    lk.set_command(motion, rpm)
+    lk._running = True
+    th = threading.Thread(target=lk._sender_loop, daemon=True)
+    th.start()
+    deadline = _time.time() + 2.0
+    while len(lk._ser_l.pkts) < 3 and _time.time() < deadline:
+        _time.sleep(0.01)
+    lk._running = False
+    th.join(timeout=1.0)
+    return (lk._ser_l.pkts[-1][3], lk._ser_r.pkts[-1][3], lk.get_command()[0])
+
+
+check("前＝本棚側: 前進の指令は、前進のまま両方の基板へ", _sent_motion(True, M.FORWARD),
+      (M.FORWARD, M.FORWARD, M.FORWARD))
+check("前＝電池・基板の側: 前進の指令は、Arduino へは後退として送る（get_command は前進のまま）",
+      _sent_motion(False, M.FORWARD), (M.BACKWARD, M.BACKWARD, M.FORWARD))
+check("前＝電池・基板の側: 後退の指令は、Arduino へは前進", _sent_motion(False, M.BACKWARD)[0], M.FORWARD)
+check("前＝電池・基板の側: 左回転はそのまま", _sent_motion(False, M.TURN_LEFT)[0], M.TURN_LEFT)
+check("前＝電池・基板の側: 停止はそのまま", _sent_motion(False, M.STOP, 0)[0], M.STOP)
+
+# Nav2 の「前へ 0.2 m/s」→ 量子化 → Arduino へ送る動作 → その結果の車輪の向き → オドメトリ
+_q = M.Quantizer()
+_m, _r = _q(0.2, 0.0, 0.0, now=1000.0)
+_hw = M.hw_motion(_m, False)
+_sign = {M.FORWARD: +1, M.BACKWARD: -1}[_hw]                     # Arduino の前進は rpm が +、後退は −
+_fl.tlm_left, _fl.tlm_right = tlm(_sign * _r, _sign * _r), tlm(_sign * _r, _sign * _r)
+check("cmd_vel の vx > 0 は、オドメトリでも vx > 0 になる（向きが食い違わない）",
+      (_m, _hw, _fl.body_velocity()[0] > 0), (M.FORWARD, M.BACKWARD, True))
+
+print("  --- laser_mount（LiDAR の取り付け位置の既定値）---")
+check("前＝本棚側: x=+0.10・yaw=π（2026-09-20 に実機で確認した値）",
+      tuple(round(v, 5) for v in P.laser_mount(True)), (0.10, 0.0, round(math.pi, 5)))
+check("前＝電池・基板の側: x=−0.10・yaw=0", P.laser_mount(False), (-0.10, 0.0, 0.0))
+_lx, _ly, _lyaw = P.laser_mount(False)
+check("launch の既定値に -0.0 が出ない", (f"{_lx:.3f}", f"{_ly:.3f}", f"{_lyaw:.5f}"), ("-0.100", "0.000", "0.00000"))
+# LiDAR は同じ場所に付いたままなので、地図の上での LiDAR の位置は、入れ替えの前後で同じになるはず
+_bx, _by, _bth = 1.0, 2.0, 0.7                                   # 前＝本棚側のときのロボの姿勢
+_sx, _sy, _syaw = P.laser_mount(True)
+_laser_a = (_bx + _sx * math.cos(_bth) - _sy * math.sin(_bth), _by + _sx * math.sin(_bth) + _sy * math.cos(_bth),
+            PT.normalize_angle(_bth + _syaw))
+_nx, _ny, _nyaw = P.laser_mount(False)
+_bth2 = _bth + math.pi                                            # 同じ置き方でも、ロボの向きは 180° 違って見える
+_laser_b = (_bx + _nx * math.cos(_bth2) - _ny * math.sin(_bth2), _by + _nx * math.sin(_bth2) + _ny * math.cos(_bth2),
+            PT.normalize_angle(_bth2 + _nyaw))
+check("入れ替えても、地図の上での LiDAR の位置と向きは同じ（地図をそのまま使える）",
+      tuple(round(v, 6) for v in _laser_a), tuple(round(v, 6) for v in _laser_b))
+
+print("  --- robot_tf_launch.py の既定値（launch を にせもの に差し替えて読む）---")
+
+
+class _LaunchArg:
+    def __init__(self, name, default_value=None, description=""):
+        self.name, self.default_value = name, default_value
+
+
+_launch_stubs = {}
+for _name, _attrs in (("launch", {"LaunchDescription": lambda items: items}),
+                      ("launch.actions", {"DeclareLaunchArgument": _LaunchArg}),
+                      ("launch.substitutions", {"LaunchConfiguration": lambda n: f"<{n}>"}),
+                      ("launch_ros", {}),
+                      ("launch_ros.actions", {"Node": lambda **kw: kw})):
+    _mod = types.ModuleType(_name)
+    for _k, _v in _attrs.items():
+        setattr(_mod, _k, _v)
+    _launch_stubs[_name] = _mod
+_saved_mods = {k: sys.modules.get(k) for k in _launch_stubs}
+sys.modules.update(_launch_stubs)
+try:
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "robot_tf_launch", os.path.join(os.path.dirname(os.path.abspath(__file__)), "nav2", "robot_tf_launch.py"))
+    _tfl = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_tfl)
+    with contextlib.redirect_stdout(io.StringIO()) as _tf_log:
+        _items = _tfl.generate_launch_description()
+finally:
+    for _k, _v in _saved_mods.items():
+        if _v is None:
+            sys.modules.pop(_k, None)
+        else:
+            sys.modules[_k] = _v
+_defaults = {a.name: a.default_value for a in _items if isinstance(a, _LaunchArg)}
+_lx, _ly, _lyaw = P.laser_mount()
+check("laser_x・laser_y・laser_yaw の既定値は robot_params.laser_mount() と同じ",
+      (float(_defaults["laser_x"]), float(_defaults["laser_y"]), round(float(_defaults["laser_yaw"]), 4)),
+      (_lx, _ly, round(_lyaw, 4)))
+check("laser_z・base_z は今までどおり", (_defaults["laser_z"], _defaults["base_z"]), ("0.15", "0.05"))
+check("起動時に「機体の前」を 1 行出す", P.FRONT_NAME in _tf_log.getvalue(), True)
+_tf_nodes = [a for a in _items if isinstance(a, dict)]
+check("静的 TF は 2 本（base_footprint→base_link、base_link→laser）",
+      [(n["arguments"][-3], n["arguments"][-1]) for n in _tf_nodes],
+      [("base_footprint", "base_link"), ("base_link", "laser")])
+
+print("  --- pin_tool --turn-all（ピンの向きをまとめて回す）---")
+_pins = [{"id": 0, "label": "本棚の場所", "x": 0.0, "y": 0.0, "theta": 0.0, "kind": "home"},
+         {"id": 1, "label": "席1", "x": 0.87, "y": 0.26, "theta": 1.5708, "kind": "seat"},
+         {"id": 2, "label": "窓ぎわ", "x": 1.2, "y": -0.3, "theta": -3.0, "kind": "seat"}]
+_t = PT.turned_rows(_pins, 180)
+check("180° 回す: 位置・ラベル・種類はそのまま",
+      [(r["id"], r["label"], r["x"], r["y"], r["kind"]) for r in _t],
+      [(0, "本棚の場所", 0.0, 0.0, "home"), (1, "席1", 0.87, 0.26, "seat"), (2, "窓ぎわ", 1.2, -0.3, "seat")])
+check("180° 回す: theta は π ずれて、-π〜π に畳まれる",
+      [round(abs(PT.normalize_angle(r["theta"] - p["theta"])), 3) for r, p in zip(_t, _pins)],
+      [round(math.pi, 3)] * 3)
+check("もう一度 180° 回すと元に戻る",
+      [round(abs(PT.normalize_angle(r["theta"] - p["theta"])), 3) for r, p in zip(PT.turned_rows(_t, 180), _pins)],
+      [0.0, 0.0, 0.0])
+check("theta が NULL のピンでも落ちない",
+      round(abs(PT.turned_rows([{"id": 3, "x": 1, "y": 2, "theta": None}], 180)[0]["theta"]), 4), round(math.pi, 4))
 
 
 print()

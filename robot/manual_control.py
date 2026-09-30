@@ -217,10 +217,12 @@ class SerialDriver:
                      "  実機ツール一式（mecanum_serial.py / robot_params.py）を\n"
                      "  このフォルダに置いてから --serial を使ってください。\n"
                      "  PC での連携確認は --serial を外せばできます。")
+        import robot_params as P
         l, r = find_ports(left, right)
         self.link = MecanumLink(l, r, cmd_timeout=0.5)
         self.link.open()
         print(f"[serial] 接続しました: 左={l} 右={r}")
+        print(f"[serial] 機体の前: {P.FRONT_NAME}（ROBOT_FRONT={P.FRONT}）。「前進」でこちらへ進みます")
 
     def apply(self, motion: int, rpm: int):
         self.link.set_command(motion, rpm)

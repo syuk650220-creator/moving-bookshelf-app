@@ -40,7 +40,7 @@ import serial
 import robot_params as P
 from mecanum_serial import (
     STOP, FORWARD, BACKWARD, LEFT, RIGHT, TURN_LEFT, TURN_RIGHT,
-    MOTION_NAME, MecanumLink, build_packet, find_ports,
+    MOTION_NAME, MecanumLink, build_packet, find_ports, hw_motion,
 )
 
 
@@ -161,10 +161,15 @@ def identify(port_a: str, port_b: str, rpm: int = 20, sec: float = 3.0):
 
     確認できたら、udev ルールで固定名を作ってください（README.md 参照）。
     片方だけに送るとその2輪しか回りません（＝床の上ならその場で回ります）。
+
+    ★左・右は「本棚側を前として見た」左右です（機体の前を入れ替えても、基板の呼び名は変えない）★
+      Arduino のファームと順運動学（body_velocity）が、その呼び名で出来ているためです。
+      ここを「いまの前」から見た左右で答えると、旋回のオドメトリの符号が逆になります。
     """
     print()
     print("★★★ 車輪を浮かせてから実行してください ★★★")
     print("    片方の基板にだけ指令を送るため、床の上だとその場で回ります。")
+    print("★左・右は、本棚側を前として（本棚を向こう側にして電池・基板の側から）見た左右で答えてください★")
     input("    準備できたら Enter を押してください… ")
 
     for port in (port_a, port_b):
@@ -174,7 +179,7 @@ def identify(port_a: str, port_b: str, rpm: int = 20, sec: float = 3.0):
         t_end = time.time() + sec
         try:
             while time.time() < t_end:
-                ser.write(build_packet(seq, FORWARD, rpm))
+                ser.write(build_packet(seq, hw_motion(FORWARD), rpm))   # 前進 = 機体の前（robot_params の 0 章）へ
                 seq = (seq + 1) & 0xFF
                 time.sleep(P.SEND_PERIOD)
         finally:
@@ -184,7 +189,7 @@ def identify(port_a: str, port_b: str, rpm: int = 20, sec: float = 3.0):
                 time.sleep(0.02)
             time.sleep(0.05)
             ser.close()
-        ans = input(f"    {port} で回ったのはどちら側でしたか？ [l=左 / r=右 / s=わからない] ")
+        ans = input(f"    {port} で回ったのはどちら側でしたか？（本棚側を前として） [l=左 / r=右 / s=わからない] ")
         if ans.strip().lower().startswith("l"):
             print(f"    → {port} が【左】です")
         elif ans.strip().lower().startswith("r"):
@@ -305,6 +310,8 @@ def main():
 
     left, right = find_ports(args.left, args.right)
     print(f"左基板: {left}\n右基板: {right}")
+    print(f"機体の前: {P.FRONT_NAME}（ROBOT_FRONT={P.FRONT}）。前進（W）でこちらへ進みます。\n"
+          "          左・右の基板と FL/RL/FR/RR は、本棚側を前とした呼び名のままです")
 
     if args.identify:
         identify(left, right)
