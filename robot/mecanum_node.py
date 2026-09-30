@@ -101,6 +101,9 @@ class MecanumNode(Node):
         # ---------------- シリアル ----------------
         left, right = find_ports(left, right, verbose=False)
         self.get_logger().info(f"左基板: {left} / 右基板: {right}")
+        # どちらの端を前にして走るか（robot_params.py の 0 章）。TF（robot_tf_launch.py）とピンの向きも同じ前提にそろえること
+        self.get_logger().info(
+            f"機体の前: {P.FRONT_NAME}（ROBOT_FRONT={P.FRONT}）。前進の指令でこちらへ進みます")
 
         self.link = MecanumLink(left, right, cmd_timeout=gp("cmd_timeout").value)
         self.link.open()
@@ -118,7 +121,7 @@ class MecanumNode(Node):
                 "横移動は封印しています。動きは 前進・後退・その場回転 だけです（use_vy:=true で解除）")
         else:
             self.get_logger().warn(
-                "use_vy:=true（横移動を解除）で起動しました。この機体は前が重く、横移動すると一緒に回ってしまいます"
+                "use_vy:=true（横移動を解除）で起動しました。この機体は本棚側が重く、横移動すると一緒に回ってしまいます"
                 "（2026-09-21 実機）。地図づくり・Nav2 の走行では付けないでください")
 
         # ---------------- 通信 ----------------

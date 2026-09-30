@@ -11,6 +11,60 @@ Arduino 側の値（ゲイン・制御周期）は simulink/arduino/init_mecanum
 ★★★ 未採寸の値が3つあります（下の TODO）。実機で測って埋めてください ★★★
 """
 
+import math
+import os
+
+# =====================================================================
+#  0. 機体の「前」（どちらの端を先頭にして走るか）
+# =====================================================================
+#
+# ★2026-09-30 PM 決定: 前＝電池・基板の側（本棚は後ろ）★
+#   それまでは「前＝本棚側」でした（2026-09-20 に実機で確認した向き）。
+#   UWB の基板を電池・基板の側の縁に前向きに付けるため、走る向きを入れ替えます。
+#   機体の作りと Arduino のファームは変えません。入れ替えるのは Pi 側の次の 3 つだけです。
+#     ・前進と後退（と左横・右横）の指令 … mecanum_serial.hw_motion（Arduino へ送る直前に読み替える）
+#     ・オドメトリの前後（と左右）の符号 … mecanum_serial.MecanumLink.body_velocity
+#     ・LiDAR の取り付け位置の登録       … nav2/robot_tf_launch.py の既定値（下の laser_mount）
+#   回転の向き（反時計回りが +）とジャイロの符号は変わりません。地図もそのまま使えます。
+#
+#   ★ピン（stop_points）の theta は「ロボの前が向く向き」です。入れ替えたら、すべてのピンを 180° 回すこと★
+#       python3 pin_tool.py --turn-all 180
+#
+#   元の向きに戻すとき・試すときは、環境変数で上書きできます（★すべての窓で同じ値にすること★）:
+#       export ROBOT_FRONT=shelf      # 前＝本棚側（2026-09-29 までの向き）
+#       export ROBOT_FRONT=board      # 前＝電池・基板の側（既定）
+#   戻したら、ピンもまた 180° 回します。
+FRONT = os.environ.get("ROBOT_FRONT", "board").strip().lower()
+if FRONT not in ("board", "shelf"):
+    raise ValueError(f"ROBOT_FRONT は board か shelf です（いまの値: {FRONT!r}）")
+FRONT_IS_SHELF = FRONT == "shelf"
+FRONT_NAME = "本棚側" if FRONT_IS_SHELF else "電池・基板の側"
+
+# LiDAR の取り付け位置。★「前＝本棚側」のときの値で書いておく★（2026-09-20 に実機で確認した値）
+#   回転の中心から本棚側へ 0.10 m、RPLIDAR の 0° は電池・基板の側を向いている。
+LASER_X_SHELF_FRONT = 0.10
+LASER_Y_SHELF_FRONT = 0.0
+LASER_YAW_SHELF_FRONT = math.pi
+
+
+def laser_mount(front_is_shelf: bool | None = None) -> tuple[float, float, float]:
+    """
+    base_link から見た LiDAR の (x, y, yaw)。
+
+    前後を入れ替えると base_link が 180° 回るので、x・y の符号が変わり、yaw も 180° 回ります
+    （LiDAR は同じ場所に付いたまま。数値の見え方だけが変わる）。
+    """
+    shelf = FRONT_IS_SHELF if front_is_shelf is None else front_is_shelf
+    if shelf:
+        return LASER_X_SHELF_FRONT, LASER_Y_SHELF_FRONT, LASER_YAW_SHELF_FRONT
+    yaw = LASER_YAW_SHELF_FRONT + math.pi
+    yaw = math.atan2(math.sin(yaw), math.cos(yaw))
+    if abs(yaw) < 1e-9:
+        yaw = 0.0
+    # 「+ 0.0」は -0.0 を 0.0 にそろえるため（launch の引数に "-0.0" が出ないように）
+    return -LASER_X_SHELF_FRONT + 0.0, -LASER_Y_SHELF_FRONT + 0.0, yaw
+
+
 # =====================================================================
 #  1. 車体の寸法
 # =====================================================================
@@ -121,8 +175,6 @@ CMD_TIMEOUT = 0.2       # [s] 上位から指令が来なくなったら停止�
 #  4. 換算（ここから下は計算だけ。触らなくてよい）
 # =====================================================================
 
-import math
-
 WHEEL_CIRCUMFERENCE = 2 * math.pi * WHEEL_RADIUS    # [m] 車輪1回転で進む距離
 
 # エンコーダの分解能 [rpm/count]（init_mecanum_params.m より）
@@ -144,6 +196,9 @@ def mps_to_rpm(mps: float) -> float:
 
 if __name__ == "__main__":
     print("=== robot_params ===")
+    lx, ly, lyaw = laser_mount()
+    print(f"機体の前      : {FRONT_NAME}（ROBOT_FRONT={FRONT}）")
+    print(f"LiDAR の位置  : x={lx:+.3f} m  y={ly:+.3f} m  yaw={lyaw:.5f} rad（base_link から見て）")
     print(f"車輪半径      : {WHEEL_RADIUS*1000:.0f} mm  (周長 {WHEEL_CIRCUMFERENCE:.3f} m)")
     print(f"(lx + ly)     : {WHEEL_GEOM_L*1000:.0f} mm")
     print(f"横移動の効率  : {K_STRAFE:.2f}")

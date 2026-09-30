@@ -7,7 +7,9 @@ pin_tool.py ― ピン建て：席1〜3 と「本棚の場所」（ホーム）�
 ピンは 4 つ:  id=0 本棚の場所（kind='home'）／ id=1,2,3 席（kind='seat'）
   ・本棚の場所 … ロボの定位置。受取後に帰る先で、呼出のたびに AMCL の初期位置にもなる
                  → 床にテープで印を付け、毎回同じ向きに置くこと
-  ・席        … アプリの「届け先の席」。theta は「席に着いたときロボが向く向き」
+  ・席        … アプリの「届け先の席」。theta は「席に着いたときロボが向く向き」（＝ロボの前が向く向き）
+                 ★2026-09-30 から前＝電池・基板の側。本棚の開口を利用者へ向けて止めたい席は、
+                   開口を席へ向けて置いた状態でピンを取る（ロボの前は席と反対を向く）★
 
 ────────────────────────────────────────────────────────────
 使い方（3 通り）
@@ -26,6 +28,11 @@ pin_tool.py ― ピン建て：席1〜3 と「本棚の場所」（ホーム）�
   C) 数値を直接書く（ROS 2 不要。PC からでも）
        python3 pin_tool.py --set 1 1.85 0.42 1.57 --label 席1
        python3 pin_tool.py --list
+
+  D) すべてのピンの向きをまとめて回す（ROS 2 不要）
+       python3 pin_tool.py --turn-all 180
+     theta は「ロボの前が向く向き」です。機体の前後を入れ替えたとき（robot_params.py の 0 章）に 1 回だけ実行します。
+     いまの値と回したあとの値を見せてから確認します。もう一度実行すると元に戻ります。
 
 環境変数（.env でも可）: SUPABASE_URL / SUPABASE_ANON_KEY（ブリッジと同じ .env を使う）
 書き込みには sql/03_pins_home_pose.sql の insert/update ポリシーが必要です。
@@ -126,6 +133,20 @@ def sql_for_pins(rows: list[dict]) -> str:
             f"  on conflict (id) do update set label = excluded.label, x = excluded.x, "
             f"y = excluded.y, theta = excluded.theta, kind = excluded.kind;")
     return "\n".join(lines)
+
+
+def turned_rows(rows: list[dict], deg: float) -> list[dict]:
+    """
+    すべてのピンの向き（theta）を deg 度だけ回した行を作る。位置・ラベルはそのまま。
+
+    theta は「ロボの前が向く向き」なので、機体の前後を入れ替えたとき（robot_params.py の 0 章）は
+    すべてのピンを 180° 回す必要がある。もう一度 180° 回せば元に戻る。
+    """
+    out = []
+    for r in rows:
+        th = float(r.get("theta") or 0.0) + math.radians(deg)
+        out.append(pin_row(int(r["id"]), float(r["x"]), float(r["y"]), th, r.get("label")))
+    return out
 
 
 def format_pin(r: dict) -> str:
@@ -364,7 +385,10 @@ def main():
     ap.add_argument("--set", nargs=4, metavar=("ID", "X", "Y", "THETA"),
                     help="数値を直接登録（ROS 2 不要）。例: --set 1 1.85 0.42 1.57")
     ap.add_argument("--label", help="--set のときのラベル（省略時: 0=本棚の場所, N=席N）")
-    ap.add_argument("--sql", action="store_true", help="--set の内容を書き込まず SQL として表示する")
+    ap.add_argument("--sql", action="store_true", help="--set・--turn-all の内容を書き込まず SQL として表示する")
+    ap.add_argument("--turn-all", type=float, metavar="DEG",
+                    help="すべてのピンの向きを DEG 度回す（ROS 2 不要）。機体の前後を入れ替えたときは 180")
+    ap.add_argument("--yes", action="store_true", help="--turn-all で確認を省く")
     ap.add_argument("--map-frame", default="map")
     ap.add_argument("--base-frame", default="base_link",
                     help="ロボ本体のフレーム名（暫定 TF 構成では base_footprint でも可）")
@@ -388,6 +412,29 @@ def main():
         print("書き込む内容:")
         print(format_pin(row))
         sys.exit(0 if write_pin(store, row) else 1)
+
+    if args.turn_all is not None:
+        before = store.list()
+        if not before:
+            sys.exit("ピンが 1 つもありません。")
+        after = turned_rows(before, args.turn_all)
+        print(f"すべてのピンの向きを {args.turn_all:+g}° 回します（位置は変えません）。")
+        print("いま:")
+        for r in before:
+            print(format_pin(r))
+        print("回したあと:")
+        for r in after:
+            print(format_pin(r))
+        if args.sql:
+            print(sql_for_pins(after))
+            return
+        if not args.yes and ask("書き込みますか？ [y/N] > ").lower() not in ("y", "yes"):
+            print("やめました（何も書き込んでいません）。")
+            return
+        ok_all = all([write_pin(store, r) for r in after])
+        if ok_all:
+            print("★同じコマンドをもう一度実行すると、さらに回ります（180° なら元に戻ります）★")
+        sys.exit(0 if ok_all else 1)
 
     if args.list:
         for r in store.list():

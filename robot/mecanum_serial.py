@@ -70,6 +70,27 @@ MOTION_NAME = {
 
 
 # =====================================================================
+#  機体の「前」の読み替え（robot_params.py の 0 章）
+# =====================================================================
+#
+# Pi 側のプログラムが扱う動作番号は、★車体から見た向き★です（前進 = 機体の前へ進む）。
+# Arduino の動作表は「前進 = 本棚側へ進む」で作ってあり、ファームは書き換えません。
+# 前＝電池・基板の側（robot_params.FRONT_IS_SHELF が False）のときは、送る直前に
+# 前進と後退、左横と右横を入れ替えます。回転は入れ替えません（上から見て反時計回りが左回転のまま）。
+#
+# ★左右の基板の呼び名（/dev/mecanum_left・mecanum_right、FL・RL・FR・RR）は、本棚側を前とした呼び名のままです★
+#   配線とファームがその名前で出来ているためで、前後を入れ替えても差し替えは要りません。
+
+_HW_SWAP = {FORWARD: BACKWARD, BACKWARD: FORWARD, LEFT: RIGHT, RIGHT: LEFT}
+
+
+def hw_motion(motion: int, front_is_shelf: bool | None = None) -> int:
+    """車体から見た動作番号 → Arduino へ送る動作番号。"""
+    shelf = P.FRONT_IS_SHELF if front_is_shelf is None else front_is_shelf
+    return motion if shelf else _HW_SWAP.get(motion, motion)
+
+
+# =====================================================================
 #  パケットの組み立て
 # =====================================================================
 
@@ -233,18 +254,28 @@ class MecanumLink:
         link.close()          # ← 停止指令を送ってから切断してくれる
 
     with 文でも使えます（推奨。例外が出ても必ず停止指令が送られます）。
+
+    ★set_command・get_command・body_velocity の向きは「車体から見た向き」です★
+      前＝電池・基板の側のときは、Arduino へ送る直前に前進と後退（左横と右横）を入れ替え、
+      オドメトリの前後（左右）の符号も入れ替えます（hw_motion の説明を参照）。
     """
 
+    # None なら robot_params.FRONT_IS_SHELF に従う（テストや実験では True / False を直接入れられる）
+    front_is_shelf: bool | None = None
+
     def __init__(self, left_port: str, right_port: str,
-                 cmd_timeout: float | None = None, history: int = 2000):
+                 cmd_timeout: float | None = None, history: int = 2000,
+                 front_is_shelf: bool | None = None):
         """
         cmd_timeout : この秒数 set_command が呼ばれないと動作0を送る。
                       ROS2 ノードでは 0.2 を推奨。
                       手動操作ツールでは None（＝最後の指令を保持）。
+        front_is_shelf : 機体の前が本棚側か。None なら robot_params.FRONT_IS_SHELF。
         """
         self.left_port = left_port
         self.right_port = right_port
         self.cmd_timeout = cmd_timeout
+        self.front_is_shelf = front_is_shelf
 
         self._ser_l: serial.Serial | None = None
         self._ser_r: serial.Serial | None = None
@@ -359,7 +390,8 @@ class MecanumLink:
             if stale:
                 motion, rpm = STOP, 0        # 上位が黙ったら止める（暴走防止のラッチも解除される）
 
-            pkt = build_packet(self._seq, motion, rpm)
+            # ★ここで「車体から見た向き」を Arduino の向きに読み替える★
+            pkt = build_packet(self._seq, hw_motion(motion, self.front_is_shelf), rpm)
             for ser in (self._ser_l, self._ser_r):     # ★決まり4★ 両方に同じものを
                 try:
                     if ser and ser.is_open:
@@ -404,7 +436,7 @@ class MecanumLink:
         """
         4輪の実測rpmから車体速度 (vx, vy, wz) を出す（メカナムの順運動学）。
 
-        各車輪の周速 u_i [m/s]（符号は「+ = 車体が前へ」でそろえ済み）として
+        各車輪の周速 u_i [m/s]（符号は「+ = 本棚側へ」でそろえ済み。Arduino の報告の向き）として
 
             vx = ( u_FL + u_RL + u_FR + u_RR) / 4
             vy = ( u_FL - u_RL - u_FR + u_RR) / 4 × K_STRAFE
@@ -415,7 +447,10 @@ class MecanumLink:
           実機で横移動が逆で動作表を直したら、この式の vy も一緒に直してください。
           片方だけ直すと odom が逆を向きます。
 
-        戻り値: (vx, vy, wz) [m/s, m/s, rad/s]。データが揃っていなければ None。
+        ★上の式は「前＝本棚側」の向きです★ 前＝電池・基板の側のときは、車体の座標が 180° 回るので
+          vx と vy の符号を入れ替えて返します。wz（反時計回りが +）はどちらの向きでも同じです。
+
+        戻り値: (vx, vy, wz) [m/s, m/s, rad/s]。車体から見た向き。データが揃っていなければ None。
         """
         L, R = self.tlm_left, self.tlm_right
         if L is None or R is None:
@@ -428,6 +463,9 @@ class MecanumLink:
         vx = (u_FL + u_RL + u_FR + u_RR) / 4.0
         vy = (u_FL - u_RL - u_FR + u_RR) / 4.0 * P.K_STRAFE
         wz = (-u_FL - u_RL + u_FR + u_RR) / (4.0 * P.WHEEL_GEOM_L)
+        shelf = P.FRONT_IS_SHELF if self.front_is_shelf is None else self.front_is_shelf
+        if not shelf:
+            vx, vy = -vx, -vy
         return vx, vy, wz
 
     def yaw_rate(self):
