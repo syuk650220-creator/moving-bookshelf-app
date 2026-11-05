@@ -735,6 +735,14 @@ class Bridge:
             print(f"    [err] stop_points に席 id={seat_id} がありません → canceled")
             self.set_call(cid, "canceled")
             return
+        if rows[0].get("kind") == "beacon":
+            # ★UWB ビーコン（sql/05）。ビーコンへ走る処理（S3）が入るまでは、走り出さずに取り消す★
+            #   席の座標として扱うと、仮の座標（原点）へ走ってしまうため。理由はアプリにも出す
+            print(f"    [err] id={seat_id} は UWB ビーコンの行き先です。ビーコンへの走行はまだ入っていません → canceled")
+            self.set_call(cid, "canceled")
+            self.set_status("idle", None, detail="ビーコン（UWB）への走行はまだ使えません（準備中）",
+                            pose=self.nav.current_pose())
+            return
         goal = goal_from_stop_point(rows[0])
         label = goal["label"] or f"席{seat_id}"
         print(f"    [席] {label}  ({goal['x']:.3f}, {goal['y']:.3f}) theta={goal['theta']:.3f} rad")

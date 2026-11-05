@@ -1,0 +1,14 @@
+# =====================================================================
+#  LiDAR（RPLIDAR A1）の USB 変換を /dev/rplidar の固定名で見えるようにする
+#
+#  A1 の付属アダプタは Silicon Labs CP2102（10c4:ea60）が多いが、FTDI FT232R（0403:6001）の個体もある。
+#  この機体がどちらかは未確認なので両方書いてある。Pi で次を打ち、合わないほうの行は消してよい:
+#    udevadm info -q property -n /dev/ttyUSB0 | grep -E '^ID_(VENDOR_ID|MODEL_ID)='
+#  ★UWB 基板の J14（FTDI）を Pi に挿すと FTDI の行に当たって /dev/rplidar になってしまう。UWB は J6 で使うこと★
+#
+#  入れ方は 99-uwb.rules と同じ（pi_setup.sh が自動でやる）。
+#  固定名ができたら LiDAR の起動を  ros2 launch rplidar_ros rplidar.launch.py serial_port:=/dev/rplidar  にできる
+#  （既定の /dev/ttyUSB0 のままでも、USB 変換が 1 つしか無いうちは動く）
+# =====================================================================
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="rplidar", MODE="0666"
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", SYMLINK+="rplidar", MODE="0666"

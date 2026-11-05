@@ -42,6 +42,7 @@ import manual_control as MCTL     # noqa: E402  （requests は上でスタブ�
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nav2"))
 import make_nav2_params as NP     # noqa: E402  （yaml は main() の中でしか import しない）
 import map_check as MC            # noqa: E402
+import uwb_reader as U            # noqa: E402  （pyserial は open_serial() の中でしか import しない）
 
 ok = True
 
@@ -311,6 +312,7 @@ PINS = [
     {"id": 1, "label": "席1", "x": 1.0, "y": 0.5, "theta": 1.57, "kind": "seat"},
     {"id": 2, "label": "席2", "x": 2.0, "y": 0.0, "theta": 0.0, "kind": "seat"},
 ]
+BEACON_PIN = {"id": 100, "label": "ビーコン（UWB）", "x": 0.0, "y": 0.0, "theta": 0.0, "kind": "beacon"}   # sql/05
 
 
 def make_bridge(supa, nav, **kw):
@@ -392,6 +394,11 @@ br.handle(call("c7", 0))
 check("seat_id=0（本棚の場所）は canceled", (s.calls["c7"], n.events), ("canceled", []))
 br.handle(call("c8", 99))
 check("存在しない席は canceled", (s.calls["c8"], n.events), ("canceled", []))
+s, n = FakeSupa(PINS + [BEACON_PIN]), FakeNav()
+br = make_bridge(s, n)
+br.handle(call("c8b", 100))
+check("ビーコン（kind=beacon）はまだ走らず canceled（S3 が入るまで）", (s.calls["c8b"], n.events), ("canceled", []))
+check("理由を detail に書く（アプリに出る）", "ビーコン" in (s.status.get("detail") or ""), True)
 
 print("  --- ホーム未登録 / 帰還なし / 自己位置推定なし ---")
 s, n = FakeSupa([p for p in PINS if p["id"] != 0]), FakeNav()
@@ -852,6 +859,177 @@ _rd._tick(104.1)
 with contextlib.redirect_stdout(io.StringIO()) as _log3:
     _rd._tick(104.7)
 check("2 回目の途切れも、また止めてログを出す", (_pubs, "0.5 秒" in _log3.getvalue()), ([(M.FORWARD, 30), (0, 0)], True))
+
+
+# =====================================================================
+print("\n=== uwb_reader（UWB 基板の出力の読み取り。S1）===")
+# =====================================================================
+#   基板は 1 秒 5 回、1 行 1 JSON を流す。文字 → 数値（距離 m・方向 deg）に直し、
+#   測れなかった回・命令の返事・途中で切れた行を捨てる。命令は電波法のガードを通してからしか送れない。
+
+SAMPLE = ('{"Block":0, "results":[{"Addr":"0x0001","Status":"Ok","D_cm":166,"LPDoA_deg":-30.99,'
+          '"LAoA_deg":-9.65,"LFoM":86,"RAoA_deg":15.52,"CFO_100ppm":415}]}')
+rs = U.parse_line(SAMPLE, angle_sign=+1, t=10.0)
+check("測定の行は 1 件（相手 1 台）", len(rs), 1)
+r = rs[0]
+check("Block / Addr / Ok", (r.block, r.addr, r.ok), (0, "0x0001", True))
+check("D_cm 166 → 1.66 m", r.distance_m, 1.66)
+check("LAoA_deg −9.65 → bearing（angle_sign=+1 なら同じ値）", (r.laoa_deg, r.bearing_deg), (-9.65, -9.65))
+_q = U.parse_line(SAMPLE, angle_sign=-1)[0]
+check("angle_sign=−1 なら bearing の符号が反転（LAoA はそのまま残す）", (_q.laoa_deg, _q.bearing_deg), (-9.65, 9.65))
+check("PDoA / FoM / RAoA", (r.pdoa_deg, r.fom, r.raoa_deg), (-30.99, 86.0, 15.52))
+check("diag なしなら RSSI / NLOS は None", (r.rssi_dbm, r.nlos_pct), (None, None))
+check("bearing_rad", round(r.bearing_rad, 4), round(math.radians(-9.65), 4))
+check("読んだ時刻 t", r.t, 10.0)
+
+print("  --- 書式のゆれ・測れなかった回・ほかの行 ---")
+check("Status の前後に空白があっても Ok",
+      U.parse_line('{"Block":3,"results":[{"Addr":"0x0001","Status":" Ok ","D_cm":100,"LAoA_deg":5}]}')[0].ok, True)
+_diag = ('{"Block":7,"results":[{"Addr":"0x0001","Status":"Ok","D_cm":212,"LPDoA_deg":1.2,"LAoA_deg":0.4,'
+         '"LFoM":90,"RAoA_deg":-1.0,"CFO_100ppm":400,"RSSI_dBm":"-61.3","NLOS_%":12}]}')
+r7 = U.parse_line(_diag)[0]
+check("diag 1 の RSSI（文字列）と NLOS を数値に", (r7.rssi_dbm, r7.nlos_pct), (-61.3, 12.0))
+bad = U.parse_line('{"Block":8,"results":[{"Addr":"0x0001","Status":"Err","D_cm":0,"LAoA_deg":0,"LFoM":0}]}')[0]
+check("Status が Ok 以外: ok=False・距離と方向は None（0 を値として使わない）",
+      (bad.ok, bad.distance_m, bad.bearing_deg), (False, None, None))
+two = U.parse_line('{"Block":9,"results":[{"Addr":"0x0001","Status":"Ok","D_cm":100,"LAoA_deg":10},'
+                   '{"Addr":"0x0002","Status":"Ok","D_cm":250,"LAoA_deg":-40}]}')
+check("相手が 2 台（1 対多）なら 2 件", [(q.addr, q.distance_m, q.bearing_deg) for q in two],
+      [("0x0001", 1.0, 10.0), ("0x0002", 2.5, -40.0)])
+check("命令の返事 JS00BE{…} は測定ではない",
+      (U.line_kind('JS00BE{"UWB PARAM":{"CHAN":9}}'), U.parse_line('JS00BE{"UWB PARAM":{"CHAN":9}}')), ("reply", []))
+check("ok / error / 空行 / その他の行の種類",
+      [U.line_kind(x) for x in ("ok", "ERROR", "", "   ", "CURRENT ANTENNA_TYPE:JS1055-9")],
+      ["ack", "ack", "empty", "empty", "other"])
+check("途中で切れた行は捨てる（例外にしない）", U.parse_line('{"Block":10,"results":[{"Addr":"0x0001","Sta'), [])
+check("results の無い JSON も捨てる", U.parse_line('{"Block":11}'), [])
+
+print("  --- 使える回か（しきい値は実測で決めるまで None＝見ない）---")
+check("Ok で距離 > 0 なら使える", U.is_usable(r), True)
+check("測れなかった回は使えない", U.is_usable(bad), False)
+check("FoM のしきい値", (U.is_usable(r, min_fom=80), U.is_usable(r, min_fom=90)), (True, False))
+check("NLOS のしきい値（値が無い回は見ない）",
+      (U.is_usable(r7, max_nlos=10), U.is_usable(r7, max_nlos=20), U.is_usable(r, max_nlos=10)), (False, True, True))
+check("遠すぎる回", U.is_usable(r, max_distance_m=1.0), False)
+check("CSV の 1 行は見出しと同じ数の欄", len(U.csv_row(r)), len(U.CSV_FIELDS))
+check("CSV: 測れなかった回は数値の欄が空", U.csv_row(bad)[4:6], ["", ""])
+
+print("  --- 電波法のガード（送ってよい命令しか通さない。チャネル 9 固定・txpower 禁止）---")
+check("測り始める命令の列（既定）", U.start_commands(), ["stop", U.UWBCFG_CH9, "antenna js1055-9", "initf"])
+check("応える側・diag あり", U.start_commands("respf", diag=True),
+      ["stop", U.UWBCFG_CH9, "antenna js1055-9", "diag 1", "respf"])
+check("save 済みなら設定を打たない", U.start_commands(configure=False), ["stop", "initf"])
+check("uwbcfg の先頭はチャネル 9", (U.CHANNEL, U.UWBCFG_CH9.split()[1]), (9, "9"))
+for _good in ("stop", "initf", "respf", "diag 1", "save", "restore", "stat", "version", "help", "dcfg",
+              "uwbcfg", "antenna", "antenna js1055-9", U.UWBCFG_CH9, "  STOP  "):
+    try:
+        U.check_command(_good)
+    except U.IllegalCommand as e:
+        check(f"通るべき命令が止められた: {_good!r}", str(e), "")
+check("空白と改行を整える", U.check_command("  uwbcfg   9 64 8 9 9 3 6810 0 0 65 0 64 1 \r\n"), U.UWBCFG_CH9)
+
+
+def _blocked(cmd):
+    try:
+        U.check_command(cmd)
+        return False
+    except U.IllegalCommand:
+        return True
+
+
+check("txpower は止める", _blocked("txpower 10"), True)
+check("チャネル 5 の uwbcfg は止める", _blocked("uwbcfg 5 64 8 9 9 3 6810 0 0 65 0 64 1"), True)
+check("チャネル 9 以外は全部止める（例 10）", _blocked("UWBCFG 10 64 8 9 9 3 6810 0 0 65 0 64 1"), True)
+check("js1055-5（チャネル 5 用アンテナ）は止める", _blocked("antenna js1055-5"), True)
+check("ほかのアンテナ型も止める", _blocked("antenna external-1"), True)
+check("試験ファームの AT 命令は止める", [_blocked(x) for x in ("AT+UCW", "AT+UTX", "AT+UCHAN=5", "at")], [True] * 4)
+check("空の命令は止める", _blocked("   "), True)
+check("1 行に 2 つ詰めた txpower も止める", _blocked("stop\r\ntxpower 5"), True)
+
+print("  --- UwbReader × FakeUwbBoard（基板のにせもの。命令は CR 終端・返事を読み捨て・1 秒 5 回）---")
+_clk = {"t": 100.0}
+board = U.FakeUwbBoard(distance_m=1.5, bearing_deg=20.0, clock=lambda: _clk["t"])
+rd = U.UwbReader(board, angle_sign=+1)
+check("initf の前は何も流れない", board.readline(), b"")
+_sent = rd.start(sleep=lambda s: None)
+check("送った命令の列", _sent, ["stop", U.UWBCFG_CH9, "antenna js1055-9", "initf"])
+check("基板が受けた命令（CR で区切られて 4 つ）", board.received, _sent)
+check("返事（JS…／ok）は読み捨てられ、測定はまだ 0 回", (rd.n_lines, rd.n_ok, rd.last), (7, 0, None))
+check("200 ms 経つ前は何も来ない", rd.poll(), [])
+_clk["t"] += 0.2
+rs = rd.poll()
+check("200 ms 後に 1 回（1.5 m・左 20°）", (len(rs), rs[0].ok, rs[0].distance_m, rs[0].bearing_deg), (1, True, 1.5, 20.0))
+check("基板の生の値 LAoA_deg（angle_sign=+1 なら bearing と同じ）", rs[0].laoa_deg, 20.0)
+check("latest(): 新しいうちは返す・古くなると None",
+      (rd.latest(0.5, now=rs[0].t + 0.3) is rs[0], rd.latest(0.5, now=rs[0].t + 0.6)), (True, None))
+board.set_target(0.8, -45.0)
+_clk["t"] += 0.2
+rs = rd.poll()
+check("相手を動かすと次の回から変わる（0.8 m・右 45°）", (rs[0].distance_m, rs[0].bearing_deg), (0.8, -45.0))
+_clk["t"] += 1.0
+_cnt = 0
+while rd.poll():
+    _cnt += 1
+check("1 秒で 5 回（たまった行は続けて読める）", _cnt, 5)
+board.set_target(1.0, 150.0)
+_clk["t"] += 0.2
+check("後ろ（150°）の相手は前に鏡写し（30°）で見える＝前後は UWB だけでは分からない", rd.poll()[0].bearing_deg, 30.0)
+board.set_target(1.0, -120.0)
+_clk["t"] += 0.2
+check("右後ろ（−120°）→ −60°", rd.poll()[0].bearing_deg, -60.0)
+rd.stop()
+check("stop を送ると止まる", (rd.sent[-1], board.running), ("stop", False))
+_clk["t"] += 1.0
+check("止まったあとは何も流れない（ok の返事だけ）", (rd.poll(), rd.poll()), ([], []))
+try:
+    rd.send("txpower 3")
+    check("txpower は send() で止まる", "送られてしまった", "IllegalCommand")
+except U.IllegalCommand:
+    check("txpower は send() で止まる（基板には届かない）", any("txpower" in c for c in board.received), False)
+
+print("  --- 測り始めてすぐ返事を読み捨てる場面で、測定の行を捨てない ---")
+_clk["t"] = 200.0
+_b5 = U.FakeUwbBoard(1.0, 0.0, clock=lambda: _clk["t"])
+_rd5 = U.UwbReader(_b5)
+
+
+def _sleep_and_advance(sec):      # 本物の基板は、返事を待っている 0.3 秒のあいだにも測定の行を流し始める
+    _clk["t"] += sec
+
+
+_rd5.start(gap=0.3, sleep=_sleep_and_advance)
+check("initf の返事のあとに届いた最初の測定は捨てずに数える", (_rd5.n_ok, _rd5.last is not None), (1, True))
+_clk["t"] += 0.2
+check("そのあとも普通に読める", len(_rd5.poll()), 1)
+
+_b2 = U.FakeUwbBoard(1.0, 30.0, clock=lambda: _clk["t"], angle_sign=-1)
+_rd2 = U.UwbReader(_b2, angle_sign=-1)
+_rd2.start(sleep=lambda s: None)
+_clk["t"] += 0.2
+_q2 = _rd2.poll()[0]
+check("基板が「右が＋」でも angle_sign=−1 で左が＋に揃う（LAoA −30 → bearing +30）", (_q2.laoa_deg, _q2.bearing_deg), (-30.0, 30.0))
+
+_b3 = U.FakeUwbBoard(2.0, 0.0, drop_rate=1.0, clock=lambda: _clk["t"])
+_rd3 = U.UwbReader(_b3)
+_rd3.start(diag=True, sleep=lambda s: None)
+_clk["t"] += 0.2
+_q3 = _rd3.poll()[0]
+check("測れなかった回は ok=False で数えられる", (_q3.ok, _rd3.n_ok, _rd3.n_fail), (False, 0, 1))
+_b3.drop_rate = 0.0
+_clk["t"] += 0.2
+_q3 = _rd3.poll()[0]
+check("diag 1 なら RSSI と NLOS が付く", (_q3.rssi_dbm is not None, _q3.nlos_pct), (True, 0.0))
+
+_buf = io.StringIO()
+_b4 = U.FakeUwbBoard(1.2, 10.0, clock=lambda: _clk["t"])
+_rd4 = U.UwbReader(_b4, log=_buf)
+_rd4.start(configure=False, sleep=lambda s: None)
+_clk["t"] += 0.2
+_rd4.poll()
+_lines = _buf.getvalue().splitlines()
+check("生のログ: 打った命令は「# > 」付き、基板の行はそのまま",
+      (_lines[0], _lines[1], _lines[2], _lines[-1].startswith('{"Block"')), ("# > stop", "ok", "# > initf", True))
+check("ポート探し: 固定名が無く USB にも無ければ None", U.find_port("/dev/__no_such_uwb__"), None)
 
 
 print()
