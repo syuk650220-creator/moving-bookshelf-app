@@ -415,6 +415,9 @@ class FakeUwbBoard:
         self.next_t = 0.0
         self.received: list[str] = []           # 受け取った命令
         self.outq: list[str] = []               # これから返す行
+        # 相手の位置を毎回計算で決めたいとき（ロボが動くシミュレーション）: () -> (distance_m, bearing_deg) を入れる
+        # （beacon_locator.simulate_reading と組み合わせると、ロボの位置に合わせた値を流せる）
+        self.target_fn = None
 
     def set_target(self, distance_m: float, bearing_deg: float):
         self.d, self.b = distance_m, bearing_deg
@@ -471,6 +474,8 @@ class FakeUwbBoard:
 
     def _measure_line(self) -> str:
         self.block += 1
+        if self.target_fn is not None:
+            self.d, self.b = self.target_fn()
         addr = "0x0001"
         if self.rng.random() < self.drop_rate:
             r = {"Addr": addr, "Status": "Err", "D_cm": 0, "LPDoA_deg": 0.0, "LAoA_deg": 0.0,
