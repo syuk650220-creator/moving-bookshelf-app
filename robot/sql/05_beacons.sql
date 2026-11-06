@@ -22,12 +22,12 @@
 --  走り出さずに canceled にして、理由を robot_status.detail に書きます（アプリに「取り消されました」と出る）。
 --  新しいテーブルも robot_status.state の追加も無し。RLS は既存のポリシー（select / insert / update 全員OK）のまま。
 --
---  いまのアプリでの見え方（S5 で整える予定）:
---    /robot-call … 届け先の一覧の末尾に「ビーコン（UWB）」が出る（id > 0 を全部出しているため）
---    /admin/pins … 席と同じ青いピンとして出る。「席を追加」の次の id は 101 になる（最大 id + 1 のため）
+--  アプリでの見え方（S5）:
+--    /robot-call … 席の下に「ユニットのところへ（UWB ビーコン）」の紫のボタンとして出る（kind='beacon' の行）
+--    /admin/pins … 紫の破線の丸（探し始める場所の目安）。「席を追加」の次の id は席の最大 + 1（100 は数えない）
 --
 --  対応するコード: robot/bookshelf_bridge.py（kind='beacon' の分岐）, robot/uwb_reader.py（S1）,
---                 app/robot-call/page.tsx（S5）
+--                 app/robot-call/page.tsx・app/admin/pins/page.tsx（S5）
 
 
 -- =========================================================
