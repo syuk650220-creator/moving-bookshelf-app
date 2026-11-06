@@ -9,6 +9,8 @@ import Link from 'next/link'
 //  stop_points を地図上のピンとして見る・直す画面。
 //    id=0  kind='home' … 本棚の場所（ロボの定位置。帰る先・自己位置推定の初期位置）
 //    id≥1  kind='seat' … 席（アプリの「届け先の席」に出る）
+//    id=100 kind='beacon' … UWB ビーコン（席に置いたユニットのところへ走る行き先。robot/sql/05）
+//           座標は「探し始める場所」の目安で、ロボは UWB で測って向かう。地図では紫の破線の丸
 //  座標は map フレーム（m・rad）。採り方は robot/pin_tool.py（TF か RViz のクリックから登録）。
 //  この画面は「数値を確認して手で直す」「本棚の場所を追加する」ためのもの。
 //  ロボの現在地（robot_status.pose_*）も同じ地図に重ねて出す。
@@ -22,7 +24,7 @@ type Pin = {
   x: number
   y: number
   theta: number
-  kind?: 'seat' | 'home'
+  kind?: 'seat' | 'home' | 'beacon'
   updated_at?: string | null
 }
 
@@ -47,6 +49,9 @@ const STATE_COLOR: Record<string, string> = {
 const POSE_STALE_SEC = 15   // これより古い現在地は「古い」として薄く出す
 
 const isHome = (p: Pin) => p.kind === 'home' || p.id === 0
+const isBeacon = (p: Pin) => p.kind === 'beacon'
+const isSeat = (p: Pin) => !isHome(p) && !isBeacon(p)
+const kindLabel = (p: Pin) => (isHome(p) ? '本棚の場所（ホーム）' : isBeacon(p) ? 'ビーコン（UWB）' : '席')
 const deg = (rad: number) => (rad * 180) / Math.PI
 const fmt = (v: number, d = 3) => (Number.isFinite(v) ? v.toFixed(d) : '—')
 
@@ -65,7 +70,7 @@ function sqlForPins(pins: Pin[]): string {
   return pins
     .map((p) => {
       const label = p.label.replace(/'/g, "''")
-      const kind = isHome(p) ? 'home' : 'seat'
+      const kind = isHome(p) ? 'home' : isBeacon(p) ? 'beacon' : 'seat'
       return (
         `insert into stop_points (id, label, x, y, theta, kind) values (${p.id}, '${label}', ${p.x}, ${p.y}, ${p.theta}, '${kind}')\n` +
         `  on conflict (id) do update set label = excluded.label, x = excluded.x, y = excluded.y, theta = excluded.theta, kind = excluded.kind;`
@@ -173,7 +178,10 @@ export default function AdminPinsPage() {
   }
 
   const addSeat = async () => {
-    const nextId = Math.max(0, ...pins.map((p) => p.id)) + 1
+    // 次の席の id は「席の最大 id + 1」。ビーコン（id=100）の番号は数えない。万一ぶつかったら空きまで進める
+    const used = new Set(pins.map((p) => p.id))
+    let nextId = Math.max(0, ...pins.filter(isSeat).map((p) => p.id)) + 1
+    while (used.has(nextId)) nextId += 1
     setBusyId(nextId)
     setMessage(null)
     const row: Record<string, unknown> = { id: nextId, label: `席${nextId}`, x: 0, y: 0, theta: 0 }
@@ -256,6 +264,7 @@ export default function AdminPinsPage() {
       <p className="mt-1 text-sm text-gray-600">
         ロボが向かう先の座標（<code className="rounded bg-gray-100 px-1">stop_points</code>）を地図の上で確認し、手で直せます。
         座標は地図（map フレーム）の m と rad。<b>本棚の場所（id=0）</b>はロボの定位置で、受取後に帰る先・呼出時の自己位置推定の初期位置になります。
+        <b>ビーコン（id=100）</b>は席に置いた UWB ユニットのところへ走る行き先で、座標は探し始める場所の目安です。
       </p>
 
       {schemaOk === false && (
@@ -284,6 +293,9 @@ export default function AdminPinsPage() {
           <div className="flex flex-wrap gap-3 text-xs text-gray-600">
             <span><span className="inline-block h-3 w-3 rounded-full bg-amber-500 align-middle" /> 本棚の場所</span>
             <span><span className="inline-block h-3 w-3 rounded-full bg-blue-600 align-middle" /> 席</span>
+            {pins.some(isBeacon) && (
+              <span><span className="inline-block h-3 w-3 rounded-full border-2 border-dashed border-purple-600 align-middle" /> ビーコン（探し始める場所の目安）</span>
+            )}
             <span><span className="inline-block h-3 w-3 rotate-45 bg-green-600 align-middle" /> ロボ（矢印は向き）</span>
           </div>
         </div>
@@ -330,9 +342,19 @@ export default function AdminPinsPage() {
             {/* ピン */}
             {pins.map((p) => {
               const { px, py } = map.toPx(p.x, p.y)
-              const color = isHome(p) ? '#f59e0b' : '#2563eb'
+              const color = isHome(p) ? '#f59e0b' : isBeacon(p) ? '#7c3aed' : '#2563eb'
               const ax = px + arrowLen * Math.cos(p.theta)
               const ay = py - arrowLen * Math.sin(p.theta)
+              if (isBeacon(p)) {
+                // ビーコンは「探し始める場所の目安」。ロボは UWB で測って向かうので、向きの矢印は出さず破線の丸にする
+                return (
+                  <g key={p.id}>
+                    <circle cx={px} cy={py} r={13} fill="#f5f3ff" stroke={color} strokeWidth={2} strokeDasharray="4 3" />
+                    <text x={px} y={py + 4} fontSize={11} fontWeight={700} fill={color} textAnchor="middle">{p.id}</text>
+                    <text x={px + 16} y={py - 12} fontSize={12} fontWeight={700} fill="#111827">{p.label}</text>
+                  </g>
+                )
+              }
               return (
                 <g key={p.id}>
                   <line x1={px} y1={py} x2={ax} y2={ay} stroke={color} strokeWidth={3} strokeLinecap="round" />
@@ -411,22 +433,25 @@ export default function AdminPinsPage() {
             {pins.map((p) => {
               const d = drafts[p.id] ?? toDraft(p)
               const home = isHome(p)
+              const beacon = isBeacon(p)
               const thetaVal = parseTheta(d.theta)
               return (
                 <li
                   key={p.id}
-                  className={`rounded-lg border p-3 ${home ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200'}`}
+                  className={`rounded-lg border p-3 ${
+                    home ? 'border-amber-300 bg-amber-50/40' : beacon ? 'border-purple-300 bg-purple-50/40' : 'border-gray-200'
+                  }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span
                         className={`inline-grid h-7 w-7 place-items-center rounded-full text-xs font-bold text-white ${
-                          home ? 'bg-amber-500' : 'bg-blue-600'
+                          home ? 'bg-amber-500' : beacon ? 'bg-purple-600' : 'bg-blue-600'
                         }`}
                       >
                         {p.id}
                       </span>
-                      <span className="text-xs font-bold text-gray-500">{home ? '本棚の場所（ホーム）' : '席'}</span>
+                      <span className="text-xs font-bold text-gray-500">{kindLabel(p)}</span>
                     </div>
                     {p.updated_at && (
                       <span className="text-xs text-gray-400">
@@ -434,6 +459,12 @@ export default function AdminPinsPage() {
                       </span>
                     )}
                   </div>
+                  {beacon && (
+                    <p className="mt-1 text-xs text-purple-800">
+                      席に置いた UWB ユニットのところへ走る行き先。座標は「探し始める場所」の目安で、ロボは UWB で測って向かいます
+                      （ブリッジを <code className="rounded bg-white px-1">--uwb</code> 付きで起動したときだけ走ります）。
+                    </p>
+                  )}
 
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <label className="text-xs text-gray-600">

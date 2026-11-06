@@ -51,6 +51,11 @@ WebSocket 一本に頼ると、切れたときに呼出を取りこぼします�
   # 本物の Nav2 で走る（段階3・Pi 上で ROS 2 環境を source してから）
   python3 bookshelf_bridge.py --live --nav2
 
+  # UWB ビーコン（席に置いたユニット）への呼出も受ける（robot/sql/05 を流し、UWB 基板を J6 でつないで）
+  python3 bookshelf_bridge.py --live --nav2 --uwb
+  # 基板なし・Nav2 なしで、ビーコンの流れだけ試す（偽の基板がロボの位置に合わせた値を出す）
+  python3 bookshelf_bridge.py --simulate 5 --uwb-simulate 2.0,0.0
+
 環境変数（.env でも可）:
   SUPABASE_URL=https://xxxx.supabase.co
   SUPABASE_ANON_KEY=eyJ...
@@ -69,6 +74,10 @@ import time
 from datetime import datetime, timezone
 
 import requests
+
+import robot_params as P
+import uwb_reader as U          # S1: UWB 基板の読み取り（電波法のガード付き）
+import beacon_locator as BL     # S2: 距離と方向 → ユニットの地図座標
 
 
 # =====================================================================
@@ -200,6 +209,8 @@ def heading_fix(goal_theta: float, yaw: float, tolerance: float) -> float | None
 #   localize(init_goal)      … 自己位置推定。init_goal があればそれを初期位置として与える。
 #                              None なら「いまの推定をそのまま使う」。成功なら True
 #   go(goal, on_progress)    … ゴールへ走る。1 秒ごとに on_progress(残り[m], 現在地) を呼ぶ。到着で True
+#                              on_progress が新しいゴール（dict）を返したら、走りながらそちらへ差し替える（ビーコン）
+#   turn(angle)              … その場で angle [rad] 回す（＋が反時計回り）。できたら True（ビーコンを探す・前後を決める）
 #   current_pose()           … (x, y, theta) か None
 #   cancel()                 … 走行中なら止める（Ctrl-C 時）
 # =====================================================================
@@ -231,19 +242,31 @@ class LoggingNavigator:
     def go(self, goal: dict, on_progress=None) -> bool:
         print(f"    [nav] ゴール送出（ふり）: ({goal['x']:.3f}, {goal['y']:.3f}) "
               f"theta={goal['theta']:.3f}rad  qz={goal['qz']:.4f} qw={goal['qw']:.4f}")
-        x0, y0, _ = self.pose
-        dist = math.hypot(goal["x"] - x0, goal["y"] - y0)
         if self.simulate_sec > 0:
             print(f"    [nav] {self.simulate_sec:.0f} 秒走ったことにします…")
             steps = max(1, int(round(self.simulate_sec / 0.5)))
             for i in range(1, steps + 1):
                 time.sleep(self.simulate_sec / steps)
-                f = i / steps
-                self.pose = (x0 + (goal["x"] - x0) * f, y0 + (goal["y"] - y0) * f, goal["theta"])
+                x, y, _ = self.pose
+                k = steps - i + 1                  # 残りの歩数。毎歩「残りの 1/k」進むと、ゴールが途中で変わっても追える
+                self.pose = (x + (goal["x"] - x) / k, y + (goal["y"] - y) / k, goal["theta"])
+                remaining = math.hypot(goal["x"] - self.pose[0], goal["y"] - self.pose[1])
                 if on_progress:
-                    on_progress(dist * (1.0 - f), self.pose)
+                    new_goal = on_progress(remaining, self.pose)
+                    if new_goal:                   # 走りながらゴールを差し替える（ビーコン: 推定が動いたとき）
+                        print(f"    [nav] ゴールを差し替え（ふり）: ({new_goal['x']:.3f}, {new_goal['y']:.3f})")
+                        goal = new_goal
         else:
             self.pose = (goal["x"], goal["y"], goal["theta"])
+        return True
+
+    def turn(self, angle: float) -> bool:
+        """その場で angle [rad] 回したふり（＋が反時計回り）。"""
+        x, y, yaw = self.pose
+        self.pose = (x, y, math.atan2(math.sin(yaw + angle), math.cos(yaw + angle)))
+        print(f"    [nav] その場で {math.degrees(angle):+.0f}° 回したことにします → 向き {math.degrees(self.pose[2]):.0f}°")
+        if self.simulate_sec > 0:
+            time.sleep(0.5)
         return True
 
     def current_pose(self):
@@ -500,8 +523,7 @@ class Nav2Navigator:
 
     # ---------------- 走行 ----------------
 
-    def go(self, goal: dict, on_progress=None) -> bool:
-        self.wait_navigation_ready()
+    def _pose_msg(self, goal: dict):
         p = self._PoseStamped()
         p.header.frame_id = goal["frame_id"]
         p.header.stamp = self.nav.get_clock().now().to_msg()
@@ -509,10 +531,13 @@ class Nav2Navigator:
         p.pose.position.y = goal["y"]
         p.pose.orientation.z = goal["qz"]
         p.pose.orientation.w = goal["qw"]
+        return p
 
+    def go(self, goal: dict, on_progress=None) -> bool:
+        self.wait_navigation_ready()
         print(f"    [nav] ゴール送出: ({goal['x']:.3f}, {goal['y']:.3f}) "
               f"theta={goal['theta']:.3f}rad")
-        self.nav.goToPose(p)
+        self.nav.goToPose(self._pose_msg(goal))
 
         t0 = time.time()
         last_tick = 0.0
@@ -537,7 +562,14 @@ class Nav2Navigator:
                 if self.verbose and remaining is not None:
                     print(f"    [nav] 残り {remaining:.2f} m")
                 if on_progress:
-                    on_progress(remaining, self._pose)
+                    new_goal = on_progress(remaining, self._pose)
+                    if new_goal:
+                        # 走りながらゴールを差し替える（ビーコン: 測り直して推定が動いたとき）。
+                        # いまの走行を取り消してから送り直す。次の isTaskComplete() は新しいゴールを見る
+                        goal = new_goal
+                        print(f"    [nav] ゴールを差し替え: ({goal['x']:.3f}, {goal['y']:.3f}) theta={goal['theta']:.3f}rad")
+                        self.nav.cancelTask()
+                        self.nav.goToPose(self._pose_msg(goal))
             time.sleep(0.1)
 
         result = self.nav.getResult()
@@ -548,6 +580,34 @@ class Nav2Navigator:
         name = getattr(result, "name", str(result))
         print(f"    [nav] 失敗しました（{name}）")
         return False
+
+    # ---------------- その場回転 ----------------
+
+    def turn(self, angle: float, time_allowance: int = 15, deadline: float | None = None) -> bool:
+        """その場で angle [rad] 回す（＋が反時計回り）。Nav2 の spin を呼んで終わるまで待つ。できたら True。
+        受け付けられない・時間切れ・版のちがいで呼べないときは False（呼ぶ側は「回れなかった」として進める）。"""
+        try:
+            accepted = self.nav.spin(spin_dist=angle, time_allowance=time_allowance)
+        except Exception as e:                        # 版のちがいなどで呼べない
+            print(f"    [nav] （その場回転を呼べませんでした: {e}）")
+            return False
+        if not accepted:
+            print("    [nav] （その場回転を受け付けてもらえませんでした。近くに障害物？）")
+            return False
+        deadline = time.time() + time_allowance + 5.0 if deadline is None else deadline
+        while not self.nav.isTaskComplete():
+            if time.time() > deadline:
+                self.nav.cancelTask()
+                print("    [nav] （その場回転の途中で時間切れ）")
+                return False
+            time.sleep(0.1)
+        t1 = time.time()
+        while time.time() - t1 < 1.0:                 # AMCL の推定が落ち着くのを少し待つ
+            self._spin(0.1)
+        try:
+            return self.nav.getResult() == self._TaskResult.SUCCEEDED
+        except Exception:
+            return True
 
     # ---------------- 着いたあとの向き合わせ ----------------
 
@@ -565,23 +625,9 @@ class Nav2Navigator:
             if turn is None:
                 return
             print(f"    [nav] 向きのずれ {math.degrees(turn):+.0f}° → その場で回して合わせます")
-            try:
-                accepted = self.nav.spin(spin_dist=turn, time_allowance=15)
-            except Exception as e:                    # 版のちがいなどで呼べなくても、到着は到着
-                print(f"    [nav] （向き合わせは省略しました: {e}）")
+            if not self.turn(turn, deadline=t0 + self.timeout):   # 回れなくても、到着は到着
+                print("    [nav] （向き合わせはここまで。到着として進めます）")
                 return
-            if not accepted:
-                print("    [nav] （向き合わせを受け付けてもらえませんでした。近くに障害物？ 到着として進めます）")
-                return
-            while not self.nav.isTaskComplete():
-                if time.time() - t0 > self.timeout:
-                    self.nav.cancelTask()
-                    print("    [nav] （向き合わせの途中で時間切れ。到着として進めます）")
-                    return
-                time.sleep(0.1)
-            t1 = time.time()
-            while time.time() - t1 < 1.0:             # AMCL の推定が落ち着くのを少し待つ
-                self._spin(0.1)
         if self._pose is not None:
             left = heading_fix(goal["theta"], self._pose[2], 0.0) or 0.0
             print(f"    [nav] 向きのずれは {math.degrees(left):+.0f}° です")
@@ -601,8 +647,22 @@ class Bridge:
     def __init__(self, supa: Supa, navigator, live: bool, arrive_hold: float,
                  arrive_timeout: float = 0.0, home: dict | None = None,
                  return_home: bool = True, localize: bool = True,
-                 pose_interval: float = 1.0, schema_v3: bool | None = None):
+                 pose_interval: float = 1.0, schema_v3: bool | None = None,
+                 uwb=None, beacon_standoff: float = 0.5, beacon_height: float = P.BEACON_HEIGHT,
+                 beacon_search_sec: float = 6.0, beacon_retarget_m: float = 0.3, beacon_max_resend: int = 3,
+                 uwb_min_fom: float | None = None, uwb_max_nlos: float | None = None):
         self.supa = supa
+        # ---- UWB ビーコン（S3）。uwb は uwb_reader.UwbReader（None ならビーコンの呼出は取り消す）----
+        self.uwb = uwb
+        self.beacon_standoff = beacon_standoff          # ユニットの手前で止まる距離 [m]
+        self.beacon_height = beacon_height              # 席のユニットの床からの高さ [m]（距離の高さ補正）
+        self.beacon_search_sec = beacon_search_sec      # 最初に止まったまま測る秒数
+        self.beacon_retarget_m = beacon_retarget_m      # 走行中に推定がこれ以上動いたらゴールを差し替える [m]
+        self.beacon_max_resend = beacon_max_resend      # 差し替えの上限（行ったり来たりを防ぐ）
+        self.uwb_min_fom, self.uwb_max_nlos = uwb_min_fom, uwb_max_nlos
+        self._clock, self._sleep = time.monotonic, time.sleep    # テストで時間を手で進めるための差し替え口
+        self._beacon_goal: dict | None = None
+        self._beacon_resend = 0
         self.nav = navigator
         self.live = live
         self.arrive_hold = arrive_hold
@@ -735,6 +795,10 @@ class Bridge:
             print(f"    [err] stop_points に席 id={seat_id} がありません → canceled")
             self.set_call(cid, "canceled")
             return
+        if rows[0].get("kind") == "beacon":
+            # ★UWB ビーコン（sql/05）: 席の座標ではなく、UWB で測って探す（S3）★
+            self._process_beacon(call, rows[0])
+            return
         goal = goal_from_stop_point(rows[0])
         label = goal["label"] or f"席{seat_id}"
         print(f"    [席] {label}  ({goal['x']:.3f}, {goal['y']:.3f}) theta={goal['theta']:.3f} rad")
@@ -742,18 +806,8 @@ class Bridge:
         self.set_call(cid, "moving")
 
         # ---- ① 自己位置推定 ----
-        if self.localize:
-            use_home = self.home_pose_trusted and self.at_home and self.home is not None
-            where = "本棚の場所を初期位置に" if use_home else "現在の推定位置から継続"
-            self._state_now, self._call_now = "localizing", cid
-            self.set_status("localizing", cid, detail=f"自己位置推定中（{where}）")
-            init = goal_from_stop_point(self.home) if use_home else None
-            if not self.nav.localize(init):
-                self.set_call(cid, "canceled")
-                self.set_status("idle", None,
-                                detail="自己位置推定に失敗（AMCL の応答なし）。LiDAR・TF・Nav2 を確認してください",
-                                pose=self.nav.current_pose())
-                return
+        if not self._localize_for(cid):
+            return
 
         # ---- ② 席へ走行 ----
         self._state_now, self._call_now = "moving", cid
@@ -776,6 +830,188 @@ class Bridge:
 
         # ---- ④ 本棚の場所へ帰る ----
         self.go_home(cid)
+
+    def _localize_for(self, cid: str) -> bool:
+        """呼出の前の自己位置推定（席でもビーコンでも同じ）。失敗したら呼出を canceled にして False。"""
+        if not self.localize:
+            return True
+        use_home = self.home_pose_trusted and self.at_home and self.home is not None
+        where = "本棚の場所を初期位置に" if use_home else "現在の推定位置から継続"
+        self._state_now, self._call_now = "localizing", cid
+        self.set_status("localizing", cid, detail=f"自己位置推定中（{where}）")
+        init = goal_from_stop_point(self.home) if use_home else None
+        if not self.nav.localize(init):
+            self.set_call(cid, "canceled")
+            self.set_status("idle", None,
+                            detail="自己位置推定に失敗（AMCL の応答なし）。LiDAR・TF・Nav2 を確認してください",
+                            pose=self.nav.current_pose())
+            return False
+        return True
+
+    # ---------------- UWB ビーコン（席に置いたユニット）への走行 ★S3★ ----------------
+    #
+    #   探す（止まったまま測る → 読めなければ 60° ずつ回る → 前後を決めるために少し回る → 相手が横なら向く）
+    #   → 0.5 m 手前のゴールへ走る（走りながら測り直し、推定が 0.3 m 以上動いたらゴールを差し替える）
+    #   → 着いたら向きを合わせる（ゴールの向き＝ユニットのほう。ナビの align_heading が回す）
+    #   → 受取待ち → 帰還（席と同じ）
+    #   見つからない・走れない・基板と話せない → canceled にして理由を robot_status.detail に書く（アプリに出る）
+
+    def _process_beacon(self, call: dict, row: dict):
+        cid = call["id"]
+        label = row.get("label") or "ビーコン（UWB）"
+        if self.uwb is None:
+            print(f"    [err] id={row['id']} は UWB ビーコンの行き先ですが、UWB の読み取りが起動していません（--uwb を付けて起動）→ canceled")
+            self.set_call(cid, "canceled")
+            self.set_status("idle", None,
+                            detail="ビーコン（UWB）への走行は、ブリッジを --uwb 付きで起動したときだけ使えます",
+                            pose=self.nav.current_pose())
+            return
+        print(f"    [ビーコン] {label} を UWB で探して、手前 {self.beacon_standoff:.2f} m まで行きます")
+        self.set_call(cid, "moving")
+        if not self._localize_for(cid):
+            return
+        self._state_now, self._call_now = "moving", cid
+        self.at_home = False
+        self.home_pose_trusted = False
+        est = BL.BeaconEstimator(beacon_height=self.beacon_height,
+                                 min_fom=self.uwb_min_fom, max_nlos=self.uwb_max_nlos)
+        ok = False
+        try:
+            self.uwb.start(sleep=self._sleep)         # stop → uwbcfg 9 … → antenna js1055-9 → initf（電波法のガード付き）
+            found = self._beacon_search(est, label)
+            if found is None:
+                self.set_call(cid, "canceled")
+                self.set_status("idle", None,
+                                detail=f"{label} が見つかりません（席のユニットの電源と向き、距離を確認してください）",
+                                pose=self.nav.current_pose())
+                return
+            ok = self._beacon_drive(est, found, label)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as e:                        # 基板との通信エラーなど。ロボを止めたまま呼出を取り消す
+            print(f"    [err] UWB: {e}")
+            self.set_call(cid, "canceled")
+            self.set_status("idle", None, detail=f"UWB の読み取りに失敗（{e}）", pose=self.nav.current_pose())
+            return
+        finally:
+            try:
+                self.uwb.stop()                       # 測距を止める（電波を出したままにしない）
+            except Exception:
+                pass
+        if not ok:
+            self.set_call(cid, "canceled")
+            self.set_status("idle", None, detail=f"{label} への走行に失敗（タイムアウトか中止）",
+                            pose=self.nav.current_pose())
+            return
+        self.set_call(cid, "arrived")
+        self.set_status("arrived", cid, detail=f"{label} に到着。アプリの「本を取得した」を待っています",
+                        pose=self.nav.current_pose())
+        self.wait_for_receipt(cid)
+        self._call_finished = True
+        self.go_home(cid)
+
+    def _beacon_collect(self, est, seconds: float) -> int:
+        """seconds 秒のあいだ基板を読んで推定にためる。使えた測定の数を返す。"""
+        t0 = self._clock()
+        n = 0
+        while self._clock() - t0 < seconds:
+            rs = self.uwb.poll()
+            if not rs:
+                self._sleep(0.02)
+                continue
+            pose = self.nav.current_pose()
+            for r in rs:
+                if est.add(pose, r):
+                    n += 1
+        return n
+
+    def _beacon_search(self, est, label: str):
+        """ユニットを探して推定（BeaconEstimate）を返す。見つからなければ None。"""
+        self.set_status("moving", self._call_now, detail=f"{label} を探しています（UWB で測定中）",
+                        pose=self.nav.current_pose())
+        self._beacon_collect(est, self.beacon_search_sec)
+        turns = 0
+        while est.estimate() is None and turns < 6:        # 何も読めない: 60° ずつ 1 周
+            turns += 1
+            print(f"    [ビーコン] まだ読めません → 60° 回して探します（{turns}/6）")
+            self.nav.turn(math.radians(60.0))
+            self._beacon_collect(est, 1.5)
+        e = est.estimate()
+        if e is None:
+            return None
+        if e.ambiguous:                                    # 前後が決まっていない: 少し回ると決まる
+            print("    [ビーコン] 前後を決めるために 30° 回ります")
+            self.nav.turn(math.radians(30.0))
+            self._beacon_collect(est, 1.5)
+            e = est.estimate() or e
+        for _ in range(2):                                 # 相手が横・後ろ: そちらを向いて測り直す（正面 ±60° が使える範囲）
+            if abs(e.bearing_deg) <= 30.0:
+                break
+            print(f"    [ビーコン] 相手は {e.bearing_deg:+.0f}° の方向 → そちらを向きます")
+            self.nav.turn(math.radians(e.bearing_deg))
+            self._beacon_collect(est, 1.5)
+            e = est.estimate() or e
+        if e.ambiguous:                                    # それでも決まらない: 逆に回ってもう一度
+            print("    [ビーコン] 前後がまだ決まりません → −60° 回ります")
+            self.nav.turn(math.radians(-60.0))
+            self._beacon_collect(est, 1.5)
+            e = est.estimate() or e
+        print(f"    [ビーコン] 推定 ({e.x:.2f}, {e.y:.2f})  距離 {e.distance_m:.2f} m  方向 {e.bearing_deg:+.0f}°  "
+              f"n={e.n}  ばらつき {e.spread_m:.2f} m" + ("  ★前後は未確定（前と仮定）★" if e.ambiguous else ""))
+        return e
+
+    def _beacon_drive(self, est, e, label: str) -> bool:
+        """手前のゴールへ走る。走りながら測り直す。失敗したら手前を 0.2 m 広げてもう一度。"""
+        standoff = self.beacon_standoff
+        for attempt in range(2):
+            pose = self.nav.current_pose() or (e.x, e.y, 0.0)
+            goal = BL.standoff_goal(e, pose, standoff, label=label)
+            self._beacon_goal, self._beacon_resend = goal, 0
+            print(f"    [ビーコン] ゴール ({goal['x']:.2f}, {goal['y']:.2f}) 向き {math.degrees(goal['theta']):.0f}°（手前 {standoff:.1f} m）")
+            self.set_status("moving", self._call_now,
+                            detail=f"{label} へ移動中（推定 ({e.x:.2f}, {e.y:.2f})・手前 {standoff:.1f} m）", pose=pose)
+            if self.nav.go(goal, on_progress=self._beacon_progress(est, label)):
+                return True
+            if attempt == 0:
+                e = est.estimate() or e
+                standoff += 0.2
+                print(f"    [ビーコン] 走行に失敗 → 手前を {standoff:.1f} m に広げてもう一度")
+        return False
+
+    def _beacon_progress(self, est, label: str):
+        """走行中に 1 秒ごとに呼ばれる。測り直して、推定が動いていれば新しいゴールを返す（ナビがそれに差し替える）。"""
+        last = {"t": 0.0}
+
+        def cb(remaining, pose):
+            for _ in range(8):                             # たまっている行を読む（長くは読まない）
+                rs = self.uwb.poll()
+                if not rs:
+                    break
+                for r in rs:
+                    est.add(pose, r)
+            new_goal = None
+            e = est.estimate()
+            if (e is not None and not e.ambiguous and pose is not None and self._beacon_goal is not None
+                    and self._beacon_resend < self.beacon_max_resend):
+                bx, by = self._beacon_goal["beacon"]
+                moved = math.hypot(e.x - bx, e.y - by)
+                if moved > self.beacon_retarget_m:
+                    new_goal = BL.standoff_goal(e, pose, self._beacon_goal["standoff"], label=label)
+                    self._beacon_goal = new_goal
+                    self._beacon_resend += 1
+                    print(f"    [ビーコン] 推定が {moved:.2f} m 動いた → ゴールを差し替えます "
+                          f"({new_goal['x']:.2f}, {new_goal['y']:.2f})（{self._beacon_resend}/{self.beacon_max_resend}）")
+            now = time.time()
+            if now - last["t"] >= self.pose_interval:
+                last["t"] = now
+                detail = f"{label} へ移動中" + (f"（残り {remaining:.1f} m）" if remaining is not None else "")
+                try:
+                    self.set_status(self._state_now, self._call_now, detail=detail, pose=pose, quiet=True)
+                except Exception as ex:                   # 通信の一時失敗で走行を止めない
+                    print(f"    [warn] 現在地の書き込みに失敗（続行します）: {ex}")
+            return new_goal
+
+        return cb
 
     # ---------------- 受取待ち ----------------
 
@@ -852,6 +1088,11 @@ class Bridge:
 
     def shutdown(self):
         self.nav.cancel()
+        if self.uwb is not None:
+            try:
+                self.uwb.stop()                       # 基板の測距を止める（電波を出したままにしない）
+            except Exception:
+                pass
         if not (self.live and self.current):
             return
         try:
@@ -972,6 +1213,19 @@ def main():
                          "（既定 30。0 で向きは合わせない）")
     ap.add_argument("--pose-interval", type=float, default=1.0,
                     help="走行中に現在地を robot_status へ書く間隔 [s]")
+    # ---- UWB ビーコン（S3）----
+    ap.add_argument("--uwb", nargs="?", const="auto", default=None, metavar="PORT",
+                    help="UWB 基板をつないで、ビーコン（kind='beacon'）への呼出を受ける。PORT 省略で /dev/uwb → USB の ID で探す")
+    ap.add_argument("--uwb-simulate", nargs="?", const="2.0,0.0", default=None, metavar="X,Y",
+                    help="UWB 基板のかわりにシミュレータ（電波なし）。地図座標 X,Y にユニットがあることにする（既定 2.0,0.0）")
+    ap.add_argument("--beacon-standoff", type=float, default=0.5, help="ユニットの手前で止まる距離 [m]")
+    ap.add_argument("--beacon-height", type=float, default=P.BEACON_HEIGHT,
+                    help="席のユニットの床からの高さ [m]（机の上なら 0.7 前後。robot_params.BEACON_HEIGHT）")
+    ap.add_argument("--beacon-search", type=float, default=6.0, help="最初に止まったまま測る秒数")
+    ap.add_argument("--uwb-angle-sign", type=int, choices=[1, -1], default=U.ANGLE_SIGN,
+                    help="基板の LAoA_deg の符号（実測で決める。uwb_reader.ANGLE_SIGN）")
+    ap.add_argument("--uwb-min-fom", type=float, default=None, help="この確からしさ（LFoM）未満の回は使わない")
+    ap.add_argument("--uwb-max-nlos", type=float, default=None, help="この NLOS%% を超える回は使わない（diag 1 のとき）")
     args = ap.parse_args()
 
     load_env()
@@ -1028,10 +1282,36 @@ def main():
         start = (float(home["x"]), float(home["y"]), float(home.get("theta") or 0)) if home else (0.0, 0.0, 0.0)
         navigator = LoggingNavigator(args.simulate, start_pose=start)
 
+    # ---- UWB 基板（ビーコンへの呼出に使う）----
+    uwb = None
+    if args.uwb_simulate is not None:
+        bx, by = (float(v) for v in args.uwb_simulate.split(","))
+        board = U.FakeUwbBoard(realtime=True, noise_m=0.03, noise_deg=2.0, drop_rate=0.05,
+                               angle_sign=args.uwb_angle_sign)
+        board.target_fn = lambda: BL.simulate_reading(navigator.current_pose() or (0.0, 0.0, 0.0), (bx, by),
+                                                      beacon_height=args.beacon_height)
+        uwb = U.UwbReader(board, angle_sign=args.uwb_angle_sign)
+        print(f"UWB    : シミュレータ（電波なし）ユニットは地図の ({bx:.2f}, {by:.2f}) にあることにします")
+    elif args.uwb is not None:
+        port = U.find_port(args.uwb)
+        if port is None:
+            sys.exit(f"UWB 基板が見つかりません（{args.uwb}）。J6 の USB・電源のジャンパ・udev（/dev/uwb）を確認してください")
+        try:
+            uwb = U.UwbReader(U.open_serial(port), angle_sign=args.uwb_angle_sign)
+        except Exception as e:
+            sys.exit(f"UWB {port} を開けません: {e}")
+        print(f"UWB    : {port}")
+        print(U.LEGAL_NOTICE)
+    else:
+        print("UWB    : なし（ビーコンへの呼出は取り消します。使うときは --uwb）")
+
     bridge = Bridge(supa, navigator, args.live, args.arrive_hold, args.arrive_timeout,
                     home=home, return_home=not args.no_return_home,
                     localize=not args.no_localize, pose_interval=args.pose_interval,
-                    schema_v3=v3)
+                    schema_v3=v3,
+                    uwb=uwb, beacon_standoff=args.beacon_standoff, beacon_height=args.beacon_height,
+                    beacon_search_sec=args.beacon_search,
+                    uwb_min_fom=args.uwb_min_fom, uwb_max_nlos=args.uwb_max_nlos)
 
     if args.nav2:
         # 順番が大事: 初期位置を与える → それで Nav2 の残り（costmap・bt_navigator）が起動を完了できる

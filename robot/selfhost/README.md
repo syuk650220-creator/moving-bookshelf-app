@@ -139,7 +139,7 @@ bash ~/moving-bookshelf-app/robot/selfhost/mode.sh status   # いまどちらか
 - **Supabase をまるごと載せない理由**: アプリもロボも Supabase の「読み書きの窓口（REST）」しか使っていないため
   （ログイン・Realtime・ファイル置き場は使っていない）。公式のセルフホスト版は 11 個のサービスで、最低でもメモリ 4GB・2 コア。
   Nav2 と同じ Pi に載せるには重いので、要る 4 つだけにしています。
-- **テーブルの定義はクラウドと同じファイル**（`supabase/schema.sql`・`robot/sql/01〜04`）を、DB を初めて作るときに流します。
+- **テーブルの定義はクラウドと同じファイル**（`supabase/schema.sql`・`robot/sql/01〜05`）を、DB を初めて作るときに流します。
   Supabase にしか無いもの（ログイン用の `auth.users`、Realtime の入れ物、`anon` の役）は [sql/00_prelude.sh](sql/00_prelude.sh) で最小限だけ用意し、
   権限は [sql/90_grants.sql](sql/90_grants.sql) で Supabase の anon と同じ範囲（select・insert・update・delete）にしています。
   実際に消せるかは RLS（誰が何を読み書きできるか）が決め、これもクラウドと同じです（2026-09-26 時点で delete できるのは `books` だけ）。

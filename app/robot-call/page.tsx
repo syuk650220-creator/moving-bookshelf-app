@@ -7,7 +7,8 @@ import { borrowBook } from '@/lib/loans'
 import Link from 'next/link'
 
 type Book = { id: string; title: string; status: string }
-type StopPoint = { id: number; label: string }
+// stop_points の行き先。kind は sql/03 で増えた列（'seat' | 'home'）に、sql/05 で 'beacon'（席に置いた UWB ユニット）が加わった
+type StopPoint = { id: number; label: string; kind?: 'seat' | 'home' | 'beacon' }
 
 // robot_calls に books / stop_points を結合した行
 type CallRow = {
@@ -16,6 +17,7 @@ type CallRow = {
   requested_by: string | null
   created_at: string
   book_id: string | null
+  seat_id: number | null
   books: { title: string; status: string } | null   // status が available なら「借りるための呼出」
   stop_points: { label: string } | null
 }
@@ -87,8 +89,9 @@ function RobotCall() {
     const load = async () => {
       const [b, s] = await Promise.all([
         supabase.from('books').select('id, title, status').order('title'),
-        // id=0 は「本棚の場所」（ロボの定位置・帰る先）なので届け先には出さない（席は id ≥ 1）
-        supabase.from('stop_points').select('id, label').gt('id', 0).order('id'),
+        // id=0 は「本棚の場所」（ロボの定位置・帰る先）なので届け先には出さない（席は id ≥ 1、ビーコンは id=100）。
+        // kind 列（sql/03・05）が無い DB でも動くよう '*' で読む
+        supabase.from('stop_points').select('*').gt('id', 0).order('id'),
       ])
       if (!aliveRef.current) return
       if (b.data) setBooks(b.data as Book[])
@@ -105,7 +108,7 @@ function RobotCall() {
     const [q, st] = await Promise.all([
       supabase
         .from('robot_calls')
-        .select('id, status, requested_by, created_at, book_id, books(title, status), stop_points(label)')
+        .select('id, status, requested_by, created_at, book_id, seat_id, books(title, status), stop_points(label)')
         .in('status', ['queued', 'moving', 'arrived'])
         .order('created_at', { ascending: true }),
       // detail 列は sql/03 で増えたもの。無い環境でも動くよう '*' で読む。
@@ -119,6 +122,7 @@ function RobotCall() {
     if (!aliveRef.current) return
     const rows = q.data ? (q.data as unknown as CallRow[]) : null
     if (rows) setQueue(rows)
+    let detailNow: string | null = null   // ロボ側が canceled にしたときは、その理由がここに入っている
     if (st.data) {
       const row = st.data as unknown as {
         state: string
@@ -128,6 +132,7 @@ function RobotCall() {
       }
       setRobotState(row.state)
       setRobotDetail(row.detail ?? null)
+      detailNow = row.detail ?? null
       setCurrentCall(row.robot_calls ?? null)
       setRobotUpdatedAt(row.updated_at ?? null)
     }
@@ -144,9 +149,11 @@ function RobotCall() {
       if (lost && lost !== mine?.id && !selfCanceledRef.current.has(lost)) {
         const r = await supabase.from('robot_calls').select('status').eq('id', lost).maybeSingle()
         if (aliveRef.current && r.data?.status === 'canceled') {
+          // ブリッジは取り消すとき robot_status.detail に理由を書く（例: ビーコンが見つからない、--uwb 無しで起動）
+          const why = detailNow ? `ロボ側の理由: ${detailNow}` : '走行の失敗か中止'
           setMessage({
             kind: 'err',
-            text: 'ロボが席まで届きませんでした（走行の失敗か中止）。貸出は記録されていません。もう一度呼ぶか、自分で本を取ったときは本の画面の「直接借りる」で記録してください。',
+            text: `ロボが届け先まで届きませんでした（${why}）。貸出は記録されていません。もう一度呼ぶか、自分で本を取ったときは本の画面の「直接借りる」で記録してください。`,
           })
         }
       }
@@ -297,6 +304,14 @@ function RobotCall() {
   // ---------------- 表示 ----------------
 
   const selectedBook = books.find((b) => b.id === bookId)
+  // 届け先: 席（kind が seat か無印）と、UWB ビーコン（kind='beacon'。席に置いたユニットのところへ）を分けて出す
+  const seatList = seats.filter((s) => s.kind !== 'beacon' && s.kind !== 'home')
+  const beacons = seats.filter((s) => s.kind === 'beacon')
+  const kindOf = (id: number | null) => (id === null ? undefined : seats.find((s) => s.id === id)?.kind)
+  const isBeaconCall = (c: { seat_id: number | null } | null | undefined) => !!c && kindOf(c.seat_id) === 'beacon'
+  const selectedIsBeacon = kindOf(seatId) === 'beacon'
+  const callLabel = (c: CallRow) =>
+    c.status === 'moving' && isBeaconCall(c) ? 'ユニットを探して移動中' : CALL_LABEL[c.status] ?? c.status
   // 「本を取得した」は、自分の呼出が到着したときだけ押せる（ボタン自体はいつも同じ場所に出しておく）
   const canReceive = myActiveCall?.status === 'arrived'
 
@@ -315,6 +330,7 @@ function RobotCall() {
       </div>
       <p className="mt-1 text-sm text-gray-600">
         本と席を選ぶと、本棚ロボがその席まで本を運んできます。
+        {beacons.length > 0 && '席に置いた UWB ユニットのところへ呼ぶこともできます。'}
       </p>
 
       <p className="mt-2 text-sm">
@@ -376,7 +392,7 @@ function RobotCall() {
         {/* 席の選択 */}
         <p className="mt-4 text-sm font-medium text-gray-700">届け先の席</p>
         <div className="mt-1 grid grid-cols-3 gap-2">
-          {seats.map((s) => (
+          {seatList.map((s) => (
             <button
               key={s.id}
               type="button"
@@ -390,10 +406,36 @@ function RobotCall() {
               {s.label}
             </button>
           ))}
-          {seats.length === 0 && (
+          {seatList.length === 0 && (
             <p className="col-span-3 text-sm text-gray-400">席が登録されていません</p>
           )}
         </div>
+
+        {/* UWB ビーコン（席に置いたユニットのところへ）。sql/05 の行（kind='beacon'）があるときだけ出す */}
+        {beacons.length > 0 && (
+          <div className="mt-3">
+            <p className="text-sm font-medium text-gray-700">ユニットのところへ（UWB ビーコン）</p>
+            <div className="mt-1 grid grid-cols-1 gap-2">
+              {beacons.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => setSeatId(b.id)}
+                  className={`rounded-lg border py-3 text-sm font-bold transition-colors ${
+                    seatId === b.id
+                      ? 'border-purple-600 bg-purple-600 text-white'
+                      : 'border-purple-300 bg-purple-50 text-purple-800 hover:border-purple-500'
+                  }`}
+                >
+                  📡 {b.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-gray-500">
+              席に置いた UWB ユニットをロボが電波で探して、その手前 0.5 m まで行きます。ロボ側を UWB 付きで起動しているときだけ使えます（そうでないときは取り消され、理由が出ます）。
+            </p>
+          </div>
+        )}
 
         <button
           type="button"
@@ -405,7 +447,13 @@ function RobotCall() {
               : 'bg-blue-600 hover:bg-blue-700'
           }`}
         >
-          {isCalling ? '呼出中...' : myBusy ? '⏳ あなたの呼出が進行中です' : '🤖 ロボを呼ぶ'}
+          {isCalling
+            ? '呼出中...'
+            : myBusy
+              ? '⏳ あなたの呼出が進行中です'
+              : selectedIsBeacon
+                ? '📡 ロボをユニットのところへ呼ぶ'
+                : '🤖 ロボを呼ぶ'}
         </button>
         {myBusy && (
           <div className="mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
@@ -422,7 +470,9 @@ function RobotCall() {
                   ? 'すぐ下の「本を取得した」を押すとロボが本棚の場所へ帰ります。戻ったら次の呼出ができます。'
                   : myActiveCall?.status === 'queued'
                     ? 'ロボが本棚の場所に戻るまで、次の呼出はできません。やめるときは下の「呼出を取り消す」。'
-                    : 'ロボが本を届けて本棚の場所に戻るまで、次の呼出はできません。'}
+                    : isBeaconCall(myActiveCall)
+                      ? 'ロボが UWB でユニットを探しながら向かっています（進み具合は上の「ロボの状態」）。着いたら下の「本を取得した」を押してください。'
+                      : 'ロボが本を届けて本棚の場所に戻るまで、次の呼出はできません。'}
             </p>
             {/* 到着後のボタン待ちの間はロボ側が状態を書き換えないので、止まって見えるのは正常。警告は移動中だけ */}
             {robotStale && myActiveCall?.status === 'moving' && (
@@ -476,7 +526,7 @@ function RobotCall() {
                       {i + 1}. {c.books?.title ?? '（不明な本）'}
                     </p>
                     <p className="text-xs text-gray-500">
-                      → {c.stop_points?.label ?? `席${'?'}`}／{c.requested_by ?? 'ゲスト'}
+                      → {isBeaconCall(c) ? '📡 ' : ''}{c.stop_points?.label ?? `席${'?'}`}／{c.requested_by ?? 'ゲスト'}
                     </p>
                   </div>
                   <span
@@ -484,7 +534,7 @@ function RobotCall() {
                       CALL_COLOR[c.status] ?? 'bg-gray-100 text-gray-600'
                     }`}
                   >
-                    {CALL_LABEL[c.status] ?? c.status}
+                    {callLabel(c)}
                   </span>
                 </div>
 

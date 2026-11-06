@@ -142,6 +142,29 @@ def mps_to_rpm(mps: float) -> float:
     return mps * 60.0 / WHEEL_CIRCUMFERENCE
 
 
+# =====================================================================
+#  5. UWB ビーコン（S2 beacon_locator.py・S8 robot_tf_launch.py）
+#     ── アンテナの取り付け位置と、席のユニットの高さ
+# =====================================================================
+#
+# base_link（回転の中心。床から 0.05 m）から見た、UWB 基板の 2 本のアンテナの中点 [m]。前が＋、左が＋。
+#
+# TODO: ★取り付けてから実測して埋める★ 既定は「前（本棚側）の端・低い位置・前向き」の仮の値。
+#   ・前向き（UWB_MOUNT_YAW = 0）に付けると、ユニットへ前進で近づく間ずっと相手がアンテナの正面にいる。
+#   ・後ろ（基板・電池側）に後ろ向き（UWB_MOUNT_X = -0.10, UWB_MOUNT_YAW = math.pi）に付けると配線は楽だが、
+#     前進で近づく間は相手がアンテナの裏側（機体ごし）になり、方向が当てにならない。付けるなら前向きを勧める。
+#   ・LiDAR の面（床から約 0.32 m）より下に付ける（LiDAR の視界に入れない）。
+#   ・robot_tf_launch.py（base_link → uwb_link）はこの値を読むので、ここだけ直せばよい。
+UWB_MOUNT_X = 0.10
+UWB_MOUNT_Y = 0.0
+UWB_MOUNT_YAW = 0.0             # アンテナの面が向く方向 [rad]。前向き 0.0、後ろ向き math.pi
+UWB_ANTENNA_HEIGHT = 0.25       # 床からアンテナの中点まで [m]
+
+# 席に置くユニット（応える側）の床からの高さ [m]。★席の置き方で変える★（机の上なら 0.70〜0.75、床置きなら 0.05）
+# UWB の距離は斜めの直線距離なので、高さの差ぶんを水平距離に直すのに使う（1 m 先・高さの差 0.5 m なら 13 cm 違う）。
+BEACON_HEIGHT = 0.75
+
+
 if __name__ == "__main__":
     print("=== robot_params ===")
     print(f"車輪半径      : {WHEEL_RADIUS*1000:.0f} mm  (周長 {WHEEL_CIRCUMFERENCE:.3f} m)")
@@ -156,3 +179,6 @@ if __name__ == "__main__":
     print()
     print(f"★最終進入 {MIN_APPROACH_RPM} rpm は分解能 {RPM_PER_COUNT:.2f} rpm の "
           f"{RPM_PER_COUNT/MIN_APPROACH_RPM*100:.0f}% にあたります★")
+    print()
+    print(f"UWB アンテナ  : base_link から x={UWB_MOUNT_X:+.2f} y={UWB_MOUNT_Y:+.2f} m・向き {math.degrees(UWB_MOUNT_YAW):.0f}°・床から {UWB_ANTENNA_HEIGHT:.2f} m")
+    print(f"席のユニット  : 床から {BEACON_HEIGHT:.2f} m（高さの差 {BEACON_HEIGHT - UWB_ANTENNA_HEIGHT:+.2f} m）")

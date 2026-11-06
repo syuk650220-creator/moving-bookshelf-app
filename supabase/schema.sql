@@ -1,27 +1,30 @@
 -- =========================================================
--- 移動本棚ロボ DBスキーマ（基本設計 v0.2 確定版 ＋ 2026-09-18 段階3 追加分）
+-- 移動本棚ロボ DBスキーマ（基本設計 v0.2 確定版 ＋ 2026-09-18 段階3 追加分 ＋ 2026-11-05 UWB ビーコン）
 -- Supabase の SQL Editor に貼り付けて実行する
 --
 -- ★既存プロジェクトに段階3の追加分（kind・localizing・pose）だけを足すときは
 --   robot/sql/03_pins_home_pose.sql を実行する（このファイルを流し直す必要はない）★
+-- ★UWB ビーコン（kind='beacon' とその行）だけを足すときは robot/sql/05_beacons.sql★
 -- =========================================================
 create extension if not exists pgcrypto;
 
 -- ① stop_points : 停車ポイント（席）の座標表
 --    kind = 'seat' … 席（呼出先。id は 1 以上）
 --    kind = 'home' … 本棚の場所（ロボの定位置・帰る場所・自己位置推定の初期位置）★必ず id = 0★
+--    kind = 'beacon' … UWB ビーコン（席に置いたユニットのところへ走る行き先。id = 100。robot/sql/05）
 create table stop_points (
   id          int  primary key,
   label       text not null,
   x           double precision not null,
   y           double precision not null,
   theta       double precision not null default 0,
-  kind        text not null default 'seat' check (kind in ('seat','home')),
+  kind        text not null default 'seat' check (kind in ('seat','home','beacon')),
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
   constraint stop_points_home_is_id0 check ((kind = 'home') = (id = 0))
 );
 insert into stop_points (id, label, x, y, theta, kind) values (0, '本棚の場所', 0, 0, 0, 'home');
+insert into stop_points (id, label, x, y, theta, kind) values (100, 'ビーコン（UWB）', 0, 0, 0, 'beacon');
 
 -- ② users : 利用者（Supabase auth.users と1:1）
 create table users (
@@ -124,3 +127,4 @@ create policy del_books on books for delete using (true);
 --   robot/sql/02_manual_control.sql       … 管理者画面の手動操作用 robot_manual
 --   robot/sql/03_pins_home_pose.sql       … stop_points の updated_at トリガ（上の列は作成済みだが、トリガはこちらで付く）
 --   robot/sql/04_books_delete_policy.sql  … books の delete ポリシー（上で作成済みだが、既存プロジェクトに足すときはこちら）
+--   robot/sql/05_beacons.sql              … UWB ビーコンの行き先 kind='beacon'・id=100（上で作成済みだが、既存プロジェクトに足すときはこちら）

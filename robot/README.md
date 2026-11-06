@@ -53,23 +53,27 @@
 
 | ファイル | 役割 |
 |---|---|
-| `bookshelf_bridge.py` | ブリッジ本体（Issue #8 / #9 / #14 ／ 段階3）。`robot_calls` を 1 秒ポーリング（`--realtime` で購読も併用）し、自己位置推定（本棚の場所を初期位置に）→ 席へ走行 → 受取待ち → 本棚の場所へ帰還、と status を進める。`--nav2` で実走 |
+| `bookshelf_bridge.py` | ブリッジ本体（Issue #8 / #9 / #14 ／ 段階3）。`robot_calls` を 1 秒ポーリング（`--realtime` で購読も併用）し、自己位置推定（本棚の場所を初期位置に）→ 席へ走行 → 受取待ち → 本棚の場所へ帰還、と status を進める。`--nav2` で実走。`--uwb` で UWB ビーコン（kind='beacon'）への呼出も受ける（§11） |
 | `pin_tool.py` | ★ピン建て★ 席1〜3 と本棚の場所（id=0）の map 座標を `stop_points` に登録。ロボを置いた場所（TF `map→base_link` の中央値）か RViz のクリック（2D Goal Pose ／ Publish Point）から。ROS 2 が無くても `--set` で数値登録できる |
 | `manual_control.py` | 管理者画面（/admin）ラジコンモードの受け側。`--ros` なら `/cmd_vel` に出して `mecanum_node.py` 経由で動かす（地図づくりで車輪オドメトリを使うとき）。`robot_manual` を 0.2 秒ポーリングし、指令が 1.2 秒更新されなければ停止（デッドマン）。`--serial` で実機接続 |
 | `mecanum_serial.py` | Arduino 2 枚との USB シリアル通信ライブラリ（送信ループ・テレメトリ＋IMU・量子化 `Quantizer`・暴走防止の検出） |
 | `mecanum_node.py` | ROS 2 ノード。`/cmd_vel` → パケット、テレメトリ → `/odom` と TF。`use_gyro:=true` で、向きの変化だけを基板の IMU（ジャイロ）から取る（§5-4） |
 | `pi_controller.py` | 手動操作と診断（`--identify` `--sweep` `--lowspeed`）。ROS 2 不要。**実機を初めて動かすときはまずこれ** |
-| `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO |
+| `robot_params.py` | ★寸法・速度の設定はここだけ★ 未較正の値に TODO。§5 に UWB アンテナの取り付け位置と席のユニットの高さ |
 | `calib_monitor.py` | 較正用。`/odom` を購読して累積の移動量・回転角を表示 |
-| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検を検証（220 項目）。pyserial も requests も不要 |
+| `test_logic.py` | 実機なしで計算・ブリッジの状態機械・Nav2 設定の重ね合わせ・地図の点検・UWB の読み取りと位置の計算・ビーコンへの走行を検証（333 項目）。pyserial も requests も不要 |
 | `nav2/nav2_params_差分.yaml` | Nav2 の設定のうち既定値から変える分（根拠つき） |
 | `nav2/make_nav2_params.py` | ★段階3★ Pi に入っている標準の `nav2_params.yaml` に上の差分と機体の半径を重ねて `~/nav2/nav2_params.yaml` を作る。変更点を一覧表示し、書いたファイルを読み直して検算する |
 | `slam/mapping_no_odom.yaml` ／ `slam/mapping_odom.yaml` | slam_toolbox の設定。前者はいつもの手順（仮の TF）のまま使える調整版、後者は**車輪オドメトリを使う地図づくり**用（§5-4） |
 | `map_check.py` | ★段階3★ 保存した地図（`~/maps/my_map.yaml`＋`.pgm`）とピンの点検。地図の大きさ・中身、ピンが壁から機体の半径より離れているか、本棚の場所から各席へ道があるかを調べ、地図を文字で表示する。ROS 2 不要・何も書き換えない |
-| `nav2/robot_tf_launch.py` | ★段階3★ 実走のときの静的 TF（`base_footprint→base_link→laser`）。`temp_tf_launch.py` のかわりに使う（§7） |
+| `nav2/robot_tf_launch.py` | ★段階3★ 実走のときの静的 TF（`base_footprint→base_link→laser`、`base_link→uwb_link`）。`temp_tf_launch.py` のかわりに使う（§7） |
+| `uwb_reader.py` | ★UWB ビーコン★ 席に置いた UWB ユニットまでの距離 [m] と方向 [度] を、ロボ側の基板（村田 Type 2AB）の USB 出力から読む。チャネル 9 以外・`txpower` を送れない電波法のガード入り。基板なしのシミュレータ、生のログと CSV の保存（§11） |
+| `beacon_locator.py` | ★UWB ビーコン★ ロボの位置（AMCL）＋アンテナの取り付け位置＋距離・方向 → ユニットの地図座標。中央値で外れ値を落とし、前後（鏡写し）はロボが回ると決まり、距離だけの三点測位も持つ。手前 0.5 m のゴールを作る（§11） |
+| `udev/99-uwb.rules` ／ `udev/99-rplidar.rules` | USB の固定名 `/dev/uwb`（UWB 基板）・`/dev/rplidar`（LiDAR）。`pi_setup.sh` が `/etc/udev/rules.d/` に入れる（§3-3） |
 | `sql/01_realtime_と_updated_at.sql` | schema.sql に足りない 2 つ（Realtime publication ／ updated_at 自動更新トリガ）。SQL Editor で 1 回実行 |
 | `sql/02_manual_control.sql` | 手動操作用の `robot_manual` テーブル・RPC・ビュー。SQL Editor で 1 回実行 |
 | `sql/03_pins_home_pose.sql` | ★段階3★ `stop_points.kind`（本棚の場所＝id 0）と insert/update ポリシー、`robot_status` の `localizing` と現在地（`pose_*`・`detail`）。SQL Editor で 1 回実行 |
+| `sql/05_beacons.sql` | ★UWB ビーコン★ `stop_points.kind` に `'beacon'` を足し、行き先の行（id=100「ビーコン（UWB）」）を入れる。SQL Editor で 1 回実行。セルフホストの DB には新しく作るとき自動で入る（既存の DB には `bash ~/moving-bookshelf-app/robot/selfhost/setup.sh sql ~/moving-bookshelf-app/robot/sql/05_beacons.sql`） |
 | `sql/04_books_delete_policy.sql` | 管理者画面の「本の削除」（`/admin/books`）用に `books` の delete ポリシーを足す。貸出・呼出履歴のある本は外部キー制約で消えない。SQL Editor で 1 回実行。セルフホスト（`selfhost/`）の Pi の DB には新しく作るとき自動で入る（2026-09-26 より前に作った DB には `bash ~/moving-bookshelf-app/robot/selfhost/setup.sh sql ~/moving-bookshelf-app/robot/sql/04_books_delete_policy.sql`） |
 | `.env.example` | Supabase 接続情報のひな形。`.env` にコピーして値を入れる（`.env` はコミットされない） |
 | `requirements.txt` | PC／venv 用の参考。**Pi では apt を使う** |
@@ -167,10 +171,15 @@ ls -l /dev/mecanum_*        # ← シンボリックリンクが 2 本出れば�
 > 固定条件にすると書き込み直後に外れることがあります。**シリアル番号だけで一意**なので、これで十分です。
 > **基板を交換したら**、上の `for` ループで新しい番号を調べて書き換えてください。
 
+**UWB 基板と LiDAR の固定名**は、シリアル番号が要らない（USB の ID だけで決まる）ので、リポジトリの `udev/99-uwb.rules`・`udev/99-rplidar.rules` を
+`pi_setup.sh` がそのまま `/etc/udev/rules.d/` に入れます（§11）。`ls -l /dev/uwb /dev/rplidar` でリンクが出れば成功です。
+LiDAR の USB 変換が CP2102 か FTDI かは `udevadm info -q property -n /dev/ttyUSB0 | grep -E '^ID_(VENDOR_ID|MODEL_ID)='` で分かります
+（ルールには両方の行を書いてあるので、どちらでも当たります。UWB 基板は J6 の USB で使い、J14 の FTDI は Pi に挿さないこと）。
+
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（220 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（333 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -599,5 +608,73 @@ Pi の `~/bringup/temp_tf_launch.py` に入っている値は `base_footprint→
 | **段階3 の当日手順**（マッピング → ピン建て → アプリ呼出 → 自己位置推定 → 席 → 本を取得 → 本棚へ帰還） | OneDrive `ものづくりゼミ/03_ガイド・解説/08_アプリ連携_段階3_マッピングから呼出・帰還まで_v1.html` |
 | **しくみの解説**（自己位置推定 AMCL・エンコーダとオドメトリ・コストマップ・経路探索 NavFn・経路追従・量子化・走行が止まりうる関所） | OneDrive `ものづくりゼミ/03_ガイド・解説/09_自己位置推定と経路探索のしくみ_v1.html` |
 | 席座標の採取手順（首振り・静止・中央値・試走で検証） | OneDrive `ものづくりゼミ/05_技術調査/発表会場デモ運用方針書_v1_0.docx` §5 |
+| **UWB ビーコンのコードのしくみ**（初心者向け。読み取り・udev・SQL・検算がそれぞれ何をしているか） | OneDrive `ものづくりゼミ/03_ガイド・解説/12_UWBビーコン_コードのしくみ_初心者向け_v1.html` |
 | DB スキーマ・RLS | [`../supabase/schema.sql`](../supabase/schema.sql) |
 | 各 Issue の進め方 | [`../docs/開発の手引き/index.html`](../docs/開発の手引き/index.html) |
+
+---
+
+## 11. UWB ビーコン（席に置いたユニットのところへ走る）
+
+席に置いた UWB ユニット（村田 Type 2AB 評価基板＝応える側）を、ロボに載せた同じ基板（測る側）で測り、その場所へ走る拡張です。
+入っているのは **読み取り（S1）・位置の計算（S2）・ブリッジの走行（S3）・DB の行き先（S4）・アプリの表示（S5）・検算（S6）・USB の固定名（S7）・アンテナの TF（S8）**。
+実機での確認はこれから。初心者向けの説明は OneDrive の ⑫（§10 の表）。
+
+### 11-1 入っているもの
+
+| ファイル | 役割 |
+|---|---|
+| `uwb_reader.py` | 基板の出力（1 秒 5 回・1 行 1 JSON）を読み、距離 [m] と方向 [度]（左が＋）にする。基板なしのシミュレータ `--simulate`、生の行の保存 `--log`、CSV `--csv` |
+| `beacon_locator.py` | ロボの位置（AMCL）＋アンテナの取り付け位置（`robot_params` §5）＋距離・方向 → ユニットの地図座標。中央値で外れ値を落とす。前後（基板は鏡写しの角しか出せない）はロボが回ると決まる。距離だけの三点測位も持つ。手前 0.5 m のゴールを作る |
+| `bookshelf_bridge.py` | kind=`'beacon'` の呼出: 探す（止まったまま測る → 読めなければ 60° ずつ回る）→ 前後を決める（30° 回る）→ 相手のほうを向く → 手前のゴールへ（走りながら測り直し、推定が 0.3 m 動いたらゴールを差し替え。失敗したら手前を 0.2 m 広げてもう一度）→ 向き合わせ → 受取 → 帰還。見つからない／走れない／基板と話せないときは canceled にして理由を `robot_status.detail` に。`--uwb` 無しで起動していれば取り消すだけ |
+| `robot_params.py` §5 | アンテナの取り付け位置 `UWB_MOUNT_X / Y / YAW`・`UWB_ANTENNA_HEIGHT` と、席のユニットの高さ `BEACON_HEIGHT`（★取り付けてから実測★） |
+| `nav2/robot_tf_launch.py` | `base_link → uwb_link` の静的 TF（値は `robot_params` から読む） |
+| `udev/99-uwb.rules` ／ `udev/99-rplidar.rules` | 固定名 `/dev/uwb`（USB ID 1915:520f）・`/dev/rplidar`。`pi_setup.sh` の 6/8 が入れる |
+| `sql/05_beacons.sql` | `stop_points.kind` に `'beacon'`、行き先の行 id=100「ビーコン（UWB）」。`supabase/schema.sql` と `selfhost/compose.yaml`（25_beacons）にも同じものが入っている |
+
+### 11-2 電波法（技適）の約束 ★必ず守る★
+
+- このモジュール（LBUA5QJ2AB）の日本の認証は **UWB チャネル 9 だけ**。`uwb_reader.py` は、チャネル 9 以外の `uwbcfg`・送信の強さ `txpower`・`js1055-9` 以外のアンテナ型・試験ファームの AT 命令を **送れない作り**（`check_command()`。命令は `UwbReader.send()` の 1 本道）
+- 技適の表示（R 007-AM0109）はモジュール本体ではなく、モジュールの包装（防湿袋）のラベルと村田の公開データシート 4.1 にある（証明規則 第 20 条第 1 項第 1 号の方式。本体に印字が無くても合法）。データシートの該当ページ（P.4/29）を印刷して基板と一緒に保管し、ロボに技適マークの図を自分で貼らない（電波法 第 38 条の 7 第 3 項）
+- アンテナの交換や RF 部の改造はしない。Tera Term で手で打つときも、上と同じ命令だけ
+- `--simulate` / `--uwb-simulate` は電波を出さない（基板にも触らない）。ブリッジは呼出が終わるたび・終了時に `stop` を送り、電波を出したままにしない
+
+### 11-3 動かし方
+
+```bash
+# PC で記録（基板を J6 の USB に。pyserial が要る: pip install pyserial）
+python uwb_reader.py --port COM5 --log 出力の見本_20261106.txt --csv uwb_20261106.csv
+#   ★席側のもう 1 枚は先に「応える側」で起こしておく（Tera Term で respf、または別の窓で --port COM6 --role respf）
+```
+
+```bash
+# 基板なし・Nav2 なしで、ビーコンの呼出の流れを PC で試す（偽の基板がロボの位置に合わせた値を出す。電波なし）
+python bookshelf_bridge.py --simulate 5 --uwb-simulate 2.0,0.0      # 地図の (2.0, 0.0) にユニットがあることにする
+python uwb_reader.py --simulate                                      # 読み取りだけ
+```
+
+```bash
+# Pi で本番（Nav2 が動いていて、robot/sql/05 を流してあって、ロボ側の基板を J6 で Pi に挿してある）
+python3 bookshelf_bridge.py --live --nav2 --uwb                       # /dev/uwb（無ければ USB の ID で探す）
+python3 bookshelf_bridge.py --live --nav2 --uwb --beacon-height 0.75 --beacon-standoff 0.5 --uwb-angle-sign -1
+```
+
+アプリの「ロボを呼ぶ」で届け先「ビーコン（UWB）」を選ぶと、ブリッジが上の流れで動きます。画面には「ビーコン（UWB）を探しています（UWB で測定中）」「… へ移動中（推定 (x, y)・手前 0.5 m）」のように出ます。
+読み取りだけの出力 1 行の読み方: `#12  0x0001  1.52 m  方向 +19.8°  FoM 86` → 測定番号・相手のアドレス・距離・方向（左が＋）・確からしさ。`×（Status が Ok ではない）` はその回は測れなかった、の意味。
+
+### 11-4 実測で決めること（決まったらコードとここを直す）
+
+| 項目 | いまの値 | 決め方 |
+|---|---|---|
+| 方向の符号 | `uwb_reader.ANGLE_SIGN = +1`（基板の LAoA_deg をそのまま＝左が＋と仮定） | 相手を左 30° に置いて `方向` が＋なら +1 のまま。−なら −1（`--uwb-angle-sign -1` で先に試せる）。ロードマップ 6-1 ③ |
+| アンテナの取り付け位置 | `robot_params.py` §5（仮: 前の端 x=+0.10・前向き・床から 0.25 m） | 取り付けてから、回転の中心からの前後・左右・高さを測る。**前向きに付けることを勧める**（後ろ向きだと、近づく間ずっと相手が基板の裏側＝機体ごしになり、方向が当てにならない）。LiDAR の面（約 0.32 m）より下に |
+| 席のユニットの高さ | `BEACON_HEIGHT = 0.75`（机の上） | 置き方で変える（`--beacon-height`）。距離の高さ補正に効く（1 m 先・高さの差 0.5 m で 13 cm） |
+| 使える方向の範囲 | `beacon_locator.USABLE_BEARING_DEG = 60` | 左右 15° ずつ動かして、どこまで値が出るか。範囲の外の回は距離だけに使う |
+| 使える回のしきい値 | なし（`--uwb-min-fom` / `--uwb-max-nlos`） | 実測のばらつきと NLOS の出方（`--diag`）を見て決める |
+| 出力の書式 | 資料の例どおりに `parse_line()` を書いてある | 実物の `--log` を `test_logic.py` に 1 行足して確認。違っていたら直すのは `parse_line()` だけ |
+
+### 11-5 sql/05 を流したあとのアプリの見え方（S5）
+
+- `/robot-call`: 届け先の席の下に「ユニットのところへ（UWB ビーコン）」の紫のボタン（📡）が出る（kind='beacon' の行だけ。席の並びには混ざらない）。選んで呼ぶと、`--uwb` 付きのブリッジなら上の流れで走る。無ければ走らずに canceled になり、画面に「ロボ側の理由: ビーコン（UWB）への走行は、ブリッジを --uwb 付きで起動したときだけ使えます」と出る（見つからないときも同じ形で理由が出る）。進行中は「UWB でユニットを探しながら向かっています」、キューでは 📡 付きで「ユニットを探して移動中」
+- `/admin/pins`: ビーコンは紫の破線の丸（向きの矢印なし。座標は探し始める場所の目安で、ロボは UWB で測って向かう）。「席を追加」の次の id は席の最大 + 1（ビーコンの 100 は数えない）。「いまの値を SQL にする」にも kind='beacon' が入る
+- kind 列の無い古い DB でも両方の画面は動く（ビーコンのボタンが出ないだけ）
