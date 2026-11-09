@@ -916,6 +916,13 @@ check("ok / error / 空行 / その他の行の種類",
       [U.line_kind(x) for x in ("ok", "ERROR", "", "   ", "CURRENT ANTENNA_TYPE:JS1055-9")],
       ["ack", "ack", "empty", "empty", "other"])
 check("途中で切れた行は捨てる（例外にしない）", U.parse_line('{"Block":10,"results":[{"Addr":"0x0001","Sta'), [])
+# 測定中に打った命令の文字が、測定の行の頭に混ざる（実物で確認した形。数値は作り物）
+_echo = 's{"Block":12, "results":[{"Addr":"0x0001","Status":"Ok","D_cm":123,"LPDoA_deg":1.5,"LAoA_deg":0.5,"LFoM":200,"RAoA_deg":0.0,"CFO_100ppm":0}]}'
+check("頭に打った文字が混ざった測定の行も読む（種類）", U.line_kind(_echo), "measure")
+_e = U.parse_line(_echo, angle_sign=+1, t=0.0)
+check("頭に打った文字が混ざった測定の行も読む（中身）",
+      (len(_e), _e[0].block, _e[0].ok, _e[0].distance_m, _e[0].laoa_deg) if _e else None, (1, 12, True, 1.23, 0.5))
+check("ok と測定の行がくっついても測定として読む", U.line_kind('ok{"Block":13, "results":[]}'), "measure")
 check("results の無い JSON も捨てる", U.parse_line('{"Block":11}'), [])
 
 print("  --- 使える回か（しきい値は実測で決めるまで None＝見ない）---")

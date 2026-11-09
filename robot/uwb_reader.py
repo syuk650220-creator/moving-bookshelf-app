@@ -168,12 +168,24 @@ class UwbReading:
 _JS_REPLY = re.compile(r"^JS[0-9A-Fa-f]{4}")    # 命令の返事（JS＋16 進 4 桁の長さ＋JSON）
 
 
+def _measure_part(line: str) -> str | None:
+    """測定の行なら、その JSON の部分（'{"Block"' から後ろ）。違えば None。
+
+    ★測定中に命令を打つと、基板は打った文字をそのまま返すので、測定の行の頭に混ざる★
+    （実物で確認: 測定中に stop と打つと 's{"Block":…' 't{"Block":…' のような行になる）。
+    頭の余計な文字は捨てて、JSON の部分だけを読む。
+    """
+    s = line.strip()
+    i = s.find('{"Block"')
+    return s[i:] if i >= 0 else None
+
+
 def line_kind(line: str) -> str:
     """行の種類。measure（測定）／reply（命令の返事）／ack（ok・error）／empty／other"""
     s = line.strip()
     if not s:
         return "empty"
-    if s.startswith("{") and '"Block"' in s:
+    if _measure_part(s) is not None:
         return "measure"
     if _JS_REPLY.match(s):
         return "reply"
@@ -199,10 +211,11 @@ def parse_line(line: str, angle_sign: int = ANGLE_SIGN, t: float | None = None) 
 
     ★書式のことはこの関数 1 つにまとめてある★（実物の出力が違っていたら、直すのはここだけ）
     """
-    if line_kind(line) != "measure":
+    part = _measure_part(line)
+    if part is None:
         return []
     try:
-        obj = json.loads(line.strip())
+        obj = json.loads(part)
     except json.JSONDecodeError:
         return []                               # 途中で切れた行など
     results = obj.get("results") if isinstance(obj, dict) else None
