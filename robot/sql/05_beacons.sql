@@ -14,17 +14,20 @@
 --
 --    ① stop_points.kind に 'beacon' を足す（これまでは 'seat' と 'home' だけ）
 --    ② ビーコンの行を 1 つ入れる（id = 100、label 'ビーコン（UWB）'）
---         x / y / theta は「探し始める場所」（S3 のロボが最初に向かう目安。/admin/pins で直せる）。
---         0 のままなら、ロボはその場で測ってから動く。
+--         x / y は「ロボが前回 UWB で推定した場所」。ブリッジが呼出のたびに書き戻し、次の呼出では
+--         まずそちらへアンテナを向けて測る（/admin/pins の地図に推定の時刻つきで出る。手でも直せる）。
+--         0 のまま（まだ推定していない）なら、ロボはその場で回って探す。theta は使わない。
 --         ★席の id（1〜）とぶつからないように 100 にしてある。アプリの一覧では末尾に出る★
 --
---  ロボ側（bookshelf_bridge.py）は kind='beacon' の呼出を受けると、ビーコンへ走る処理（S3）が入るまでは
---  走り出さずに canceled にして、理由を robot_status.detail に書きます（アプリに「取り消されました」と出る）。
---  新しいテーブルも robot_status.state の追加も無し。RLS は既存のポリシー（select / insert / update 全員OK）のまま。
+--  ロボ側（bookshelf_bridge.py）は kind='beacon' の呼出を受けると、--uwb 付きで起動していれば UWB で探して走り、
+--  無ければ走り出さずに canceled にして、理由を robot_status.detail に書きます（アプリに理由が出る）。
+--  新しいテーブルも robot_status.state の追加も無し。RLS は既存のポリシー（select / insert / update 全員OK）のまま
+--  （推定の書き戻しは stop_points の update。sql/03 のポリシーで書ける）。
 --
 --  アプリでの見え方（S5）:
 --    /robot-call … 席の下に「ユニットのところへ（UWB ビーコン）」の紫のボタンとして出る（kind='beacon' の行）
---    /admin/pins … 紫の破線の丸（探し始める場所の目安）。「席を追加」の次の id は席の最大 + 1（100 は数えない）
+--    /admin/pins … 推定の場所に紫の破線の丸と時刻（3 秒ごとに読み直す。0,0 の間は出さない）。
+--                   「席を追加」の次の id は席の最大 + 1（100 は数えない）
 --
 --  対応するコード: robot/bookshelf_bridge.py（kind='beacon' の分岐）, robot/uwb_reader.py（S1）,
 --                 app/robot-call/page.tsx・app/admin/pins/page.tsx（S5）
@@ -69,7 +72,7 @@ end $$;
 -- =========================================================
 --  ② ビーコンの行（id = 100）
 -- =========================================================
---  座標は仮に原点。探し始める場所を決めたら /admin/pins か SQL で直す（kind は変えない）。
+--  座標は原点＝まだ推定していない。最初の呼出のあと、ブリッジが推定した場所を書き戻す（kind は変えない）。
 
 insert into public.stop_points (id, label, x, y, theta, kind)
 values (100, 'ビーコン（UWB）', 0, 0, 0, 'beacon')
