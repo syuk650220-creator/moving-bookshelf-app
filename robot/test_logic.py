@@ -264,6 +264,9 @@ class FakeSupa:
             self.calls[re.search(r"id=eq\.([\w-]+)", query).group(1)] = body["status"]
         elif table == "robot_status":
             self.status.update(body)
+        elif table == "stop_points":
+            i = int(re.search(r"id=eq\.(-?\d+)", query).group(1))
+            self.sp.setdefault(i, {"id": i}).update(body)
         return [dict(body)]
 
     def states(self):
@@ -1129,6 +1132,39 @@ check("真横に近い相手（±60° の外）: 方向は使わず、3 か所�
 est4 = BL.BeaconEstimator(mount=M0, beacon_height=0.75, window=6)
 _feed(est4, (0.0, 0.0, 0.0), (2.0, 0.0), n=10)
 check("窓（最近 N 回）より古い測定は捨てる", (est4.n_used, est4.estimate().n), (10, 6))
+check("回って決めた推定は resolved_by='turn'", e.resolved_by, "turn")
+
+print("  --- 前回の場所（prior）で前後を決める・取り付けの文字・アンテナの正面の範囲 ---")
+_ep = BL.BeaconEstimator(mount=M0, beacon_height=0.75, prior=(-2.0, 0.5))
+_feed(_ep, (0.0, 0.0, 0.0), (-2.0, 0.5))
+_e = _ep.estimate()
+check("止まったままでも、前回の場所に近い山（後ろ）に決まる",
+      (round(_e.x, 2), round(_e.y, 2), _e.ambiguous, _e.resolved_by), (-2.0, 0.5, False, "prior"))
+_ep = BL.BeaconEstimator(mount=M0, beacon_height=0.75, prior=(2.1, 0.6))
+_feed(_ep, (0.0, 0.0, 0.0), (2.0, 0.5))
+_e = _ep.estimate()
+check("前回の場所が前の山に近ければ、前に決まる", (round(_e.x, 2), round(_e.y, 2), _e.ambiguous, _e.resolved_by),
+      (2.0, 0.5, False, "prior"))
+_ep = BL.BeaconEstimator(mount=M0, beacon_height=0.75, prior=(5.0, 5.0))
+_feed(_ep, (0.0, 0.0, 0.0), (2.0, 0.5))
+check("前回の場所がどちらの山からも遠い（ユニットが動いた）→ 未確定のまま", _ep.estimate().ambiguous, True)
+_ep = BL.BeaconEstimator(mount=M0, beacon_height=0.75, prior=(-2.0, 0.5))
+_feed(_ep, (0.0, 0.0, 0.0), (-2.0, 0.5), n=2)
+check("測定が 3 回に満たなければ、前回の場所があっても決めない", _ep.estimate().ambiguous, True)
+_m = BL.parse_mount("-0.15, 0, 180, 0.25")
+check("取り付けの文字 → Mount（向きは度で書く）", (_m.x, _m.y, round(_m.yaw, 6), _m.height), (-0.15, 0.0, round(math.pi, 6), 0.25))
+for _bad in ("1,2,3", "a,b,c,d", "0,0,0,2.0"):
+    try:
+        BL.parse_mount(_bad)
+        _r = "通った"
+    except ValueError:
+        _r = "ValueError"
+    check(f"取り付けの文字が正しくない（{_bad}）→ ValueError", _r, "ValueError")
+MR = BL.Mount(x=-0.15, y=0.0, yaw=math.pi, height=0.25)      # 後ろ向き（本棚の後ろの台座に立てる）
+check("後ろ向き: 機体の前 2 m の点はアンテナの正面の範囲の外（機体の陰）", BL.in_antenna_cone((2.0, 0.0), (0.0, 0.0, 0.0), MR), False)
+check("後ろ向き: 機体の後ろ 2 m の点は正面（0°）", (BL.in_antenna_cone((-2.0, 0.0), (0.0, 0.0, 0.0), MR),
+                                              round(BL.bearing_from_antenna((-2.0, 0.0), (0.0, 0.0, 0.0), MR), 6)), (True, 0.0))
+check("前向き: 機体の前 2 m・左 1 m の点は正面の範囲の内", BL.in_antenna_cone((2.0, 1.0), (0.0, 0.0, 0.0), M0), True)
 
 print("  --- 手前のゴール ---")
 _e = BL.BeaconEstimate(2.0, 0.0, 5, 0.0, "bearing", False, 2.0, 0.0)
@@ -1148,17 +1184,44 @@ print("\n=== Bridge: ビーコン（UWB）への走行（S3。偽の基板がロ
 _clk = {"t": 1000.0}
 
 
-def _mk_world(beacon_xy, start=(0.0, 0.0, 0.0), **board_kw):
-    """偽の Supabase・偽の Nav・偽の UWB 基板（ロボの位置からユニットまでを逆計算して流す）を組んだブリッジ。"""
-    s, n = FakeSupa(PINS + [BEACON_PIN]), FakeNav()
+def _mk_world(beacon_xy, start=(0.0, 0.0, 0.0), mount=None, shadow=False, hint=None, nav=None, **board_kw):
+    """偽の Supabase・偽の Nav・偽の UWB 基板（ロボの位置からユニットまでを逆計算して流す）を組んだブリッジ。
+    mount: アンテナの取り付け（既定 M0＝前向き）。shadow=True なら、ユニットがアンテナの裏側（機体の陰）にある回は
+    35 % 測れず、距離 +45 cm・方向 +20° で出る（いつも同じずれ＝厳しめ）。hint: ビーコンの行の x, y（前回の推定）。"""
+    mount = mount or M0
+    pin = dict(BEACON_PIN)
+    if hint is not None:
+        pin["x"], pin["y"] = hint
+    s, n = FakeSupa(PINS + [pin]), nav or FakeNav()
     n.pose = start
     board = U.FakeUwbBoard(clock=lambda: _clk["t"], **board_kw)
-    board.target_fn = lambda: BL.simulate_reading(n.pose, beacon_xy)
+    base_drop = board.drop_rate
+
+    def target():
+        d, b = BL.simulate_reading(n.pose, beacon_xy, mount)      # b は基板と同じく鏡写し済み（±90°）
+        if shadow:
+            behind = abs(BL.bearing_from_antenna(beacon_xy, n.pose, mount)) > 90.0   # 本当の方向で陰か決める
+            board.drop_rate = 0.35 if behind else base_drop
+            if behind:
+                d, b = d + 0.45, b + 20.0
+        return d, b
+
+    board.target_fn = target
     uwb = U.UwbReader(board)
-    br = make_bridge(s, n, uwb=uwb, beacon_search_sec=1.0)
+    br = make_bridge(s, n, uwb=uwb, beacon_search_sec=1.0, uwb_mount=mount)
     br._clock = lambda: _clk["t"]
     br._sleep = lambda sec: _clk.__setitem__("t", _clk["t"] + sec)
     return s, n, br, uwb, board
+
+
+def _turns_before_go(events):
+    out = []
+    for ev in events:
+        if ev[0] == "go":
+            break
+        if ev[0] == "turn":
+            out.append(ev[1])
+    return out
 
 
 def _expected_standoff(beacon_xy, from_xy=(0.0, 0.0), standoff=0.5):
@@ -1174,8 +1237,11 @@ check("呼出は done まで進む", s.calls["cb1"], "done")
 _seq = [st for st in s.states() if st in ("arrived", "returning")] + [s.status["state"]]
 _seq = [st for i, st in enumerate(_seq) if i == 0 or st != _seq[i - 1]]          # 連続の重複（帰還中の現在地書き込み）はまとめる
 check("robot_status: arrived → returning → idle の順を含む", _seq, ["arrived", "returning", "idle"])
-check("出来事: 自己位置推定 → 30° 回って前後を決める → ビーコンへ → 本棚へ",
-      n.events, [("localize", "本棚の場所"), ("turn", 30), ("go", "ビーコン（UWB）"), ("go", "本棚の場所")])
+_ev = [ev[0] if ev[0] == "turn" else ev for ev in n.events]
+check("出来事: 自己位置推定 → 相手の方向へ向く → 30° 回って前後を決める → ビーコンへ → 本棚へ",
+      _ev, [("localize", "本棚の場所"), "turn", "turn", ("go", "ビーコン（UWB）"), ("go", "本棚の場所")])
+_tb = _turns_before_go(n.events)
+check("向く角度は約 28°（前方 (2, 1) の方向）・確かめは ±30°", (20 <= _tb[0] <= 35, abs(_tb[1])), (True, 30))
 _g = n.goals[0]
 _x, _y, _th = _expected_standoff((2.0, 1.0))
 check("ゴールはユニットの 0.5 m 手前（誤差 5 cm 以内）", math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, True)
@@ -1230,7 +1296,7 @@ check("理由「走行に失敗」", "走行に失敗" in (s.status.get("detail"
 print("  --- 走りながら測り直し: 推定が 0.3 m 以上動いたらゴールを差し替える（上限つき）---")
 s, n, br, uwb, board = _mk_world((2.0, 1.0))
 uwb.start(sleep=br._sleep)
-est = BL.BeaconEstimator()
+est = BL.BeaconEstimator(mount=M0)
 for _yaw in (0.0, 0.5):                       # 2 つの向きから測ってある（前後は決まっている）
     n.pose = (0.0, 0.0, _yaw)
     _clk["t"] += 1.2
@@ -1252,6 +1318,114 @@ br._beacon_resend = br.beacon_max_resend
 br._beacon_goal = BL.standoff_goal(_old, (0.0, 0.0, 0.0), 0.5)
 _clk["t"] += 1.0
 check("差し替えの上限に達していれば、動いていても None", cb(0.5, (0.0, 0.0, 0.5)), None)
+
+class FakeNavT(FakeNav):
+    """走っている途中で 3 秒たつナビ（その間に基板の行が 15 本ほどたまる。走行中の測り直しを試すため）。"""
+
+    def go(self, goal, on_progress=None):
+        def op(rem, pose):
+            _clk["t"] += 3.0
+            return on_progress(rem, pose)
+        return super().go(goal, op if on_progress else None)
+
+
+def _yaw_before_go(events, start_yaw=0.0):
+    return math.radians(sum(_turns_before_go(events))) + start_yaw
+
+
+print("  --- 後ろ向きの取り付け（本棚の後ろの台座・アンテナの面は後ろ）: 前方のユニット (2, 1)・機体の陰あり ---")
+MR = BL.Mount(x=-0.15, y=0.0, yaw=math.pi, height=0.25)
+s, n, br, uwb, board = _mk_world((2.0, 1.0), mount=MR, shadow=True, nav=FakeNavT())
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr1", 100))
+check("done まで進む", s.calls["cr1"], "done")
+_g = n.goals[0]
+_x, _y, _th = _expected_standoff((2.0, 1.0))
+check("ゴールはユニットの 0.5 m 手前（誤差 5 cm 以内）・向きはユニットのほう（出し入れ口を向ける）",
+      (math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, abs(_g[2] - _th) < math.radians(3)), (True, True))
+_ant_dir = _yaw_before_go(n.events) + math.pi
+_bdir = math.atan2(1.0 - 0.0, 2.0 - (-0.15))
+check("走る前に、後ろのアンテナをユニットへ向けて測っていた（35° 以内）",
+      abs(math.degrees(math.atan2(math.sin(_ant_dir - _bdir), math.cos(_ant_dir - _bdir)))) < 35.0, True)
+check("前へ走る間の機体ごしの測定は読み捨てる → ゴールを差し替えない", any(ev[0] == "retarget" for ev in n.events), False)
+_sp = s.sp[100]
+check("推定した場所をビーコンの行（stop_points）に書き戻す（誤差 10 cm 以内）",
+      math.hypot(_sp["x"] - 2.0, _sp["y"] - 1.0) < 0.10, True)
+check("書き戻しは stop_points の patch", any(t == "stop_points" for t, b in s.log), True)
+
+print("  --- 後ろ向き: 2 回目の呼出は、まず前回の場所へアンテナを向けて測る（最初から陰にならない）---")
+n.events.clear()
+n.goals.clear()
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr2", 100))
+check("2 回目も done", s.calls["cr2"], "done")
+_t2 = _turns_before_go(n.events)
+check("最初に前回の場所へ約 −155° 向き、30° 回って前後を確かめる（正面に向き直す 1 回まで）",
+      (len(_t2) in (2, 3), -165 <= _t2[0] <= -145, _t2[1], all(abs(t) <= 35 for t in _t2[2:])), (True, True, 30, True))
+_g = n.goals[0]
+check("2 回目のゴールも 0.5 m 手前（誤差 5 cm 以内）", math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, True)
+
+print("  --- --beacon-hint-resolve（ユニットを動かさない運用）: 前回の場所で前後も決める → 回るのは 1 回だけ ---")
+n.events.clear()
+n.goals.clear()
+br.beacon_prior_resolve = True
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr2b", 100))
+_t2 = _turns_before_go(n.events)
+check("その場回転は前回の場所へ向く 1 回だけ", (len(_t2), -165 <= _t2[0] <= -145), (1, True))
+_g = n.goals[0]
+check("ゴールは 0.5 m 手前（誤差 5 cm 以内）", math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, True)
+
+print("  --- 後ろ向き・機体の陰あり: 横に近い／前方右／後方斜めのユニットも、陰のない向きで測り直して着く ---")
+# 2026-11-09 に見つけた失敗の再発防止: 陰の測定が混ざったまま前後を決めると、反対側へ走ることがあった
+#   （横に近いと、向け直しても正面の範囲の端に残る → 確かめの 30° を逆へ回ると範囲の外に出る、など）
+for _bxy, _cid in (((0.5, 2.0), "cr7"), ((2.5, -0.5), "cr8"), ((-1.2, -1.5), "cr9"), ((1.2, -2.5), "cr10")):
+    s, n, br, uwb, board = _mk_world(_bxy, mount=MR, shadow=True, nav=FakeNavT())
+    with contextlib.redirect_stdout(io.StringIO()):
+        br.handle(call(_cid, 100))
+    _g = n.goals[0]
+    _x, _y, _th = _expected_standoff(_bxy)
+    check(f"ユニット {_bxy}: done・ゴールは 0.5 m 手前（誤差 5 cm 以内）・差し替えなし",
+          (s.calls[_cid], math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, any(ev[0] == "retarget" for ev in n.events)),
+          ("done", True, False))
+
+print("  --- 後ろ向き: 後方のユニット (−2, 0.5)（最初からアンテナの正面）---")
+s, n, br, uwb, board = _mk_world((-2.0, 0.5), mount=MR, shadow=True)
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr3", 100))
+check("done まで進む", s.calls["cr3"], "done")
+_g = n.goals[0]
+_x, _y, _th = _expected_standoff((-2.0, 0.5))
+check("ゴールは 0.5 m 手前（誤差 5 cm 以内）・向きはユニットのほう",
+      (math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, abs(math.atan2(math.sin(_g[2] - _th), math.cos(_g[2] - _th))) < math.radians(3)),
+      (True, True))
+
+print("  --- 前回の場所が古い（ユニットを動かした）: 手がかりは外れるが、ふつうに探して見つける ---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0), mount=MR, shadow=True, hint=(-2.0, -1.5))
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr4", 100))
+check("done まで進む", s.calls["cr4"], "done")
+_g = n.goals[0]
+_x, _y, _th = _expected_standoff((2.0, 1.0))
+check("ゴールは本当のユニットの 0.5 m 手前（誤差 5 cm 以内）", math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, True)
+check("書き戻しも本当の場所に直る（誤差 10 cm 以内）", math.hypot(s.sp[100]["x"] - 2.0, s.sp[100]["y"] - 1.0) < 0.10, True)
+
+print("  --- 手がかりを使わない設定（--no-beacon-hint）・dry-run では書き戻さない ---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0), mount=MR, hint=(2.0, 1.0))
+br.beacon_hint = False
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr5", 100))
+check("手がかりなし: 前回の場所（約 −155°）へは向かず、ふつうに探す", -165 <= _turns_before_go(n.events)[0] <= -145, False)
+check("手がかりなしでも、ゴールは 0.5 m 手前（誤差 5 cm 以内）",
+      math.hypot(n.goals[0][0] - _expected_standoff((2.0, 1.0))[0], n.goals[0][1] - _expected_standoff((2.0, 1.0))[1]) < 0.05, True)
+s, n, br, uwb, board = _mk_world((2.0, 1.0), mount=MR)
+br.live = False
+with contextlib.redirect_stdout(io.StringIO()):
+    br._process_beacon(call("cr6", 100), dict(s.sp[100]))
+check("dry-run: stop_points には書かない", any(t == "stop_points" for t, b in s.log), False)
+check("beacon_hint_from_row: 0,0（まだ推定していない）は None・それ以外は (x, y)",
+      (B.beacon_hint_from_row({"x": 0, "y": 0}), B.beacon_hint_from_row({"x": 1.5, "y": -0.5}), B.beacon_hint_from_row(None)),
+      (None, (1.5, -0.5), None))
 
 print("  --- LoggingNavigator（--simulate）: turn と、走りながらのゴール差し替え ---")
 _ln = B.LoggingNavigator(1.0, start_pose=(0.0, 0.0, 0.0))

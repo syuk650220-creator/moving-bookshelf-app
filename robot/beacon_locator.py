@@ -55,6 +55,7 @@ from uwb_reader import UwbReading, is_usable
 
 USABLE_BEARING_DEG = 60.0     # ★実測で決める（ロードマップ 6-1 ③）★ これより横の回は「方向」に使わない（「距離」には使う）
 CLUSTER_RADIUS_M = 0.40       # 候補の点が「同じ場所」と見なす半径 [m]。ばらつき（±9 cm）と動きながらの測定の余裕
+PRIOR_RADIUS_M = 0.8          # 前回の推定（stop_points のビーコンの行）から、この半径の内にある山を「同じユニット」とみなす [m]
 
 
 # =====================================================================
@@ -71,6 +72,21 @@ class Mount:
     height: float = P.UWB_ANTENNA_HEIGHT
 
 
+def parse_mount(text: str) -> Mount:
+    """「X,Y,向き[度],高さ」の文字（例 "-0.15,0,180,0.25"）→ Mount。ブリッジの --uwb-mount 用。
+    X は前が＋、Y は左が＋ [m]（base_link＝回転の中心から）。向きはアンテナの面が向く方向（前 0、後ろ 180）。"""
+    parts = [p.strip() for p in str(text).split(",")]
+    if len(parts) != 4:
+        raise ValueError(f"取り付けは「X,Y,向き[度],高さ」の 4 つの数で書いてください: {text!r}")
+    try:
+        x, y, yaw_deg, h = (float(p) for p in parts)
+    except ValueError:
+        raise ValueError(f"取り付けの値が数ではありません: {text!r}") from None
+    if not (0.0 <= h <= 1.0):
+        raise ValueError(f"高さは床から 0〜1 m で書いてください: {h}")
+    return Mount(x=x, y=y, yaw=math.radians(yaw_deg), height=h)
+
+
 def wrap_angle(a: float) -> float:
     """角度を −π〜π に収める。"""
     return math.atan2(math.sin(a), math.cos(a))
@@ -82,6 +98,18 @@ def antenna_pose(robot_pose, mount: Mount | None = None) -> tuple[float, float, 
     rx, ry, ryaw = robot_pose
     c, s = math.cos(ryaw), math.sin(ryaw)
     return (rx + c * m.x - s * m.y, ry + s * m.x + c * m.y, wrap_angle(ryaw + m.yaw))
+
+
+def bearing_from_antenna(target_xy, robot_pose, mount: Mount | None = None) -> float:
+    """地図上の点がアンテナから見て何度の方向か [度]（アンテナの正面 0、左が＋、−180〜180）。"""
+    ax, ay, ayaw = antenna_pose(robot_pose, mount)
+    return math.degrees(wrap_angle(math.atan2(target_xy[1] - ay, target_xy[0] - ax) - ayaw))
+
+
+def in_antenna_cone(target_xy, robot_pose, mount: Mount | None = None,
+                    usable_deg: float = USABLE_BEARING_DEG) -> bool:
+    """地図上の点が、アンテナの正面 ±usable_deg の内にあるか。外なら、その点からの電波は機体ごし（陰）になりうる。"""
+    return abs(bearing_from_antenna(target_xy, robot_pose, mount)) <= usable_deg
 
 
 def horizontal_distance(d: float, dz: float) -> float:
@@ -153,6 +181,7 @@ class BeaconEstimate:
     ambiguous: bool          # 前後がまだ決まっていない（ロボが回る／動くと決まる）
     distance_m: float        # 最新の水平距離
     bearing_deg: float       # 最新の方向（アンテナから。後ろと決まった回は鏡写しを戻した値。左が＋）
+    resolved_by: str = ""    # 前後を何で決めたか: "turn"（回って）／"range"（距離だけの解）／"prior"（前回の場所）／""（未確定）
 
     def dist_from(self, pose) -> float:
         return math.hypot(self.x - pose[0], self.y - pose[1])
@@ -164,8 +193,12 @@ class BeaconEstimator:
     def __init__(self, mount: Mount | None = None, beacon_height: float = P.BEACON_HEIGHT,
                  window: int = 15, min_fom: float | None = None, max_nlos: float | None = None,
                  max_range_m: float = 8.0, usable_deg: float = USABLE_BEARING_DEG,
-                 cluster_m: float = CLUSTER_RADIUS_M):
+                 cluster_m: float = CLUSTER_RADIUS_M, prior=None, prior_m: float = PRIOR_RADIUS_M):
         self.mount = mount or Mount()
+        # 前回ロボが推定した場所 (x, y)（stop_points のビーコンの行）。止まったままで前後が決まらないとき、
+        # 2 つの山のうち片方だけがこの近くにあれば、そちらを選ぶ（回って確かめる手間を省く）。None なら使わない
+        self.prior = None if prior is None else (float(prior[0]), float(prior[1]))
+        self.prior_m = prior_m
         self.dz = beacon_height - self.mount.height      # 相手とアンテナの高さの差
         self.min_fom, self.max_nlos, self.max_range_m = min_fom, max_nlos, max_range_m
         self.usable_deg, self.cluster_m = usable_deg, cluster_m
@@ -210,6 +243,20 @@ class BeaconEstimator:
                 out.append(best[1])
         return out
 
+    def _alt_cluster(self, mx: float, my: float, cands_per_obs):
+        """選んだ山 (mx, my) から離れた、もう 1 つの山（前後の取り違えの相手）。無ければ None。"""
+        alt_sup = []
+        for cands in cands_per_obs:
+            for c in cands:
+                if math.hypot(c[0] - mx, c[1] - my) > 2.0 * self.cluster_m:
+                    sup = self._support(c, cands_per_obs)
+                    if len(sup) > len(alt_sup):
+                        alt_sup = sup
+        if not alt_sup:
+            return None
+        ax_, ay_, asp = median_point(alt_sup)
+        return ax_, ay_, asp, alt_sup
+
     def estimate(self) -> BeaconEstimate | None:
         if not self.obs:
             return None
@@ -223,7 +270,8 @@ class BeaconEstimator:
             if tri is None:
                 return None
             return BeaconEstimate(tri[0], tri[1], len(self.obs), 0.0, "range", False,
-                                  last_dh, math.degrees(wrap_angle(math.atan2(tri[1] - last_ant[1], tri[0] - last_ant[0]) - last_ant[2])))
+                                  last_dh, math.degrees(wrap_angle(math.atan2(tri[1] - last_ant[1], tri[0] - last_ant[0]) - last_ant[2])),
+                                  "range")
 
         # ② いちばん多くの測定に支持される候補を探す
         best_c, best_sup = None, []
@@ -241,23 +289,29 @@ class BeaconEstimator:
                 if math.hypot(c[0] - mx, c[1] - my) > 2.0 * self.cluster_m:
                     second = max(second, len(self._support(c, cands_per_obs)))
         ambiguous = not (len(best_sup) >= 3 and len(best_sup) >= second + 2)
+        resolved_by = "" if ambiguous else "turn"
 
-        if ambiguous and tri is not None:               # 決め手: 距離だけの解に近い山を選ぶ
-            alt_c, alt_sup = None, []
-            for cands in cands_per_obs:
-                for c in cands:
-                    if math.hypot(c[0] - mx, c[1] - my) > 2.0 * self.cluster_m:
-                        sup = self._support(c, cands_per_obs)
-                        if len(sup) > len(alt_sup):
-                            alt_c, alt_sup = c, sup
-            if alt_sup:
-                ax_, ay_, asp = median_point(alt_sup)
+        if ambiguous and tri is not None:               # 決め手 1: 距離だけの解に近い山を選ぶ
+            alt = self._alt_cluster(mx, my, cands_per_obs)
+            if alt is not None:
+                ax_, ay_, asp, alt_sup = alt
                 if math.hypot(ax_ - tri[0], ay_ - tri[1]) + 0.3 < math.hypot(mx - tri[0], my - tri[1]):
                     mx, my, spread, best_sup = ax_, ay_, asp, alt_sup
-                ambiguous = False
-        elif ambiguous:
-            # 前の候補を仮に返す（支持が同数なら、先に見つかる＝前の候補が best になっている）
-            pass
+                ambiguous, resolved_by = False, "range"
+        if ambiguous and self.prior is not None and len(best_sup) >= 3:
+            # 決め手 2: 前回の場所。2 つの山のうち片方だけが近ければ、そちら（ユニットは動いていないとみなす）
+            alt = self._alt_cluster(mx, my, cands_per_obs)
+            if alt is not None:
+                ax_, ay_, asp, alt_sup = alt
+                px, py = self.prior
+                near_best = math.hypot(mx - px, my - py) <= self.prior_m
+                near_alt = math.hypot(ax_ - px, ay_ - py) <= self.prior_m
+                if near_alt and not near_best and len(alt_sup) >= 3:
+                    mx, my, spread, best_sup = ax_, ay_, asp, alt_sup
+                    ambiguous, resolved_by = False, "prior"
+                elif near_best and not near_alt:
+                    ambiguous, resolved_by = False, "prior"
+        # まだ決まらなければ、前の候補を仮に返す（支持が同数なら、先に見つかる＝前の候補が best になっている）
 
         # 最新の測定の方向: 選んだ山に近いほうの候補が「後ろ」なら鏡写しを戻す
         bearing = last_b
@@ -268,7 +322,12 @@ class BeaconEstimator:
                 bearing = mirror_bearing(last_b)
         else:
             bearing = math.degrees(wrap_angle(math.atan2(my - last_ant[1], mx - last_ant[0]) - last_ant[2]))
-        return BeaconEstimate(mx, my, len(best_sup), spread, "bearing", ambiguous, last_dh, bearing)
+        return BeaconEstimate(mx, my, len(best_sup), spread, "bearing", ambiguous, last_dh, bearing, resolved_by)
+
+    def last_raw_bearing(self) -> float | None:
+        """最新の使えた測定の、基板が出したままの方向 [度]（鏡写しのまま。±60° の外の回も含む）。
+        前後は分からないが、左右（符号）は鏡写しでも変わらないので、「どちらへ回れば相手が正面に寄るか」に使える。"""
+        return self.obs[-1][2] if self.obs else None
 
     def latest_bearing(self) -> float | None:
         """最新の測定から見た相手の方向 [度]（前後の判定込み）。測定が無ければ None。"""

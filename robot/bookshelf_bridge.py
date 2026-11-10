@@ -643,6 +643,20 @@ class Nav2Navigator:
 #  ブリッジ本体
 # =====================================================================
 
+def beacon_hint_from_row(row: dict | None):
+    """ビーコンの行（stop_points、kind='beacon'）の x, y を「前回ロボが推定した場所」として返す。
+    まだ一度も推定していない（x も y も 0。sql/05 で入れた最初の値）なら None。"""
+    if not row:
+        return None
+    try:
+        x, y = float(row.get("x") or 0.0), float(row.get("y") or 0.0)
+    except (TypeError, ValueError):
+        return None
+    if abs(x) < 1e-6 and abs(y) < 1e-6:
+        return None
+    return (x, y)
+
+
 class Bridge:
     def __init__(self, supa: Supa, navigator, live: bool, arrive_hold: float,
                  arrive_timeout: float = 0.0, home: dict | None = None,
@@ -650,7 +664,9 @@ class Bridge:
                  pose_interval: float = 1.0, schema_v3: bool | None = None,
                  uwb=None, beacon_standoff: float = 0.5, beacon_height: float = P.BEACON_HEIGHT,
                  beacon_search_sec: float = 6.0, beacon_retarget_m: float = 0.3, beacon_max_resend: int = 3,
-                 uwb_min_fom: float | None = None, uwb_max_nlos: float | None = None):
+                 uwb_min_fom: float | None = None, uwb_max_nlos: float | None = None,
+                 uwb_mount: "BL.Mount | None" = None, beacon_hint: bool = True,
+                 beacon_prior_resolve: bool = False):
         self.supa = supa
         # ---- UWB ビーコン（S3）。uwb は uwb_reader.UwbReader（None ならビーコンの呼出は取り消す）----
         self.uwb = uwb
@@ -660,6 +676,14 @@ class Bridge:
         self.beacon_retarget_m = beacon_retarget_m      # 走行中に推定がこれ以上動いたらゴールを差し替える [m]
         self.beacon_max_resend = beacon_max_resend      # 差し替えの上限（行ったり来たりを防ぐ）
         self.uwb_min_fom, self.uwb_max_nlos = uwb_min_fom, uwb_max_nlos
+        # アンテナの取り付け（位置と、アンテナの面が向く方向）。既定は robot_params の UWB_MOUNT_*（--uwb-mount で上書き）
+        self.uwb_mount = uwb_mount or BL.Mount()
+        # 前回ロボが推定した場所（ビーコンの行の x, y）を、次の呼出で最初にアンテナを向ける方向に使うか
+        self.beacon_hint = beacon_hint
+        # 前回の場所で前後まで決めるか（30° 回って確かめる手間が省ける）。★既定は使わない★
+        #   ユニットを前回と反対側へ動かすと、前回の場所へ向けたアンテナの真後ろに本当のユニットが来て、
+        #   鏡写しの候補がちょうど前回の場所の近くに出る → 間違った側に決めてしまう。ユニットを動かさない運用だけで使う
+        self.beacon_prior_resolve = beacon_prior_resolve
         self._clock, self._sleep = time.monotonic, time.sleep    # テストで時間を手で進めるための差し替え口
         self._beacon_goal: dict | None = None
         self._beacon_resend = 0
@@ -873,19 +897,26 @@ class Bridge:
         self._state_now, self._call_now = "moving", cid
         self.at_home = False
         self.home_pose_trusted = False
-        est = BL.BeaconEstimator(beacon_height=self.beacon_height,
-                                 min_fom=self.uwb_min_fom, max_nlos=self.uwb_max_nlos)
+        hint = beacon_hint_from_row(row) if self.beacon_hint else None
+        est = BL.BeaconEstimator(mount=self.uwb_mount, beacon_height=self.beacon_height,
+                                 min_fom=self.uwb_min_fom, max_nlos=self.uwb_max_nlos,
+                                 prior=hint if self.beacon_prior_resolve else None)
         ok = False
         try:
             self.uwb.start(sleep=self._sleep)         # stop → uwbcfg 9 … → antenna js1055-9 → initf（電波法のガード付き）
-            found = self._beacon_search(est, label)
+            found = self._beacon_search(est, label, hint=hint)
             if found is None:
                 self.set_call(cid, "canceled")
                 self.set_status("idle", None,
                                 detail=f"{label} が見つかりません（席のユニットの電源と向き、距離を確認してください）",
                                 pose=self.nav.current_pose())
                 return
+            if not found.ambiguous:
+                self._save_beacon_estimate(row, found)        # 地図（/admin/pins）に出す＋次の呼出の手がかり
             ok = self._beacon_drive(est, found, label)
+            final = est.estimate()
+            if ok and final is not None and not final.ambiguous and final.dist_from((found.x, found.y, 0.0)) > 0.05:
+                self._save_beacon_estimate(row, final)        # 走りながら測り直して動いたぶん
         except (KeyboardInterrupt, SystemExit):
             raise
         except Exception as e:                        # 基板との通信エラーなど。ロボを止めたまま呼出を取り消す
@@ -910,6 +941,23 @@ class Bridge:
         self._call_finished = True
         self.go_home(cid)
 
+    def _save_beacon_estimate(self, row: dict, e) -> None:
+        """推定したユニットの場所を、ビーコンの行（stop_points）の x, y に書く。
+        アプリの /admin/pins の地図に紫の丸で出る（更新の時刻つき）。次の呼出では、まずそちらへアンテナを向けて測る。"""
+        rid = row.get("id")
+        if rid is None:
+            return
+        body = {"x": round(float(e.x), 3), "y": round(float(e.y), 3)}
+        print(f"    [db] stop_points id={rid}（{row.get('label') or 'ビーコン'}）→ 推定 ({body['x']:.2f}, {body['y']:.2f})"
+              + ("" if self.live else "（dry-run なので書き込みません）"))
+        row["x"], row["y"] = body["x"], body["y"]
+        if not self.live:
+            return
+        try:
+            self.supa.patch("stop_points", f"id=eq.{int(rid)}", body)
+        except Exception as ex:                          # 書けなくても走行は続ける（sql/03 の update ポリシーが要る）
+            print(f"    [warn] ビーコンの推定の書き込みに失敗（続行します）: {ex}")
+
     def _beacon_collect(self, est, seconds: float) -> int:
         """seconds 秒のあいだ基板を読んで推定にためる。使えた測定の数を返す。"""
         t0 = self._clock()
@@ -925,13 +973,28 @@ class Bridge:
                     n += 1
         return n
 
-    def _beacon_search(self, est, label: str):
-        """ユニットを探して推定（BeaconEstimate）を返す。見つからなければ None。"""
+    def _beacon_search(self, est, label: str, hint=None):
+        """ユニットを探して推定（BeaconEstimate）を返す。見つからなければ None。
+
+        ★最後の推定は、いつも「アンテナの正面に相手がいる状態で、測り直した測定」から作る★
+        アンテナの裏側（機体の陰）からの測定は、距離が長く・方向が乱れて出る。後ろ向きに付けたアンテナでは
+        前方のユニットがずっと陰になるので、陰の測定が混ざったまま前後を決めると、間違った側に決めることがある。
+          ① hint（前回の推定 (x, y)）があれば、先にそちらへアンテナを向ける
+          ② その場で測る（何も読めなければ 60° ずつ回って探す）→ だいたいの方向
+          ③ その方向へアンテナを向け、それまでの測定を捨てて測り直す（その場 → 30° 回ってもう一度。回ると前後が決まる）
+          ④ 前後が決まらない、または「後ろ」と出たら、反対側（相手のほう）へ向けて、もう一度 ③
+        """
         self.set_status("moving", self._call_now, detail=f"{label} を探しています（UWB で測定中）",
                         pose=self.nav.current_pose())
-        self._beacon_collect(est, self.beacon_search_sec)
+        pose = self.nav.current_pose()
+        if hint is not None and pose is not None:                      # ①
+            b = BL.bearing_from_antenna(hint, pose, self.uwb_mount)
+            if abs(b) > 20.0:
+                print(f"    [ビーコン] 前回の場所 ({hint[0]:.2f}, {hint[1]:.2f}) のほうへアンテナを向けます（{b:+.0f}°）")
+                self.nav.turn(math.radians(b))
+        self._beacon_collect(est, self.beacon_search_sec)              # ②
         turns = 0
-        while est.estimate() is None and turns < 6:        # 何も読めない: 60° ずつ 1 周
+        while est.estimate() is None and turns < 6:
             turns += 1
             print(f"    [ビーコン] まだ読めません → 60° 回して探します（{turns}/6）")
             self.nav.turn(math.radians(60.0))
@@ -939,26 +1002,68 @@ class Bridge:
         e = est.estimate()
         if e is None:
             return None
-        if e.ambiguous:                                    # 前後が決まっていない: 少し回ると決まる
-            print("    [ビーコン] 前後を決めるために 30° 回ります")
-            self.nav.turn(math.radians(30.0))
+        if not e.ambiguous and self._beacon_facing(est, e):           # 前回の場所で前後まで決まった（--beacon-hint-resolve）
+            self._beacon_report(e)
+            return e
+        first, check = self._beacon_measure_fresh(est, e.bearing_deg)  # ③
+        first = first or e
+        if not first.ambiguous and self._beacon_facing(est, first):
+            self._beacon_report(first)
+            return first
+        if first.ambiguous:                                            # ④ 決まらない＝いまの側は陰の測定が多い → 反対側へ
+            print("    [ビーコン] 前後が決まりません（陰の測定が多い）→ 反対側へ向けて測り直します")
+            back = math.copysign(180.0, check) - check                 # ③の確かめで回ったぶんを戻した、向けた方向の真反対
+        else:
+            back = BL.bearing_from_antenna((first.x, first.y), self.nav.current_pose(), self.uwb_mount)
+            print(f"    [ビーコン] 相手はアンテナの後ろ（{back:+.0f}°）→ そちらへ向けて測り直します")
+        second, _ = self._beacon_measure_fresh(est, back)
+        cands = [c for c in (second, first) if c is not None]
+        pick = (next((c for c in cands if not c.ambiguous and self._beacon_facing(est, c)), None)
+                or next((c for c in cands if not c.ambiguous), None)
+                or cands[0])
+        self._beacon_report(pick)
+        return pick
+
+    def _beacon_measure_fresh(self, est, turn_deg: float):
+        """アンテナを turn_deg [度] 回してから、それまでの測定を捨てて測り直す（その場 → 30° 回ってもう一度）。
+        30° は相手のいる側へ回る（相手をアンテナの正面に寄せる。逆へ回ると正面 ±60° の外に出て、方向が取れなくなる）。
+        (推定, 確かめで回った角度の合計) を返す。"""
+        if abs(turn_deg) > 20.0:
+            print(f"    [ビーコン] 相手らしい方向（{turn_deg:+.0f}°）へアンテナを向けます")
+            self.nav.turn(math.radians(turn_deg))
+        est.reset()
+        self._beacon_collect(est, max(1.5, self.beacon_search_sec / 2.0))
+        raw = est.last_raw_bearing()
+        if raw is not None and abs(raw) > 45.0:                 # 相手が正面の範囲の端: もう一度向け直してから確かめる
+            print(f"    [ビーコン] 相手がアンテナの正面から外れています（{raw:+.0f}°）→ もう一度向けます")
+            self.nav.turn(math.radians(raw))
+            est.reset()
+            self._beacon_collect(est, max(1.5, self.beacon_search_sec / 2.0))
+            raw = est.last_raw_bearing()
+        total = 0.0
+        e = None
+        for _ in range(2):                                       # 前後が決まるまで、確かめの 30° は 2 回まで
+            check = -30.0 if (raw is not None and raw < 0.0) else 30.0   # 左右（符号）は鏡写しでも同じ → 相手の側へ回る
+            print(f"    [ビーコン] 前後を決めるために {check:+.0f}° 回ります")
+            self.nav.turn(math.radians(check))
+            total += check
             self._beacon_collect(est, 1.5)
-            e = est.estimate() or e
-        for _ in range(2):                                 # 相手が横・後ろ: そちらを向いて測り直す（正面 ±60° が使える範囲）
-            if abs(e.bearing_deg) <= 30.0:
+            e = est.estimate()
+            if e is not None and not e.ambiguous:
                 break
-            print(f"    [ビーコン] 相手は {e.bearing_deg:+.0f}° の方向 → そちらを向きます")
-            self.nav.turn(math.radians(e.bearing_deg))
-            self._beacon_collect(est, 1.5)
-            e = est.estimate() or e
-        if e.ambiguous:                                    # それでも決まらない: 逆に回ってもう一度
-            print("    [ビーコン] 前後がまだ決まりません → −60° 回ります")
-            self.nav.turn(math.radians(-60.0))
-            self._beacon_collect(est, 1.5)
-            e = est.estimate() or e
+            raw = est.last_raw_bearing()
+        return e, total
+
+    def _beacon_facing(self, est, e) -> bool:
+        """推定した場所が、いまのアンテナの正面 ±60° の内か（＝さっきの測定は陰ではなかった）。"""
+        pose = self.nav.current_pose()
+        return pose is not None and BL.in_antenna_cone((e.x, e.y), pose, self.uwb_mount, est.usable_deg)
+
+    def _beacon_report(self, e):
+        how = {"turn": "回って確認", "range": "距離だけの解", "prior": "前回の場所"}.get(e.resolved_by, "")
         print(f"    [ビーコン] 推定 ({e.x:.2f}, {e.y:.2f})  距離 {e.distance_m:.2f} m  方向 {e.bearing_deg:+.0f}°  "
-              f"n={e.n}  ばらつき {e.spread_m:.2f} m" + ("  ★前後は未確定（前と仮定）★" if e.ambiguous else ""))
-        return e
+              f"n={e.n}  ばらつき {e.spread_m:.2f} m"
+              + ("  ★前後は未確定（前と仮定）★" if e.ambiguous else (f"  前後は{how}で決定" if how else "")))
 
     def _beacon_drive(self, est, e, label: str) -> bool:
         """手前のゴールへ走る。走りながら測り直す。失敗したら手前を 0.2 m 広げてもう一度。"""
@@ -983,10 +1088,21 @@ class Bridge:
         last = {"t": 0.0}
 
         def cb(remaining, pose):
+            # 推定が決まっていて、その場所がアンテナの正面 ±60° の外なら、いまの測定は機体ごし（陰）。
+            # 距離が長く・方向が乱れて出るので、読み捨てる（後ろ向きに付けたアンテナで前へ走るときは、ずっとこれ）
+            # 陰かどうかは、いま向かっているゴールのユニットの位置で決める（推定が揺れても判定がぶれない）
+            ref = self._beacon_goal["beacon"] if self._beacon_goal else None
+            if ref is None:
+                e0 = est.estimate()
+                ref = (e0.x, e0.y) if (e0 is not None and not e0.ambiguous) else None
+            shadowed = (ref is not None and pose is not None
+                        and not BL.in_antenna_cone(ref, pose, self.uwb_mount, est.usable_deg))
             for _ in range(8):                             # たまっている行を読む（長くは読まない）
                 rs = self.uwb.poll()
                 if not rs:
                     break
+                if shadowed:
+                    continue
                 for r in rs:
                     est.add(pose, r)
             new_goal = None
@@ -1226,7 +1342,18 @@ def main():
                     help="基板の LAoA_deg の符号（実測で決める。uwb_reader.ANGLE_SIGN）")
     ap.add_argument("--uwb-min-fom", type=float, default=None, help="この確からしさ（LFoM）未満の回は使わない")
     ap.add_argument("--uwb-max-nlos", type=float, default=None, help="この NLOS%% を超える回は使わない（diag 1 のとき）")
+    ap.add_argument("--uwb-mount", default=None, metavar="X,Y,YAW_DEG,Z",
+                    help="UWB アンテナの取り付け（回転の中心から前が＋の X・左が＋の Y [m]、アンテナの面の向き [度] 前 0／後ろ 180、"
+                         "床からの高さ [m]）。既定は robot_params の UWB_MOUNT_*。例: -0.15,0,180,0.25")
+    ap.add_argument("--no-beacon-hint", action="store_true",
+                    help="前回ロボが推定したユニットの場所（ビーコンの行の x, y）へ、最初にアンテナを向けない")
+    ap.add_argument("--beacon-hint-resolve", action="store_true",
+                    help="前回の場所で前後まで決める（30° 回って確かめない）。★ユニットを動かさない運用のときだけ★")
     args = ap.parse_args()
+    try:                                     # 書き間違いは、ほかの準備より先に知らせる
+        uwb_mount = BL.parse_mount(args.uwb_mount) if args.uwb_mount else BL.Mount()
+    except ValueError as e:
+        sys.exit(f"--uwb-mount: {e}")
 
     load_env()
     url = os.environ.get("SUPABASE_URL")
@@ -1289,7 +1416,7 @@ def main():
         board = U.FakeUwbBoard(realtime=True, noise_m=0.03, noise_deg=2.0, drop_rate=0.05,
                                angle_sign=args.uwb_angle_sign)
         board.target_fn = lambda: BL.simulate_reading(navigator.current_pose() or (0.0, 0.0, 0.0), (bx, by),
-                                                      beacon_height=args.beacon_height)
+                                                      mount=uwb_mount, beacon_height=args.beacon_height)
         uwb = U.UwbReader(board, angle_sign=args.uwb_angle_sign)
         print(f"UWB    : シミュレータ（電波なし）ユニットは地図の ({bx:.2f}, {by:.2f}) にあることにします")
     elif args.uwb is not None:
@@ -1304,6 +1431,12 @@ def main():
         print(U.LEGAL_NOTICE)
     else:
         print("UWB    : なし（ビーコンへの呼出は取り消します。使うときは --uwb）")
+    if uwb is not None:
+        print(f"UWB 取り付け: 回転の中心から x={uwb_mount.x:+.2f} y={uwb_mount.y:+.2f} m・アンテナの面 {math.degrees(uwb_mount.yaw):.0f}°"
+              f"（前 0／後ろ 180）・床から {uwb_mount.height:.2f} m"
+              + ("（--uwb-mount）" if args.uwb_mount else "（robot_params）")
+              + ("・前回の場所は使わない" if args.no_beacon_hint else
+                 ("・前回の場所で前後も決める" if args.beacon_hint_resolve else "")))
 
     bridge = Bridge(supa, navigator, args.live, args.arrive_hold, args.arrive_timeout,
                     home=home, return_home=not args.no_return_home,
@@ -1311,7 +1444,9 @@ def main():
                     schema_v3=v3,
                     uwb=uwb, beacon_standoff=args.beacon_standoff, beacon_height=args.beacon_height,
                     beacon_search_sec=args.beacon_search,
-                    uwb_min_fom=args.uwb_min_fom, uwb_max_nlos=args.uwb_max_nlos)
+                    uwb_min_fom=args.uwb_min_fom, uwb_max_nlos=args.uwb_max_nlos,
+                    uwb_mount=uwb_mount, beacon_hint=not args.no_beacon_hint,
+                    beacon_prior_resolve=args.beacon_hint_resolve)
 
     if args.nav2:
         # 順番が大事: 初期位置を与える → それで Nav2 の残り（costmap・bt_navigator）が起動を完了できる
