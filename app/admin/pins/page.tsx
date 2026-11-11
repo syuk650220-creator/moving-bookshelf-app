@@ -1,5 +1,5 @@
 'use client'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import Link from 'next/link'
 
@@ -9,6 +9,10 @@ import Link from 'next/link'
 //  stop_points を地図上のピンとして見る・直す画面。
 //    id=0  kind='home' … 本棚の場所（ロボの定位置。帰る先・自己位置推定の初期位置）
 //    id≥1  kind='seat' … 席（アプリの「届け先の席」に出る）
+//    id=100 kind='beacon' … UWB ビーコン（席に置いたユニットのところへ走る行き先。robot/sql/05）
+//           座標は「ロボが前回 UWB で推定した場所」。ブリッジが呼出のたびに書き戻し、次の呼出では
+//           まずそちらへアンテナを向けて測る。地図では紫の破線の丸（推定の時刻つき。3 秒ごとに読み直す）。
+//           x も y も 0 のときは「まだ推定していない」（地図には出さない）
 //  座標は map フレーム（m・rad）。採り方は robot/pin_tool.py（TF か RViz のクリックから登録）。
 //  この画面は「数値を確認して手で直す」「本棚の場所を追加する」ためのもの。
 //  ロボの現在地（robot_status.pose_*）も同じ地図に重ねて出す。
@@ -22,7 +26,7 @@ type Pin = {
   x: number
   y: number
   theta: number
-  kind?: 'seat' | 'home'
+  kind?: 'seat' | 'home' | 'beacon'
   updated_at?: string | null
 }
 
@@ -47,6 +51,13 @@ const STATE_COLOR: Record<string, string> = {
 const POSE_STALE_SEC = 15   // これより古い現在地は「古い」として薄く出す
 
 const isHome = (p: Pin) => p.kind === 'home' || p.id === 0
+const isBeacon = (p: Pin) => p.kind === 'beacon'
+const isSeat = (p: Pin) => !isHome(p) && !isBeacon(p)
+const kindLabel = (p: Pin) => (isHome(p) ? '本棚の場所（ホーム）' : isBeacon(p) ? 'ビーコン（UWB）' : '席')
+// ビーコンの x も y も 0 ＝ まだロボが推定していない（sql/05 で入れた最初の値）
+const isUnsetBeacon = (p: Pin) => isBeacon(p) && Math.abs(p.x) < 1e-6 && Math.abs(p.y) < 1e-6
+const hhmm = (iso?: string | null) =>
+  iso ? new Date(iso).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''
 const deg = (rad: number) => (rad * 180) / Math.PI
 const fmt = (v: number, d = 3) => (Number.isFinite(v) ? v.toFixed(d) : '—')
 
@@ -65,7 +76,7 @@ function sqlForPins(pins: Pin[]): string {
   return pins
     .map((p) => {
       const label = p.label.replace(/'/g, "''")
-      const kind = isHome(p) ? 'home' : 'seat'
+      const kind = isHome(p) ? 'home' : isBeacon(p) ? 'beacon' : 'seat'
       return (
         `insert into stop_points (id, label, x, y, theta, kind) values (${p.id}, '${label}', ${p.x}, ${p.y}, ${p.theta}, '${kind}')\n` +
         `  on conflict (id) do update set label = excluded.label, x = excluded.x, y = excluded.y, theta = excluded.theta, kind = excluded.kind;`
@@ -107,6 +118,43 @@ export default function AdminPinsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- マウント時の初回フェッチ（setState は await 後にのみ実行される）
     loadPins()
   }, [loadPins])
+
+  // ビーコンの推定（ブリッジが呼出のたびに x, y を書き戻す）を 3 秒ごとに読み直す。
+  // 手で編集中の入力欄は上書きしない（入力欄が DB の前の値のままのときだけ、新しい値に揃える）
+  const pinsRef = useRef<Pin[]>([])
+  useEffect(() => {
+    pinsRef.current = pins
+  }, [pins])
+  useEffect(() => {
+    if (schemaOk === false) return
+    let alive = true
+    const fetchBeacons = async () => {
+      const { data, error } = await supabase.from('stop_points').select('*').eq('kind', 'beacon')
+      if (!alive || error || !data) return
+      const fresh = data as Pin[]
+      const old = pinsRef.current
+      const changed = fresh.filter((f) => {
+        const o = old.find((p) => p.id === f.id)
+        return o && (o.x !== f.x || o.y !== f.y || o.updated_at !== f.updated_at)
+      })
+      if (changed.length === 0) return
+      setPins((prev) => prev.map((p) => changed.find((c) => c.id === p.id) ?? p))
+      setDrafts((prev) => {
+        const next = { ...prev }
+        for (const c of changed) {
+          const o = old.find((p) => p.id === c.id)
+          const d = prev[c.id]
+          if (o && d && d.x === String(o.x) && d.y === String(o.y)) next[c.id] = { ...d, x: String(c.x), y: String(c.y) }
+        }
+        return next
+      })
+    }
+    const id = setInterval(fetchBeacons, 3000)
+    return () => {
+      alive = false
+      clearInterval(id)
+    }
+  }, [schemaOk])
 
   // ロボの現在地・状態（1.5 秒ごと）
   useEffect(() => {
@@ -173,7 +221,10 @@ export default function AdminPinsPage() {
   }
 
   const addSeat = async () => {
-    const nextId = Math.max(0, ...pins.map((p) => p.id)) + 1
+    // 次の席の id は「席の最大 id + 1」。ビーコン（id=100）の番号は数えない。万一ぶつかったら空きまで進める
+    const used = new Set(pins.map((p) => p.id))
+    let nextId = Math.max(0, ...pins.filter(isSeat).map((p) => p.id)) + 1
+    while (used.has(nextId)) nextId += 1
     setBusyId(nextId)
     setMessage(null)
     const row: Record<string, unknown> = { id: nextId, label: `席${nextId}`, x: 0, y: 0, theta: 0 }
@@ -214,7 +265,7 @@ export default function AdminPinsPage() {
 
   const map = useMemo(() => {
     const W = 640
-    const pts = pins.map((p) => ({ x: p.x, y: p.y }))
+    const pts = pins.filter((p) => !isUnsetBeacon(p)).map((p) => ({ x: p.x, y: p.y }))
     if (robotPose) pts.push({ x: robotPose.x, y: robotPose.y })
     if (pts.length === 0) pts.push({ x: 0, y: 0 })
     let minX = Math.min(...pts.map((p) => p.x))
@@ -256,6 +307,7 @@ export default function AdminPinsPage() {
       <p className="mt-1 text-sm text-gray-600">
         ロボが向かう先の座標（<code className="rounded bg-gray-100 px-1">stop_points</code>）を地図の上で確認し、手で直せます。
         座標は地図（map フレーム）の m と rad。<b>本棚の場所（id=0）</b>はロボの定位置で、受取後に帰る先・呼出時の自己位置推定の初期位置になります。
+        <b>ビーコン（id=100）</b>は席に置いた UWB ユニットのところへ走る行き先で、座標はロボが前回 UWB で推定した場所です（呼出のたびにロボが書き戻し、この画面は 3 秒ごとに読み直します）。
       </p>
 
       {schemaOk === false && (
@@ -284,6 +336,12 @@ export default function AdminPinsPage() {
           <div className="flex flex-wrap gap-3 text-xs text-gray-600">
             <span><span className="inline-block h-3 w-3 rounded-full bg-amber-500 align-middle" /> 本棚の場所</span>
             <span><span className="inline-block h-3 w-3 rounded-full bg-blue-600 align-middle" /> 席</span>
+            {pins.some(isBeacon) && (
+              <span>
+                <span className="inline-block h-3 w-3 rounded-full border-2 border-dashed border-purple-600 align-middle" />{' '}
+                {pins.some((p) => isBeacon(p) && !isUnsetBeacon(p)) ? 'ビーコン（ロボが前回推定した場所）' : 'ビーコン（まだ推定していません）'}
+              </span>
+            )}
             <span><span className="inline-block h-3 w-3 rotate-45 bg-green-600 align-middle" /> ロボ（矢印は向き）</span>
           </div>
         </div>
@@ -328,11 +386,24 @@ export default function AdminPinsPage() {
             })}
 
             {/* ピン */}
-            {pins.map((p) => {
+            {pins.filter((p) => !isUnsetBeacon(p)).map((p) => {
               const { px, py } = map.toPx(p.x, p.y)
-              const color = isHome(p) ? '#f59e0b' : '#2563eb'
+              const color = isHome(p) ? '#f59e0b' : isBeacon(p) ? '#7c3aed' : '#2563eb'
               const ax = px + arrowLen * Math.cos(p.theta)
               const ay = py - arrowLen * Math.sin(p.theta)
+              if (isBeacon(p)) {
+                // ビーコンは「ロボが前回 UWB で推定した場所」。向きの意味は無いので矢印は出さず、破線の丸と推定の時刻
+                return (
+                  <g key={p.id}>
+                    <circle cx={px} cy={py} r={13} fill="#f5f3ff" stroke={color} strokeWidth={2} strokeDasharray="4 3" />
+                    <text x={px} y={py + 4} fontSize={11} fontWeight={700} fill={color} textAnchor="middle">{p.id}</text>
+                    <text x={px + 16} y={py - 12} fontSize={12} fontWeight={700} fill="#111827">{p.label}</text>
+                    {p.updated_at && (
+                      <text x={px + 16} y={py + 4} fontSize={10} fill={color}>推定 {hhmm(p.updated_at)}</text>
+                    )}
+                  </g>
+                )
+              }
               return (
                 <g key={p.id}>
                   <line x1={px} y1={py} x2={ax} y2={ay} stroke={color} strokeWidth={3} strokeLinecap="round" />
@@ -411,22 +482,25 @@ export default function AdminPinsPage() {
             {pins.map((p) => {
               const d = drafts[p.id] ?? toDraft(p)
               const home = isHome(p)
+              const beacon = isBeacon(p)
               const thetaVal = parseTheta(d.theta)
               return (
                 <li
                   key={p.id}
-                  className={`rounded-lg border p-3 ${home ? 'border-amber-300 bg-amber-50/40' : 'border-gray-200'}`}
+                  className={`rounded-lg border p-3 ${
+                    home ? 'border-amber-300 bg-amber-50/40' : beacon ? 'border-purple-300 bg-purple-50/40' : 'border-gray-200'
+                  }`}
                 >
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span
                         className={`inline-grid h-7 w-7 place-items-center rounded-full text-xs font-bold text-white ${
-                          home ? 'bg-amber-500' : 'bg-blue-600'
+                          home ? 'bg-amber-500' : beacon ? 'bg-purple-600' : 'bg-blue-600'
                         }`}
                       >
                         {p.id}
                       </span>
-                      <span className="text-xs font-bold text-gray-500">{home ? '本棚の場所（ホーム）' : '席'}</span>
+                      <span className="text-xs font-bold text-gray-500">{kindLabel(p)}</span>
                     </div>
                     {p.updated_at && (
                       <span className="text-xs text-gray-400">
@@ -434,6 +508,14 @@ export default function AdminPinsPage() {
                       </span>
                     )}
                   </div>
+                  {beacon && (
+                    <p className="mt-1 text-xs text-purple-800">
+                      席に置いた UWB ユニットのところへ走る行き先（ブリッジを <code className="rounded bg-white px-1">--uwb</code> 付きで起動したときだけ走ります）。
+                      {isUnsetBeacon(p)
+                        ? ' まだ推定していません。最初の呼出では、ロボがその場で回って探します。'
+                        : ` 座標は、ロボが前回 UWB で推定した場所です（${hhmm(p.updated_at)}）。次の呼出では、まずこちらへアンテナを向けて測ります。手で直すと、最初に向く方向が変わります。`}
+                    </p>
+                  )}
 
                   <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     <label className="text-xs text-gray-600">

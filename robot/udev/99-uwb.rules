@@ -1,0 +1,18 @@
+# =====================================================================
+#  UWB 基板（村田 Type 2AB 評価基板・デモ用 CLI ファーム）を /dev/uwb の固定名で見えるようにする
+#
+#  基板の USB（J6）は nRF52840 の USB CDC。ID は idVendor 1915（Nordic）・idProduct 520f。
+#  Arduino 2 枚（/dev/ttyACM*）と同じ系統なので、挿す順で ttyACM0/1/2 が入れ替わる → 固定名にする。
+#  （uwb_reader.py の既定のポート /dev/uwb がこれ）
+#
+#  入れ方（pi_setup.sh が自動でやる。手でやるなら）:
+#    sudo cp ~/moving-bookshelf-app/robot/udev/99-uwb.rules /etc/udev/rules.d/
+#    sudo udevadm control --reload-rules && sudo udevadm trigger
+#    ls -l /dev/uwb                    # → /dev/ttyACMx へのリンクが出れば成功
+#
+#  MODE=0666 … dialout グループに入っていなくても開ける
+#  ID_MM_DEVICE_IGNORE … ModemManager が入っていても、モデムと間違えてポートをつかまないようにする
+#  2 枚を同時に Pi に挿すときは ATTRS{serial}=="…" を足して見分ける
+#    （番号は udevadm info -q property -n /dev/ttyACM0 | grep ID_SERIAL_SHORT）
+# =====================================================================
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1915", ATTRS{idProduct}=="520f", SYMLINK+="uwb", MODE="0666", ENV{ID_MM_DEVICE_IGNORE}="1"

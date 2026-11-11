@@ -2,6 +2,7 @@
 robot_tf_launch.py ― 実走（Nav2）のときの静的 TF  ★段階3★
 
     map ──(AMCL)──> odom ──(mecanum_node.py)──> base_footprint ──【ここ】──> base_link ──【ここ】──> laser
+                                                                                      └──【ここ】──> uwb_link（UWB のアンテナ。S8）
 
 地図づくりで使う ~/bringup/temp_tf_launch.py は odom→base_footprint まで「動かない仮の TF」で出します。
 実走ではそこを mecanum_node.py（車輪オドメトリ）が出すので、★temp_tf_launch.py は止めて★、
@@ -20,6 +21,7 @@ Nav2 標準の nav2_params.yaml のフレーム名（amcl は base_footprint、c
 ★既定値はこの機体（2026-09-20 に Pi の temp_tf_launch.py と実機で確認）★
     base_footprint→base_link  z 0.05
     base_link→laser           x 0.10, z 0.15, yaw 3.14159
+    base_link→uwb_link        robot_params.py の UWB_MOUNT_X / Y / YAW と UWB_ANTENNA_HEIGHT − 0.05（★取り付けてから実測★）
   yaw が 3.14159 なのは、RPLIDAR の 0° が機体の「後ろ」（基板側）を向いて付いているためです
   （機体の前＝本棚側）。0 のままだと地図は作れてしまいますが、Nav2 がゴールと反対へ走らせます。
   確かめ方: ラジコンで前進させたとき、RViz の base_link の赤い軸の向きへロボが進めば合っています。
@@ -30,10 +32,19 @@ LiDAR の取付位置は、地図を作ったときと同じ値にすること�
     ros2 run tf2_ros tf2_echo odom laser        # 数値が流れれば鎖がつながっている
 """
 
+import os
+import sys
+
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+# UWB アンテナの取り付け位置は robot_params.py が正本（S2 の計算と同じ値を使うため）
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import robot_params as P  # noqa: E402
+
+BASE_Z = 0.05   # base_footprint（床）→ base_link の高さ。uwb_link の z は「床からの高さ − これ」
 
 
 def generate_launch_description():
@@ -46,8 +57,17 @@ def generate_launch_description():
                               description="同 高さ [m]"),
         DeclareLaunchArgument("laser_yaw", default_value="3.14159",
                               description="LiDAR の向き [rad]。この機体は 0° が後ろ向きなので 3.14159（前向きに付け直したら 0.0）"),
-        DeclareLaunchArgument("base_z", default_value="0.05",
+        DeclareLaunchArgument("base_z", default_value=str(BASE_Z),
                               description="base_footprint（床）から base_link までの高さ [m]（RViz の見た目だけに効く）"),
+        # ---- UWB アンテナ（S8）。既定は robot_params.py の値 ----
+        DeclareLaunchArgument("uwb_x", default_value=str(P.UWB_MOUNT_X),
+                              description="base_link から見た UWB アンテナ（2 本の中点）の前後位置 [m]（前が +）"),
+        DeclareLaunchArgument("uwb_y", default_value=str(P.UWB_MOUNT_Y),
+                              description="同 左右位置 [m]（左が +）"),
+        DeclareLaunchArgument("uwb_z", default_value=str(round(P.UWB_ANTENNA_HEIGHT - BASE_Z, 3)),
+                              description="同 高さ [m]（床からの高さ − base_z）"),
+        DeclareLaunchArgument("uwb_yaw", default_value=str(P.UWB_MOUNT_YAW),
+                              description="アンテナの面が向く方向 [rad]（前向き 0、後ろ向き 3.14159）"),
     ]
 
     footprint_tf = Node(
@@ -61,4 +81,10 @@ def generate_launch_description():
                    "--z", LaunchConfiguration("laser_z"), "--yaw", LaunchConfiguration("laser_yaw"),
                    "--frame-id", "base_link", "--child-frame-id", "laser"],
     )
-    return LaunchDescription(args + [footprint_tf, laser_tf])
+    uwb_tf = Node(
+        package="tf2_ros", executable="static_transform_publisher", name="tf_base_to_uwb",
+        arguments=["--x", LaunchConfiguration("uwb_x"), "--y", LaunchConfiguration("uwb_y"),
+                   "--z", LaunchConfiguration("uwb_z"), "--yaw", LaunchConfiguration("uwb_yaw"),
+                   "--frame-id", "base_link", "--child-frame-id", "uwb_link"],
+    )
+    return LaunchDescription(args + [footprint_tf, laser_tf, uwb_tf])

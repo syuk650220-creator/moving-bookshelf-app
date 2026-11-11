@@ -42,6 +42,8 @@ import manual_control as MCTL     # noqa: E402  （requests は上でスタブ�
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nav2"))
 import make_nav2_params as NP     # noqa: E402  （yaml は main() の中でしか import しない）
 import map_check as MC            # noqa: E402
+import uwb_reader as U            # noqa: E402  （pyserial は open_serial() の中でしか import しない）
+import beacon_locator as BL       # noqa: E402
 
 ok = True
 
@@ -262,6 +264,9 @@ class FakeSupa:
             self.calls[re.search(r"id=eq\.([\w-]+)", query).group(1)] = body["status"]
         elif table == "robot_status":
             self.status.update(body)
+        elif table == "stop_points":
+            i = int(re.search(r"id=eq\.(-?\d+)", query).group(1))
+            self.sp.setdefault(i, {"id": i}).update(body)
         return [dict(body)]
 
     def states(self):
@@ -276,6 +281,7 @@ class FakeNav:
 
     def __init__(self, fail_go_at=None, fail_localize=False, interrupt_go=False, interrupt_go_at=None):
         self.events = []
+        self.goals = []                   # go に渡されたゴール (x, y, theta)
         self.pose = (0.0, 0.0, 0.0)
         self.n_go = 0
         self.fail_go_at = fail_go_at
@@ -290,13 +296,25 @@ class FakeNav:
     def go(self, goal, on_progress=None):
         self.n_go += 1
         self.events.append(("go", goal["label"]))
+        self.goals.append((goal["x"], goal["y"], goal["theta"]))
         if self.interrupt_go or self.n_go == self.interrupt_go_at:
             raise KeyboardInterrupt
         if on_progress:
-            on_progress(1.23, (goal["x"] / 2, goal["y"] / 2, goal["theta"]))
-        if self.fail_go_at == self.n_go:
+            self.pose = (goal["x"] / 2, goal["y"] / 2, goal["theta"])      # 途中（ゴールの半分）まで来たことにする
+            new_goal = on_progress(1.23, self.pose)
+            if new_goal:                                                   # 走りながらゴールを差し替える（ビーコン）
+                self.events.append(("retarget", round(new_goal["x"], 2), round(new_goal["y"], 2)))
+                goal = new_goal
+        fails = self.fail_go_at if isinstance(self.fail_go_at, (tuple, list, set)) else (self.fail_go_at,)
+        if self.n_go in fails:
             return False
         self.pose = (goal["x"], goal["y"], goal["theta"])
+        return True
+
+    def turn(self, angle):
+        x, y, yaw = self.pose
+        self.pose = (x, y, math.atan2(math.sin(yaw + angle), math.cos(yaw + angle)))
+        self.events.append(("turn", round(math.degrees(angle))))
         return True
 
     def current_pose(self):
@@ -311,6 +329,7 @@ PINS = [
     {"id": 1, "label": "席1", "x": 1.0, "y": 0.5, "theta": 1.57, "kind": "seat"},
     {"id": 2, "label": "席2", "x": 2.0, "y": 0.0, "theta": 0.0, "kind": "seat"},
 ]
+BEACON_PIN = {"id": 100, "label": "ビーコン（UWB）", "x": 0.0, "y": 0.0, "theta": 0.0, "kind": "beacon"}   # sql/05
 
 
 def make_bridge(supa, nav, **kw):
@@ -392,6 +411,11 @@ br.handle(call("c7", 0))
 check("seat_id=0（本棚の場所）は canceled", (s.calls["c7"], n.events), ("canceled", []))
 br.handle(call("c8", 99))
 check("存在しない席は canceled", (s.calls["c8"], n.events), ("canceled", []))
+s, n = FakeSupa(PINS + [BEACON_PIN]), FakeNav()
+br = make_bridge(s, n)
+br.handle(call("c8b", 100))
+check("ビーコン（kind=beacon）は、UWB なし（--uwb 無し）なら走らず canceled", (s.calls["c8b"], n.events), ("canceled", []))
+check("理由を detail に書く（アプリに出る）", "--uwb" in (s.status.get("detail") or ""), True)
 
 print("  --- ホーム未登録 / 帰還なし / 自己位置推定なし ---")
 s, n = FakeSupa([p for p in PINS if p["id"] != 0]), FakeNav()
@@ -852,6 +876,569 @@ _rd._tick(104.1)
 with contextlib.redirect_stdout(io.StringIO()) as _log3:
     _rd._tick(104.7)
 check("2 回目の途切れも、また止めてログを出す", (_pubs, "0.5 秒" in _log3.getvalue()), ([(M.FORWARD, 30), (0, 0)], True))
+
+
+# =====================================================================
+print("\n=== uwb_reader（UWB 基板の出力の読み取り。S1）===")
+# =====================================================================
+#   基板は 1 秒 5 回、1 行 1 JSON を流す。文字 → 数値（距離 m・方向 deg）に直し、
+#   測れなかった回・命令の返事・途中で切れた行を捨てる。命令は電波法のガードを通してからしか送れない。
+
+SAMPLE = ('{"Block":0, "results":[{"Addr":"0x0001","Status":"Ok","D_cm":166,"LPDoA_deg":-30.99,'
+          '"LAoA_deg":-9.65,"LFoM":86,"RAoA_deg":15.52,"CFO_100ppm":415}]}')
+rs = U.parse_line(SAMPLE, angle_sign=+1, t=10.0)
+check("測定の行は 1 件（相手 1 台）", len(rs), 1)
+r = rs[0]
+check("Block / Addr / Ok", (r.block, r.addr, r.ok), (0, "0x0001", True))
+check("D_cm 166 → 1.66 m", r.distance_m, 1.66)
+check("LAoA_deg −9.65 → bearing（angle_sign=+1 なら同じ値）", (r.laoa_deg, r.bearing_deg), (-9.65, -9.65))
+_q = U.parse_line(SAMPLE, angle_sign=-1)[0]
+check("angle_sign=−1 なら bearing の符号が反転（LAoA はそのまま残す）", (_q.laoa_deg, _q.bearing_deg), (-9.65, 9.65))
+check("PDoA / FoM / RAoA", (r.pdoa_deg, r.fom, r.raoa_deg), (-30.99, 86.0, 15.52))
+check("diag なしなら RSSI / NLOS は None", (r.rssi_dbm, r.nlos_pct), (None, None))
+check("bearing_rad", round(r.bearing_rad, 4), round(math.radians(-9.65), 4))
+check("読んだ時刻 t", r.t, 10.0)
+
+print("  --- 書式のゆれ・測れなかった回・ほかの行 ---")
+check("Status の前後に空白があっても Ok",
+      U.parse_line('{"Block":3,"results":[{"Addr":"0x0001","Status":" Ok ","D_cm":100,"LAoA_deg":5}]}')[0].ok, True)
+_diag = ('{"Block":7,"results":[{"Addr":"0x0001","Status":"Ok","D_cm":212,"LPDoA_deg":1.2,"LAoA_deg":0.4,'
+         '"LFoM":90,"RAoA_deg":-1.0,"CFO_100ppm":400,"RSSI_dBm":"-61.3","NLOS_%":12}]}')
+r7 = U.parse_line(_diag)[0]
+check("diag 1 の RSSI（文字列）と NLOS を数値に", (r7.rssi_dbm, r7.nlos_pct), (-61.3, 12.0))
+bad = U.parse_line('{"Block":8,"results":[{"Addr":"0x0001","Status":"Err","D_cm":0,"LAoA_deg":0,"LFoM":0}]}')[0]
+check("Status が Ok 以外: ok=False・距離と方向は None（0 を値として使わない）",
+      (bad.ok, bad.distance_m, bad.bearing_deg), (False, None, None))
+two = U.parse_line('{"Block":9,"results":[{"Addr":"0x0001","Status":"Ok","D_cm":100,"LAoA_deg":10},'
+                   '{"Addr":"0x0002","Status":"Ok","D_cm":250,"LAoA_deg":-40}]}')
+check("相手が 2 台（1 対多）なら 2 件", [(q.addr, q.distance_m, q.bearing_deg) for q in two],
+      [("0x0001", 1.0, 10.0), ("0x0002", 2.5, -40.0)])
+check("命令の返事 JS00BE{…} は測定ではない",
+      (U.line_kind('JS00BE{"UWB PARAM":{"CHAN":9}}'), U.parse_line('JS00BE{"UWB PARAM":{"CHAN":9}}')), ("reply", []))
+check("ok / error / 空行 / その他の行の種類",
+      [U.line_kind(x) for x in ("ok", "ERROR", "", "   ", "CURRENT ANTENNA_TYPE:JS1055-9")],
+      ["ack", "ack", "empty", "empty", "other"])
+check("途中で切れた行は捨てる（例外にしない）", U.parse_line('{"Block":10,"results":[{"Addr":"0x0001","Sta'), [])
+# 測定中に打った命令の文字が、測定の行の頭に混ざる（実物で確認した形。数値は作り物）
+_echo = 's{"Block":12, "results":[{"Addr":"0x0001","Status":"Ok","D_cm":123,"LPDoA_deg":1.5,"LAoA_deg":0.5,"LFoM":200,"RAoA_deg":0.0,"CFO_100ppm":0}]}'
+check("頭に打った文字が混ざった測定の行も読む（種類）", U.line_kind(_echo), "measure")
+_e = U.parse_line(_echo, angle_sign=+1, t=0.0)
+check("頭に打った文字が混ざった測定の行も読む（中身）",
+      (len(_e), _e[0].block, _e[0].ok, _e[0].distance_m, _e[0].laoa_deg) if _e else None, (1, 12, True, 1.23, 0.5))
+check("ok と測定の行がくっついても測定として読む", U.line_kind('ok{"Block":13, "results":[]}'), "measure")
+check("results の無い JSON も捨てる", U.parse_line('{"Block":11}'), [])
+
+print("  --- 使える回か（しきい値は実測で決めるまで None＝見ない）---")
+check("Ok で距離 > 0 なら使える", U.is_usable(r), True)
+check("測れなかった回は使えない", U.is_usable(bad), False)
+check("FoM のしきい値", (U.is_usable(r, min_fom=80), U.is_usable(r, min_fom=90)), (True, False))
+check("NLOS のしきい値（値が無い回は見ない）",
+      (U.is_usable(r7, max_nlos=10), U.is_usable(r7, max_nlos=20), U.is_usable(r, max_nlos=10)), (False, True, True))
+check("遠すぎる回", U.is_usable(r, max_distance_m=1.0), False)
+check("CSV の 1 行は見出しと同じ数の欄", len(U.csv_row(r)), len(U.CSV_FIELDS))
+check("CSV: 測れなかった回は数値の欄が空", U.csv_row(bad)[4:6], ["", ""])
+
+print("  --- 電波法のガード（送ってよい命令しか通さない。チャネル 9 固定・txpower 禁止）---")
+check("測り始める命令の列（既定）", U.start_commands(), ["stop", U.UWBCFG_CH9, "antenna js1055-9", "initf"])
+check("応える側・diag あり", U.start_commands("respf", diag=True),
+      ["stop", U.UWBCFG_CH9, "antenna js1055-9", "diag 1", "respf"])
+check("save 済みなら設定を打たない", U.start_commands(configure=False), ["stop", "initf"])
+check("uwbcfg の先頭はチャネル 9", (U.CHANNEL, U.UWBCFG_CH9.split()[1]), (9, "9"))
+for _good in ("stop", "initf", "respf", "diag 1", "save", "restore", "stat", "version", "help", "dcfg",
+              "uwbcfg", "antenna", "antenna js1055-9", U.UWBCFG_CH9, "  STOP  "):
+    try:
+        U.check_command(_good)
+    except U.IllegalCommand as e:
+        check(f"通るべき命令が止められた: {_good!r}", str(e), "")
+check("空白と改行を整える", U.check_command("  uwbcfg   9 64 8 9 9 3 6810 0 0 65 0 64 1 \r\n"), U.UWBCFG_CH9)
+
+
+def _blocked(cmd):
+    try:
+        U.check_command(cmd)
+        return False
+    except U.IllegalCommand:
+        return True
+
+
+check("txpower は止める", _blocked("txpower 10"), True)
+check("チャネル 5 の uwbcfg は止める", _blocked("uwbcfg 5 64 8 9 9 3 6810 0 0 65 0 64 1"), True)
+check("チャネル 9 以外は全部止める（例 10）", _blocked("UWBCFG 10 64 8 9 9 3 6810 0 0 65 0 64 1"), True)
+check("js1055-5（チャネル 5 用アンテナ）は止める", _blocked("antenna js1055-5"), True)
+check("ほかのアンテナ型も止める", _blocked("antenna external-1"), True)
+check("試験ファームの AT 命令は止める", [_blocked(x) for x in ("AT+UCW", "AT+UTX", "AT+UCHAN=5", "at")], [True] * 4)
+check("空の命令は止める", _blocked("   "), True)
+check("1 行に 2 つ詰めた txpower も止める", _blocked("stop\r\ntxpower 5"), True)
+
+print("  --- UwbReader × FakeUwbBoard（基板のにせもの。命令は CR 終端・返事を読み捨て・1 秒 5 回）---")
+_clk = {"t": 100.0}
+board = U.FakeUwbBoard(distance_m=1.5, bearing_deg=20.0, clock=lambda: _clk["t"])
+rd = U.UwbReader(board, angle_sign=+1)
+check("initf の前は何も流れない", board.readline(), b"")
+_sent = rd.start(sleep=lambda s: None)
+check("送った命令の列", _sent, ["stop", U.UWBCFG_CH9, "antenna js1055-9", "initf"])
+check("基板が受けた命令（CR で区切られて 4 つ）", board.received, _sent)
+check("返事（JS…／ok）は読み捨てられ、測定はまだ 0 回", (rd.n_lines, rd.n_ok, rd.last), (7, 0, None))
+check("200 ms 経つ前は何も来ない", rd.poll(), [])
+_clk["t"] += 0.2
+rs = rd.poll()
+check("200 ms 後に 1 回（1.5 m・左 20°）", (len(rs), rs[0].ok, rs[0].distance_m, rs[0].bearing_deg), (1, True, 1.5, 20.0))
+check("基板の生の値 LAoA_deg（angle_sign=+1 なら bearing と同じ）", rs[0].laoa_deg, 20.0)
+check("latest(): 新しいうちは返す・古くなると None",
+      (rd.latest(0.5, now=rs[0].t + 0.3) is rs[0], rd.latest(0.5, now=rs[0].t + 0.6)), (True, None))
+board.set_target(0.8, -45.0)
+_clk["t"] += 0.2
+rs = rd.poll()
+check("相手を動かすと次の回から変わる（0.8 m・右 45°）", (rs[0].distance_m, rs[0].bearing_deg), (0.8, -45.0))
+_clk["t"] += 1.0
+_cnt = 0
+while rd.poll():
+    _cnt += 1
+check("1 秒で 5 回（たまった行は続けて読める）", _cnt, 5)
+board.set_target(1.0, 150.0)
+_clk["t"] += 0.2
+check("後ろ（150°）の相手は前に鏡写し（30°）で見える＝前後は UWB だけでは分からない", rd.poll()[0].bearing_deg, 30.0)
+board.set_target(1.0, -120.0)
+_clk["t"] += 0.2
+check("右後ろ（−120°）→ −60°", rd.poll()[0].bearing_deg, -60.0)
+rd.stop()
+check("stop を送ると止まる", (rd.sent[-1], board.running), ("stop", False))
+_clk["t"] += 1.0
+check("止まったあとは何も流れない（ok の返事だけ）", (rd.poll(), rd.poll()), ([], []))
+try:
+    rd.send("txpower 3")
+    check("txpower は send() で止まる", "送られてしまった", "IllegalCommand")
+except U.IllegalCommand:
+    check("txpower は send() で止まる（基板には届かない）", any("txpower" in c for c in board.received), False)
+
+print("  --- 測り始めてすぐ返事を読み捨てる場面で、測定の行を捨てない ---")
+_clk["t"] = 200.0
+_b5 = U.FakeUwbBoard(1.0, 0.0, clock=lambda: _clk["t"])
+_rd5 = U.UwbReader(_b5)
+
+
+def _sleep_and_advance(sec):      # 本物の基板は、返事を待っている 0.3 秒のあいだにも測定の行を流し始める
+    _clk["t"] += sec
+
+
+_rd5.start(gap=0.3, sleep=_sleep_and_advance)
+check("initf の返事のあとに届いた最初の測定は捨てずに数える", (_rd5.n_ok, _rd5.last is not None), (1, True))
+_clk["t"] += 0.2
+check("そのあとも普通に読める", len(_rd5.poll()), 1)
+
+_b2 = U.FakeUwbBoard(1.0, 30.0, clock=lambda: _clk["t"], angle_sign=-1)
+_rd2 = U.UwbReader(_b2, angle_sign=-1)
+_rd2.start(sleep=lambda s: None)
+_clk["t"] += 0.2
+_q2 = _rd2.poll()[0]
+check("基板が「右が＋」でも angle_sign=−1 で左が＋に揃う（LAoA −30 → bearing +30）", (_q2.laoa_deg, _q2.bearing_deg), (-30.0, 30.0))
+
+_b3 = U.FakeUwbBoard(2.0, 0.0, drop_rate=1.0, clock=lambda: _clk["t"])
+_rd3 = U.UwbReader(_b3)
+_rd3.start(diag=True, sleep=lambda s: None)
+_clk["t"] += 0.2
+_q3 = _rd3.poll()[0]
+check("測れなかった回は ok=False で数えられる", (_q3.ok, _rd3.n_ok, _rd3.n_fail), (False, 0, 1))
+_b3.drop_rate = 0.0
+_clk["t"] += 0.2
+_q3 = _rd3.poll()[0]
+check("diag 1 なら RSSI と NLOS が付く", (_q3.rssi_dbm is not None, _q3.nlos_pct), (True, 0.0))
+
+_buf = io.StringIO()
+_b4 = U.FakeUwbBoard(1.2, 10.0, clock=lambda: _clk["t"])
+_rd4 = U.UwbReader(_b4, log=_buf)
+_rd4.start(configure=False, sleep=lambda s: None)
+_clk["t"] += 0.2
+_rd4.poll()
+_lines = _buf.getvalue().splitlines()
+check("生のログ: 打った命令は「# > 」付き、基板の行はそのまま",
+      (_lines[0], _lines[1], _lines[2], _lines[-1].startswith('{"Block"')), ("# > stop", "ok", "# > initf", True))
+check("ポート探し: 固定名が無く USB にも無ければ None", U.find_port("/dev/__no_such_uwb__"), None)
+
+
+# =====================================================================
+print("\n=== beacon_locator（UWB の距離と方向 → ユニットの地図座標。S2）===")
+# =====================================================================
+#   アンテナの地図上の位置 ＋ 水平距離 × 方向 → 点。候補は前後 2 つ。ロボが回ると本当の側に集まる。
+M0 = BL.Mount(x=0.1, y=0.0, yaw=0.0, height=0.25)
+_ap = BL.antenna_pose((1.0, 2.0, math.pi / 2), M0)
+check("アンテナの位置: ロボ (1, 2) 向き 90°・取り付け x=0.1 → (1, 2.1) 向き 90°",
+      (round(_ap[0], 6), round(_ap[1], 6), round(_ap[2], 6)), (1.0, 2.1, round(math.pi / 2, 6)))
+check("後ろ向きの取り付け（yaw=π）は向きが反転",
+      round(abs(BL.antenna_pose((0.0, 0.0, 0.0), BL.Mount(-0.1, 0.0, math.pi, 0.25))[2]), 6), round(math.pi, 6))
+check("斜め距離 1.0・高さの差 0.6 → 水平 0.8", round(BL.horizontal_distance(1.0, 0.6), 6), 0.8)
+check("高さの差より短ければ 0（真上）", BL.horizontal_distance(0.4, 0.6), 0.0)
+check("鏡写し: 30 → 150、−30 → −150、0 → 180", [BL.mirror_bearing(b) for b in (30.0, -30.0, 0.0)], [150.0, -150.0, 180.0])
+_pt = BL.point_from((0.1, 0.0, 0.0), 1.0, 0.0)
+check("前 1 m → (1.1, 0)", (round(_pt[0], 6), round(_pt[1], 6)), (1.1, 0.0))
+_pt = BL.point_from((0.1, 0.0, 0.0), 1.0, 90.0)
+check("左 90° 1 m → (0.1, 1)", (round(_pt[0], 6), round(_pt[1], 6)), (0.1, 1.0))
+_mx, _my, _sp = BL.median_point([(1.0, 1.0), (1.1, 0.9), (0.9, 1.1), (1.0, 1.0), (5.0, 5.0)])
+check("中央値は外れ値 (5,5) に引きずられない（平均なら (1.8, 1.8) になる）", (round(_mx, 2), round(_my, 2), _sp < 0.5), (1.0, 1.0, True))
+_tri = BL.trilaterate([(0.0, 0.0), (2.0, 0.0), (0.0, 2.0)], [math.sqrt(2.0), math.sqrt(2.0), math.sqrt(2.0)])
+check("三点測位: 3 点から等距離 √2 → (1, 1)", (round(_tri[0], 6), round(_tri[1], 6)), (1.0, 1.0))
+_tri = BL.trilaterate([(0.1, 0.0), (1.1, 0.0), (0.1, 1.0)], [math.hypot(0.4, 3.0), math.hypot(0.6, 3.0), math.hypot(0.4, 2.0)])
+check("三点測位: 一般の位置 (0.5, 3.0)", (round(_tri[0], 6), round(_tri[1], 6)), (0.5, 3.0))
+check("一直線上の 3 点では決まらない", BL.trilaterate([(0.0, 0.0), (1.0, 0.0), (2.0, 0.0)], [1.0, 1.0, 1.0]), None)
+check("2 点では決まらない", BL.trilaterate([(0.0, 0.0), (1.0, 0.0)], [1.0, 1.0]), None)
+
+print("  --- simulate_reading（逆計算: ユニットの位置 → 基板が出すはずの値）---")
+_d, _b = BL.simulate_reading((0.0, 0.0, 0.0), (2.1, 0.0), M0, beacon_height=0.25)
+check("正面 2 m（高さ同じ）→ d=2.0・b=0", (round(_d, 6), round(_b, 6)), (2.0, 0.0))
+_d, _b = BL.simulate_reading((0.0, 0.0, 0.0), (0.1, 1.0), M0, beacon_height=0.85)
+check("左 90°・高さの差 0.6 → 斜め距離 √1.36", (round(_d, 4), round(_b, 4)), (round(math.sqrt(1.36), 4), 90.0))
+_d, _b = BL.simulate_reading((0.0, 0.0, 0.0), (-1.9, 0.0), M0, beacon_height=0.25)
+check("真後ろは鏡写しで前（b=180 → 0）に見える", (round(_d, 6), round(abs(_b), 6)), (2.0, 0.0))
+
+
+def _reading(d, b, ok=True):
+    return U.UwbReading(block=1, addr="0x0001", ok=ok, distance_m=d, bearing_deg=b, laoa_deg=b,
+                        pdoa_deg=None, fom=86.0, raoa_deg=None, rssi_dbm=None, nlos_pct=None, t=0.0)
+
+
+def _feed(est, pose, beacon, n=5, h=0.75):
+    for _ in range(n):
+        d, b = BL.simulate_reading(pose, beacon, M0, h)
+        est.add(pose, _reading(d, b))
+
+
+print("  --- 何回かまとめる・前後の見分け・距離だけで決める ---")
+est = BL.BeaconEstimator(mount=M0, beacon_height=0.75)
+check("測定が無ければ None", est.estimate(), None)
+check("測れなかった回は使わない", est.add((0.0, 0.0, 0.0), _reading(1.0, 0.0, ok=False)), False)
+_feed(est, (0.0, 0.0, 0.0), (2.0, 1.0))
+e = est.estimate()
+check("止まったまま 5 回: 前の候補を仮に返す・前後は未確定", (round(e.x, 2), round(e.y, 2), e.ambiguous, e.n), (2.0, 1.0, True, 5))
+_feed(est, (0.0, 0.0, math.radians(30)), (2.0, 1.0))
+e = est.estimate()
+check("30° 回って 5 回: 前後が決まる（前）・10 回が支持", (round(e.x, 2), round(e.y, 2), e.ambiguous, e.n, e.method),
+      (2.0, 1.0, False, 10, "bearing"))
+check("最新の方向はアンテナから見た値（30° 回ったぶん小さい）",
+      round(e.bearing_deg, 3), round(BL.simulate_reading((0.0, 0.0, math.radians(30)), (2.0, 1.0), M0, 0.75)[1], 3))
+check("ばらつきは 0（偽の値は正確）", round(e.spread_m, 6), 0.0)
+est2 = BL.BeaconEstimator(mount=M0, beacon_height=0.75)
+_feed(est2, (0.0, 0.0, 0.0), (-2.0, 0.5))
+_feed(est2, (0.0, 0.0, math.radians(30)), (-2.0, 0.5))
+e2 = est2.estimate()
+check("後ろの相手（基板は鏡写しの角しか出せない）も、回れば正しい側に決まる",
+      (round(e2.x, 2), round(e2.y, 2), e2.ambiguous), (-2.0, 0.5, False))
+check("方向は鏡写しを戻した値（後ろ＝|b| > 90）", abs(e2.bearing_deg) > 90.0, True)
+est3 = BL.BeaconEstimator(mount=M0, beacon_height=0.75)
+for _pose in ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
+    _feed(est3, _pose, (0.5, 3.0), n=1)
+e3 = est3.estimate()
+check("真横に近い相手（±60° の外）: 方向は使わず、3 か所の距離だけで決まる",
+      (e3.method, round(e3.x, 2), round(e3.y, 2), e3.ambiguous), ("range", 0.5, 3.0, False))
+est4 = BL.BeaconEstimator(mount=M0, beacon_height=0.75, window=6)
+_feed(est4, (0.0, 0.0, 0.0), (2.0, 0.0), n=10)
+check("窓（最近 N 回）より古い測定は捨てる", (est4.n_used, est4.estimate().n), (10, 6))
+check("回って決めた推定は resolved_by='turn'", e.resolved_by, "turn")
+
+print("  --- 前回の場所（prior）で前後を決める・取り付けの文字・アンテナの正面の範囲 ---")
+_ep = BL.BeaconEstimator(mount=M0, beacon_height=0.75, prior=(-2.0, 0.5))
+_feed(_ep, (0.0, 0.0, 0.0), (-2.0, 0.5))
+_e = _ep.estimate()
+check("止まったままでも、前回の場所に近い山（後ろ）に決まる",
+      (round(_e.x, 2), round(_e.y, 2), _e.ambiguous, _e.resolved_by), (-2.0, 0.5, False, "prior"))
+_ep = BL.BeaconEstimator(mount=M0, beacon_height=0.75, prior=(2.1, 0.6))
+_feed(_ep, (0.0, 0.0, 0.0), (2.0, 0.5))
+_e = _ep.estimate()
+check("前回の場所が前の山に近ければ、前に決まる", (round(_e.x, 2), round(_e.y, 2), _e.ambiguous, _e.resolved_by),
+      (2.0, 0.5, False, "prior"))
+_ep = BL.BeaconEstimator(mount=M0, beacon_height=0.75, prior=(5.0, 5.0))
+_feed(_ep, (0.0, 0.0, 0.0), (2.0, 0.5))
+check("前回の場所がどちらの山からも遠い（ユニットが動いた）→ 未確定のまま", _ep.estimate().ambiguous, True)
+_ep = BL.BeaconEstimator(mount=M0, beacon_height=0.75, prior=(-2.0, 0.5))
+_feed(_ep, (0.0, 0.0, 0.0), (-2.0, 0.5), n=2)
+check("測定が 3 回に満たなければ、前回の場所があっても決めない", _ep.estimate().ambiguous, True)
+_m = BL.parse_mount("-0.15, 0, 180, 0.25")
+check("取り付けの文字 → Mount（向きは度で書く）", (_m.x, _m.y, round(_m.yaw, 6), _m.height), (-0.15, 0.0, round(math.pi, 6), 0.25))
+for _bad in ("1,2,3", "a,b,c,d", "0,0,0,2.0"):
+    try:
+        BL.parse_mount(_bad)
+        _r = "通った"
+    except ValueError:
+        _r = "ValueError"
+    check(f"取り付けの文字が正しくない（{_bad}）→ ValueError", _r, "ValueError")
+MR = BL.Mount(x=-0.15, y=0.0, yaw=math.pi, height=0.25)      # 後ろ向き（本棚の後ろの台座に立てる）
+check("後ろ向き: 機体の前 2 m の点はアンテナの正面の範囲の外（機体の陰）", BL.in_antenna_cone((2.0, 0.0), (0.0, 0.0, 0.0), MR), False)
+check("後ろ向き: 機体の後ろ 2 m の点は正面（0°）", (BL.in_antenna_cone((-2.0, 0.0), (0.0, 0.0, 0.0), MR),
+                                              round(BL.bearing_from_antenna((-2.0, 0.0), (0.0, 0.0, 0.0), MR), 6)), (True, 0.0))
+check("前向き: 機体の前 2 m・左 1 m の点は正面の範囲の内", BL.in_antenna_cone((2.0, 1.0), (0.0, 0.0, 0.0), M0), True)
+
+print("  --- 手前のゴール ---")
+_e = BL.BeaconEstimate(2.0, 0.0, 5, 0.0, "bearing", False, 2.0, 0.0)
+g = BL.standoff_goal(_e, (0.0, 0.0, 0.0), 0.5)
+check("手前 0.5 m のゴール: (1.5, 0) 向き 0°", (round(g["x"], 6), round(g["y"], 6), round(g["theta"], 6)), (1.5, 0.0, 0.0))
+g = BL.standoff_goal(_e, (1.8, 0.0, 1.0), 0.5)
+check("もう手前より近ければ、その場で向きだけユニットへ", (round(g["x"], 6), round(g["y"], 6), round(g["theta"], 6)), (1.8, 0.0, 0.0))
+check("席のゴールと同じ形（frame_id・qz・qw・label）＋ beacon・standoff",
+      (g["frame_id"], round(g["qz"], 6), round(g["qw"], 6), g["label"], g["beacon"], g["standoff"]),
+      ("map", 0.0, 1.0, "ビーコン（UWB）", (2.0, 0.0), 0.5))
+
+
+# =====================================================================
+print("\n=== Bridge: ビーコン（UWB）への走行（S3。偽の基板がロボの位置に合わせた値を出す）===")
+# =====================================================================
+#   探す → 前後を決める（30°）→ 相手のほうを向く → 0.5 m 手前へ → 受取 → 帰還。時間は手で進める。
+_clk = {"t": 1000.0}
+
+
+def _mk_world(beacon_xy, start=(0.0, 0.0, 0.0), mount=None, shadow=False, hint=None, nav=None, **board_kw):
+    """偽の Supabase・偽の Nav・偽の UWB 基板（ロボの位置からユニットまでを逆計算して流す）を組んだブリッジ。
+    mount: アンテナの取り付け（既定 M0＝前向き）。shadow=True なら、ユニットがアンテナの裏側（機体の陰）にある回は
+    35 % 測れず、距離 +45 cm・方向 +20° で出る（いつも同じずれ＝厳しめ）。hint: ビーコンの行の x, y（前回の推定）。"""
+    mount = mount or M0
+    pin = dict(BEACON_PIN)
+    if hint is not None:
+        pin["x"], pin["y"] = hint
+    s, n = FakeSupa(PINS + [pin]), nav or FakeNav()
+    n.pose = start
+    board = U.FakeUwbBoard(clock=lambda: _clk["t"], **board_kw)
+    base_drop = board.drop_rate
+
+    def target():
+        d, b = BL.simulate_reading(n.pose, beacon_xy, mount)      # b は基板と同じく鏡写し済み（±90°）
+        if shadow:
+            behind = abs(BL.bearing_from_antenna(beacon_xy, n.pose, mount)) > 90.0   # 本当の方向で陰か決める
+            board.drop_rate = 0.35 if behind else base_drop
+            if behind:
+                d, b = d + 0.45, b + 20.0
+        return d, b
+
+    board.target_fn = target
+    uwb = U.UwbReader(board)
+    br = make_bridge(s, n, uwb=uwb, beacon_search_sec=1.0, uwb_mount=mount)
+    br._clock = lambda: _clk["t"]
+    br._sleep = lambda sec: _clk.__setitem__("t", _clk["t"] + sec)
+    return s, n, br, uwb, board
+
+
+def _turns_before_go(events):
+    out = []
+    for ev in events:
+        if ev[0] == "go":
+            break
+        if ev[0] == "turn":
+            out.append(ev[1])
+    return out
+
+
+def _expected_standoff(beacon_xy, from_xy=(0.0, 0.0), standoff=0.5):
+    th = math.atan2(beacon_xy[1] - from_xy[1], beacon_xy[0] - from_xy[0])
+    return (beacon_xy[0] - standoff * math.cos(th), beacon_xy[1] - standoff * math.sin(th), th)
+
+
+print("  --- 正常系: 前方のユニット (2, 1) → 探す（前後を決める 30°）→ 手前 0.5 m → 受取 → 帰還 ---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0))
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cb1", 100))
+check("呼出は done まで進む", s.calls["cb1"], "done")
+_seq = [st for st in s.states() if st in ("arrived", "returning")] + [s.status["state"]]
+_seq = [st for i, st in enumerate(_seq) if i == 0 or st != _seq[i - 1]]          # 連続の重複（帰還中の現在地書き込み）はまとめる
+check("robot_status: arrived → returning → idle の順を含む", _seq, ["arrived", "returning", "idle"])
+_ev = [ev[0] if ev[0] == "turn" else ev for ev in n.events]
+check("出来事: 自己位置推定 → 相手の方向へ向く → 30° 回って前後を決める → ビーコンへ → 本棚へ",
+      _ev, [("localize", "本棚の場所"), "turn", "turn", ("go", "ビーコン（UWB）"), ("go", "本棚の場所")])
+_tb = _turns_before_go(n.events)
+check("向く角度は約 28°（前方 (2, 1) の方向）・確かめは ±30°", (20 <= _tb[0] <= 35, abs(_tb[1])), (True, 30))
+_g = n.goals[0]
+_x, _y, _th = _expected_standoff((2.0, 1.0))
+check("ゴールはユニットの 0.5 m 手前（誤差 5 cm 以内）", math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, True)
+check("ゴールの向きはユニットのほう", abs(_g[2] - _th) < math.radians(3), True)
+check("基板には stop → uwbcfg 9 … → antenna → initf → … → stop を送った（電波法の列のまま）",
+      (uwb.sent[:4], uwb.sent[-1]), (["stop", U.UWBCFG_CH9, "antenna js1055-9", "initf"], "stop"))
+check("走行中の detail に「ビーコン」", any("ビーコン" in (b.get("detail") or "") for t, b in s.log if t == "robot_status"), True)
+
+print("  --- 後ろのユニット (−2, 0.5): 鏡写しに見えるが、回って見分け、そちらを向いてから走る ---")
+s, n, br, uwb, board = _mk_world((-2.0, 0.5))
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cb2", 100))
+check("done まで進む", s.calls["cb2"], "done")
+_turns = [ev for ev in n.events if ev[0] == "turn"]
+check("30° 回って前後を決めたあと、相手のほう（約 136°）へ向く",
+      (len(_turns) >= 2, _turns[0], 120 <= _turns[1][1] <= 150), (True, ("turn", 30), True))
+_g = n.goals[0]
+_x, _y, _th = _expected_standoff((-2.0, 0.5))
+check("ゴールは後ろのユニットの 0.5 m 手前", math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, True)
+
+print("  --- ばらつき・測れない回があっても着く ---")
+s, n, br, uwb, board = _mk_world((1.5, -1.0), noise_m=0.05, noise_deg=4.0, drop_rate=0.1, seed=3)
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cb3", 100))
+_g = n.goals[0]
+_x, _y, _th = _expected_standoff((1.5, -1.0))
+check("done・ゴールは 0.5 m 手前から 15 cm 以内", (s.calls["cb3"], math.hypot(_g[0] - _x, _g[1] - _y) < 0.15), ("done", True))
+
+print("  --- 見つからない: 何も測れない → 60° ずつ 1 周 → canceled ---")
+s, n, br, uwb, board = _mk_world((2.0, 0.0), drop_rate=1.0)
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cb4", 100))
+check("canceled・走らない", (s.calls["cb4"], [ev for ev in n.events if ev[0] == "go"]), ("canceled", []))
+check("60° × 6 回探した", [ev for ev in n.events if ev[0] == "turn"], [("turn", 60)] * 6)
+check("理由「見つかりません」を detail に", "見つかりません" in (s.status.get("detail") or ""), True)
+check("基板は stop してある", uwb.sent[-1], "stop")
+
+print("  --- 走行の失敗: 手前を 0.2 m 広げてもう一度 → それでもだめなら canceled ---")
+s, n, br, uwb, board = _mk_world((2.0, 0.0))
+n.fail_go_at = 1
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cb5", 100))
+check("1 回目失敗 → 2 回目（手前 0.7 m）は成功 → done", (s.calls["cb5"], len(n.goals)), ("done", 3))
+check("2 回目のゴールは 0.7 m 手前", round(n.goals[1][0], 2), round(2.0 - 0.7, 2))
+s, n, br, uwb, board = _mk_world((2.0, 0.0))
+n.fail_go_at = (1, 2)
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cb6", 100))
+check("2 回とも失敗 → canceled・帰還しない", (s.calls["cb6"], len(n.goals), s.status["state"]), ("canceled", 2, "idle"))
+check("理由「走行に失敗」", "走行に失敗" in (s.status.get("detail") or ""), True)
+
+print("  --- 走りながら測り直し: 推定が 0.3 m 以上動いたらゴールを差し替える（上限つき）---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0))
+uwb.start(sleep=br._sleep)
+est = BL.BeaconEstimator(mount=M0)
+for _yaw in (0.0, 0.5):                       # 2 つの向きから測ってある（前後は決まっている）
+    n.pose = (0.0, 0.0, _yaw)
+    _clk["t"] += 1.2
+    for _ in range(6):
+        for r in uwb.poll():
+            est.add(n.pose, r)
+_old = BL.BeaconEstimate(1.4, 1.0, 5, 0.0, "bearing", False, 1.4, 0.0)   # 探したときの推定（0.6 m ずれていた、とする）
+br._beacon_goal = BL.standoff_goal(_old, (0.0, 0.0, 0.0), 0.5)
+br._beacon_resend = 0
+cb = br._beacon_progress(est, "ビーコン（UWB）")
+_clk["t"] += 1.0
+with contextlib.redirect_stdout(io.StringIO()):
+    ng = cb(1.0, (0.0, 0.0, 0.5))
+check("推定が 0.6 m 動いた → 新しいゴール（ユニット ≈ (2, 1) の手前）",
+      (ng is not None, round(ng["beacon"][0], 1), round(ng["beacon"][1], 1), br._beacon_resend), (True, 2.0, 1.0, 1))
+_clk["t"] += 1.0
+check("動いていなければ None", cb(0.8, (0.0, 0.0, 0.5)), None)
+br._beacon_resend = br.beacon_max_resend
+br._beacon_goal = BL.standoff_goal(_old, (0.0, 0.0, 0.0), 0.5)
+_clk["t"] += 1.0
+check("差し替えの上限に達していれば、動いていても None", cb(0.5, (0.0, 0.0, 0.5)), None)
+
+class FakeNavT(FakeNav):
+    """走っている途中で 3 秒たつナビ（その間に基板の行が 15 本ほどたまる。走行中の測り直しを試すため）。"""
+
+    def go(self, goal, on_progress=None):
+        def op(rem, pose):
+            _clk["t"] += 3.0
+            return on_progress(rem, pose)
+        return super().go(goal, op if on_progress else None)
+
+
+def _yaw_before_go(events, start_yaw=0.0):
+    return math.radians(sum(_turns_before_go(events))) + start_yaw
+
+
+print("  --- 後ろ向きの取り付け（本棚の後ろの台座・アンテナの面は後ろ）: 前方のユニット (2, 1)・機体の陰あり ---")
+MR = BL.Mount(x=-0.15, y=0.0, yaw=math.pi, height=0.25)
+s, n, br, uwb, board = _mk_world((2.0, 1.0), mount=MR, shadow=True, nav=FakeNavT())
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr1", 100))
+check("done まで進む", s.calls["cr1"], "done")
+_g = n.goals[0]
+_x, _y, _th = _expected_standoff((2.0, 1.0))
+check("ゴールはユニットの 0.5 m 手前（誤差 5 cm 以内）・向きはユニットのほう（出し入れ口を向ける）",
+      (math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, abs(_g[2] - _th) < math.radians(3)), (True, True))
+_ant_dir = _yaw_before_go(n.events) + math.pi
+_bdir = math.atan2(1.0 - 0.0, 2.0 - (-0.15))
+check("走る前に、後ろのアンテナをユニットへ向けて測っていた（35° 以内）",
+      abs(math.degrees(math.atan2(math.sin(_ant_dir - _bdir), math.cos(_ant_dir - _bdir)))) < 35.0, True)
+check("前へ走る間の機体ごしの測定は読み捨てる → ゴールを差し替えない", any(ev[0] == "retarget" for ev in n.events), False)
+_sp = s.sp[100]
+check("推定した場所をビーコンの行（stop_points）に書き戻す（誤差 10 cm 以内）",
+      math.hypot(_sp["x"] - 2.0, _sp["y"] - 1.0) < 0.10, True)
+check("書き戻しは stop_points の patch", any(t == "stop_points" for t, b in s.log), True)
+
+print("  --- 後ろ向き: 2 回目の呼出は、まず前回の場所へアンテナを向けて測る（最初から陰にならない）---")
+n.events.clear()
+n.goals.clear()
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr2", 100))
+check("2 回目も done", s.calls["cr2"], "done")
+_t2 = _turns_before_go(n.events)
+check("最初に前回の場所へ約 −155° 向き、30° 回って前後を確かめる（正面に向き直す 1 回まで）",
+      (len(_t2) in (2, 3), -165 <= _t2[0] <= -145, _t2[1], all(abs(t) <= 35 for t in _t2[2:])), (True, True, 30, True))
+_g = n.goals[0]
+check("2 回目のゴールも 0.5 m 手前（誤差 5 cm 以内）", math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, True)
+
+print("  --- --beacon-hint-resolve（ユニットを動かさない運用）: 前回の場所で前後も決める → 回るのは 1 回だけ ---")
+n.events.clear()
+n.goals.clear()
+br.beacon_prior_resolve = True
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr2b", 100))
+_t2 = _turns_before_go(n.events)
+check("その場回転は前回の場所へ向く 1 回だけ", (len(_t2), -165 <= _t2[0] <= -145), (1, True))
+_g = n.goals[0]
+check("ゴールは 0.5 m 手前（誤差 5 cm 以内）", math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, True)
+
+print("  --- 後ろ向き・機体の陰あり: 横に近い／前方右／後方斜めのユニットも、陰のない向きで測り直して着く ---")
+# 2026-11-09 に見つけた失敗の再発防止: 陰の測定が混ざったまま前後を決めると、反対側へ走ることがあった
+#   （横に近いと、向け直しても正面の範囲の端に残る → 確かめの 30° を逆へ回ると範囲の外に出る、など）
+for _bxy, _cid in (((0.5, 2.0), "cr7"), ((2.5, -0.5), "cr8"), ((-1.2, -1.5), "cr9"), ((1.2, -2.5), "cr10")):
+    s, n, br, uwb, board = _mk_world(_bxy, mount=MR, shadow=True, nav=FakeNavT())
+    with contextlib.redirect_stdout(io.StringIO()):
+        br.handle(call(_cid, 100))
+    _g = n.goals[0]
+    _x, _y, _th = _expected_standoff(_bxy)
+    check(f"ユニット {_bxy}: done・ゴールは 0.5 m 手前（誤差 5 cm 以内）・差し替えなし",
+          (s.calls[_cid], math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, any(ev[0] == "retarget" for ev in n.events)),
+          ("done", True, False))
+
+print("  --- 後ろ向き: 後方のユニット (−2, 0.5)（最初からアンテナの正面）---")
+s, n, br, uwb, board = _mk_world((-2.0, 0.5), mount=MR, shadow=True)
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr3", 100))
+check("done まで進む", s.calls["cr3"], "done")
+_g = n.goals[0]
+_x, _y, _th = _expected_standoff((-2.0, 0.5))
+check("ゴールは 0.5 m 手前（誤差 5 cm 以内）・向きはユニットのほう",
+      (math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, abs(math.atan2(math.sin(_g[2] - _th), math.cos(_g[2] - _th))) < math.radians(3)),
+      (True, True))
+
+print("  --- 前回の場所が古い（ユニットを動かした）: 手がかりは外れるが、ふつうに探して見つける ---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0), mount=MR, shadow=True, hint=(-2.0, -1.5))
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr4", 100))
+check("done まで進む", s.calls["cr4"], "done")
+_g = n.goals[0]
+_x, _y, _th = _expected_standoff((2.0, 1.0))
+check("ゴールは本当のユニットの 0.5 m 手前（誤差 5 cm 以内）", math.hypot(_g[0] - _x, _g[1] - _y) < 0.05, True)
+check("書き戻しも本当の場所に直る（誤差 10 cm 以内）", math.hypot(s.sp[100]["x"] - 2.0, s.sp[100]["y"] - 1.0) < 0.10, True)
+
+print("  --- 手がかりを使わない設定（--no-beacon-hint）・dry-run では書き戻さない ---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0), mount=MR, hint=(2.0, 1.0))
+br.beacon_hint = False
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cr5", 100))
+check("手がかりなし: 前回の場所（約 −155°）へは向かず、ふつうに探す", -165 <= _turns_before_go(n.events)[0] <= -145, False)
+check("手がかりなしでも、ゴールは 0.5 m 手前（誤差 5 cm 以内）",
+      math.hypot(n.goals[0][0] - _expected_standoff((2.0, 1.0))[0], n.goals[0][1] - _expected_standoff((2.0, 1.0))[1]) < 0.05, True)
+s, n, br, uwb, board = _mk_world((2.0, 1.0), mount=MR)
+br.live = False
+with contextlib.redirect_stdout(io.StringIO()):
+    br._process_beacon(call("cr6", 100), dict(s.sp[100]))
+check("dry-run: stop_points には書かない", any(t == "stop_points" for t, b in s.log), False)
+check("beacon_hint_from_row: 0,0（まだ推定していない）は None・それ以外は (x, y)",
+      (B.beacon_hint_from_row({"x": 0, "y": 0}), B.beacon_hint_from_row({"x": 1.5, "y": -0.5}), B.beacon_hint_from_row(None)),
+      (None, (1.5, -0.5), None))
+
+print("  --- LoggingNavigator（--simulate）: turn と、走りながらのゴール差し替え ---")
+_ln = B.LoggingNavigator(1.0, start_pose=(0.0, 0.0, 0.0))
+with contextlib.redirect_stdout(io.StringIO()):
+    _ln.turn(math.radians(90))
+check("turn で向きが変わる", round(_ln.pose[2], 4), round(math.pi / 2, 4))
+_g1 = B.goal_from_stop_point({"label": "a", "x": 2.0, "y": 0.0, "theta": 0.0})
+_g2 = B.goal_from_stop_point({"label": "b", "x": 2.0, "y": 2.0, "theta": 0.0})
+_calls = []
+with contextlib.redirect_stdout(io.StringIO()):
+    _ln.go(_g1, on_progress=lambda rem, pose: (_calls.append(round(rem, 2)) or _g2) if not _calls else None)
+check("1 歩目のあとでゴールを差し替え → 最後は新しいゴールに着く",
+      (len(_calls), tuple(round(v, 3) for v in _ln.pose[:2])), (1, (2.0, 2.0)))
 
 
 print()

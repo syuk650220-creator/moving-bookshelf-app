@@ -142,6 +142,35 @@ def mps_to_rpm(mps: float) -> float:
     return mps * 60.0 / WHEEL_CIRCUMFERENCE
 
 
+# =====================================================================
+#  5. UWB ビーコン（S2 beacon_locator.py・S8 robot_tf_launch.py）
+#     ── アンテナの取り付け位置と、席のユニットの高さ
+# =====================================================================
+#
+# base_link（回転の中心。床から 0.05 m）から見た、UWB 基板の 2 本のアンテナの中点 [m]。前が＋、左が＋。
+# 機体の前＝本棚の出し入れ口の側（進む向き）。
+#
+# ★取り付け（2026-11-09 PM 決定）: 本棚の後ろ、Pi などの上に台座を置き、基板を縦に立てる。
+#   アンテナの面（村田のロゴがある裏面）は外側＝後ろへ向ける（UWB_MOUNT_YAW = math.pi）。
+#   ・基板は縦長に立て、アンテナのある端（micro-B の J14 と反対側）を上にする。2 本のアンテナが左右に並び、
+#     左右の向きが測れる（横長に立てると上下に並んでしまい、左右が測れない）。
+#   ・台座と基板の上端は床から 309 mm 未満（LiDAR の回る部分の下端。後ろでも、それより上は障害物に見える）。
+#   ・アンテナの端のすぐ前後に金属（電池・Pi の放熱板など）を置かない。
+#   ・後ろ向きでも、ブリッジは探すときにアンテナを相手に向けて測り（機体は回る）、前へ走る間の機体ごしの測定は
+#     読み捨てる（bookshelf_bridge._beacon_progress）。シミュレーションでは前向きと同じ精度で着く（2026-11-09）。
+# TODO: ★台座の模型が届いたら、回転の中心からの前後・左右・高さを測って埋める★ いまの値は仮。
+#   起動時に --uwb-mount X,Y,向き[度],高さ で上書きもできる（例: --uwb-mount -0.15,0,180,0.25）。
+#   robot_tf_launch.py（base_link → uwb_link）はこの値を読むので、ここだけ直せばよい。
+UWB_MOUNT_X = -0.15             # 回転の中心から後ろへ 15 cm（仮）
+UWB_MOUNT_Y = 0.0
+UWB_MOUNT_YAW = math.pi         # アンテナの面が向く方向 [rad]。前向き 0.0、後ろ向き math.pi
+UWB_ANTENNA_HEIGHT = 0.25       # 床からアンテナの中点まで [m]（仮）
+
+# 席に置くユニット（応える側）の床からの高さ [m]。★席の置き方で変える★（机の上なら 0.70〜0.75、床置きなら 0.05）
+# UWB の距離は斜めの直線距離なので、高さの差ぶんを水平距離に直すのに使う（1 m 先・高さの差 0.5 m なら 13 cm 違う）。
+BEACON_HEIGHT = 0.75
+
+
 if __name__ == "__main__":
     print("=== robot_params ===")
     print(f"車輪半径      : {WHEEL_RADIUS*1000:.0f} mm  (周長 {WHEEL_CIRCUMFERENCE:.3f} m)")
@@ -156,3 +185,6 @@ if __name__ == "__main__":
     print()
     print(f"★最終進入 {MIN_APPROACH_RPM} rpm は分解能 {RPM_PER_COUNT:.2f} rpm の "
           f"{RPM_PER_COUNT/MIN_APPROACH_RPM*100:.0f}% にあたります★")
+    print()
+    print(f"UWB アンテナ  : base_link から x={UWB_MOUNT_X:+.2f} y={UWB_MOUNT_Y:+.2f} m・向き {math.degrees(UWB_MOUNT_YAW):.0f}°・床から {UWB_ANTENNA_HEIGHT:.2f} m")
+    print(f"席のユニット  : 床から {BEACON_HEIGHT:.2f} m（高さの差 {BEACON_HEIGHT - UWB_ANTENNA_HEIGHT:+.2f} m）")

@@ -16,8 +16,9 @@
 #       ~/pi/.env があれば robot/.env に引き継ぐ（★消しません。移動とコピーだけ★）
 #    4. robot/.env が無ければ .env.example から作り、値の入力を促す
 #    5. udev の固定名 /dev/mecanum_left /dev/mecanum_right を確認
-#    6. test_logic.py で計算部分を検証
-#    7. ~/nav2/nav2_params.yaml があれば、いまの差分ファイルと同じ（＝最新）かを確認
+#    6. udev の固定名 /dev/uwb（UWB 基板）・/dev/rplidar（LiDAR）を robot/udev/ のルールから入れる
+#    7. test_logic.py で計算部分を検証
+#    8. ~/nav2/nav2_params.yaml があれば、いまの差分ファイルと同じ（＝最新）かを確認
 # =====================================================================
 set -euo pipefail
 
@@ -32,12 +33,12 @@ ok()   { printf '   \033[1;32m✓\033[0m %s\n' "$*"; }
 warn() { printf '   \033[1;33m★\033[0m %s\n' "$*"; }
 
 # ---------------------------------------------------------------- 1
-step "1/7 依存パッケージ（apt）"
+step "1/8 依存パッケージ（apt）"
 sudo apt-get install -y -q git python3-serial python3-requests python3-yaml >/dev/null
 ok "git / python3-serial / python3-requests / python3-yaml"
 
 # ---------------------------------------------------------------- 2
-step "2/7 リポジトリ（ブランチ: $BRANCH）"
+step "2/8 リポジトリ（ブランチ: $BRANCH）"
 if [ -d "$REPO_DIR/.git" ]; then
   SELF_BEFORE="$(cksum < "$ROBOT_DIR/pi_setup.sh" 2>/dev/null || true)"
   git -C "$REPO_DIR" fetch -q origin
@@ -63,7 +64,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 3
-step "3/7 古い ~/pi の退避"
+step "3/8 古い ~/pi の退避"
 if [ -d "$OLD_PI" ] && [ ! -d "$OLD_PI/.git" ]; then
   if [ -f "$OLD_PI/.env" ] && [ ! -f "$ROBOT_DIR/.env" ]; then
     cp "$OLD_PI/.env" "$ROBOT_DIR/.env"
@@ -82,7 +83,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 4
-step "4/7 接続情報 robot/.env"
+step "4/8 接続情報 robot/.env"
 if [ -f "$ROBOT_DIR/.env" ]; then
   if grep -q 'xxxxxxxxxxxx' "$ROBOT_DIR/.env"; then
     warn "robot/.env がひな形のままです。nano $ROBOT_DIR/.env で SUPABASE_URL と SUPABASE_ANON_KEY を書いてください"
@@ -96,7 +97,7 @@ else
 fi
 
 # ---------------------------------------------------------------- 5
-step "5/7 udev の固定名"
+step "5/8 udev の固定名（Arduino 左右）"
 if [ -e /dev/mecanum_left ] && [ -e /dev/mecanum_right ]; then
   ok "/dev/mecanum_left → $(readlink /dev/mecanum_left)   /dev/mecanum_right → $(readlink /dev/mecanum_right)"
 elif [ -f /etc/udev/rules.d/99-mecanum.rules ]; then
@@ -106,11 +107,38 @@ else
 fi
 
 # ---------------------------------------------------------------- 6
-step "6/7 計算部分の検証（実機なし）"
-( cd "$ROBOT_DIR" && python3 -B test_logic.py | tail -3 )
+step "6/8 udev の固定名（UWB 基板 → /dev/uwb、LiDAR → /dev/rplidar）"
+# Arduino と違ってシリアル番号が要らない（USB の ID だけで決まる）ので、リポジトリのルールをそのまま入れる
+RULES_CHANGED=0
+for f in 99-uwb.rules 99-rplidar.rules; do
+  if ! cmp -s "$ROBOT_DIR/udev/$f" "/etc/udev/rules.d/$f"; then
+    sudo cp "$ROBOT_DIR/udev/$f" "/etc/udev/rules.d/$f"
+    RULES_CHANGED=1
+  fi
+done
+if [ "$RULES_CHANGED" = 1 ]; then
+  sudo udevadm control --reload-rules && sudo udevadm trigger
+  ok "ルールを入れました（robot/udev/ → /etc/udev/rules.d/）"
+else
+  ok "ルールは最新です"
+fi
+if [ -e /dev/uwb ]; then
+  ok "/dev/uwb → $(readlink /dev/uwb)"
+else
+  warn "/dev/uwb が見えません（UWB 基板を J6 で挿していないなら正常。挿してあるなら lsusb で 1915:520f、ls /dev/ttyACM* を確認）"
+fi
+if [ -e /dev/rplidar ]; then
+  ok "/dev/rplidar → $(readlink /dev/rplidar)"
+else
+  warn "/dev/rplidar が見えません（LiDAR を挿していないか、USB 変換の ID が違う → robot/udev/99-rplidar.rules の説明）"
+fi
 
 # ---------------------------------------------------------------- 7
-step "7/7 Nav2 の設定ファイル（~/nav2/nav2_params.yaml）が最新か"
+step "7/8 計算部分の検証（実機なし）"
+( cd "$ROBOT_DIR" && python3 -B test_logic.py | tail -3 )
+
+# ---------------------------------------------------------------- 8
+step "8/8 Nav2 の設定ファイル（~/nav2/nav2_params.yaml）が最新か"
 NAV2_STALE=0
 if [ ! -f "$HOME/nav2/nav2_params.yaml" ]; then
   ok "まだ作っていません（段階3 で python3 nav2/make_nav2_params.py --write --robot-radius 0.21）"
@@ -126,6 +154,7 @@ printf '\n次にやること:  cd %s\n' "$ROBOT_DIR"
 printf '  段階1 手動操作 : python3 manual_control.py --serial\n'
 printf '  段階2 呼出フロー: python3 bookshelf_bridge.py --live --simulate 5\n'
 printf '  段階3 Nav2 設定 : python3 nav2/make_nav2_params.py   （確認だけ。--write で ~/nav2/nav2_params.yaml を作る）\n'
+printf '  UWB の読み取り  : python3 uwb_reader.py --simulate   （基板なし。基板を J6 で挿したら --simulate を外す）\n'
 printf '  （両方を同時に動かさないこと）\n'
 if [ "$NAV2_STALE" = "1" ]; then
   printf '\n\033[1;33m★★★ ~/nav2/nav2_params.yaml が古いです。上の「作り直すコマンド」を実行し、Nav2 が動いていたら起動し直してください ★★★\033[0m\n'
