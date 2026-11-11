@@ -25,6 +25,12 @@ bookshelf_bridge.py ― アプリ（Supabase）とロボをつなぐブリッジ
     アプリの管理者画面（/admin/pins）の地図に出します。
   ・上の 3 つは sql/03_pins_home_pose.sql を実行してあることが前提です。未適用でも動きますが、
     localizing と現在地は書かず（列が無いため）、ホームは id=0 の行を探します。
+  ・前回の取り残し … 走行中や受取待ちのあいだに電池が切れると、呼出が moving / arrived のまま残ります。
+    ブリッジは起動時にそれを canceled にし、robot_status を idle に戻します（Bridge.cleanup_stale_calls）。
+    ★ブリッジは 1 つだけ動かすこと★（2 つ目を --live で起動すると、1 つ目が処理中の呼出を取り消してしまう）
+  ・途中で止まった呼出 … 通信エラーや思わぬ例外で処理が途中になったら、Nav2 の走行を止め、その呼出を canceled に、
+    状態を idle に戻します（Bridge._abandon）。通信が切れていて書けないときは、ポーリングのたびに書き直します。
+    ロボ側の取り消しは、理由（robot_status.detail）を先に書いてから canceled にします（Bridge.cancel_call）。
 
 ────────────────────────────────────────────────────────────
 ★なぜポーリングが主で、Realtime が従なのか★
@@ -55,6 +61,8 @@ WebSocket 一本に頼ると、切れたときに呼出を取りこぼします�
   python3 bookshelf_bridge.py --live --nav2 --uwb
   # 基板なし・Nav2 なしで、ビーコンの流れだけ試す（偽の基板がロボの位置に合わせた値を出す）
   python3 bookshelf_bridge.py --simulate 5 --uwb-simulate 2.0,0.0
+  # その場回転（Nav2 の spin）と、回ったあとの向きの読み取りを実機で確かめる（30° 回って終わる。呼出は受けない）
+  python3 bookshelf_bridge.py --nav2 --turn-test 30
 
 環境変数（.env でも可）:
   SUPABASE_URL=https://xxxx.supabase.co
@@ -69,6 +77,7 @@ import argparse
 import math
 import os
 import signal
+import traceback
 import sys
 import time
 from datetime import datetime, timezone
@@ -537,7 +546,11 @@ class Nav2Navigator:
         self.wait_navigation_ready()
         print(f"    [nav] ゴール送出: ({goal['x']:.3f}, {goal['y']:.3f}) "
               f"theta={goal['theta']:.3f}rad")
-        self.nav.goToPose(self._pose_msg(goal))
+        if self.nav.goToPose(self._pose_msg(goal)) is False:
+            # Nav2 がゴールを受け付けなかった。このまま下へ進むと、isTaskComplete() / getResult() は
+            # 「前の動作（その場回転など）」の結果を返すので、動いていないのに「到着」と読み違える
+            print("    [nav] Nav2 がゴールを受け付けませんでした（bt_navigator が動いているか確認）")
+            return False
 
         t0 = time.time()
         last_tick = 0.0
@@ -565,11 +578,15 @@ class Nav2Navigator:
                     new_goal = on_progress(remaining, self._pose)
                     if new_goal:
                         # 走りながらゴールを差し替える（ビーコン: 測り直して推定が動いたとき）。
-                        # いまの走行を取り消してから送り直す。次の isTaskComplete() は新しいゴールを見る
+                        # ★取り消してから送り直さない★ Nav2 は取り消しの処理の中で「待っているゴール」も一緒に捨てるので、
+                        # 取り消しの直後に送ったゴールは捨てられることがある（走行が失敗になる）。
+                        # 送り直すだけで、Nav2 は走りながら新しいゴールに乗り換える。次の isTaskComplete() は新しいゴールを見る
                         goal = new_goal
                         print(f"    [nav] ゴールを差し替え: ({goal['x']:.3f}, {goal['y']:.3f}) theta={goal['theta']:.3f}rad")
-                        self.nav.cancelTask()
-                        self.nav.goToPose(self._pose_msg(goal))
+                        if self.nav.goToPose(self._pose_msg(goal)) is False:
+                            print("    [nav] 新しいゴールを受け付けてもらえませんでした → 走行を中止します")
+                            self.nav.cancelTask()
+                            return False
             time.sleep(0.1)
 
         result = self.nav.getResult()
@@ -586,6 +603,20 @@ class Nav2Navigator:
     def turn(self, angle: float, time_allowance: int = 15, deadline: float | None = None) -> bool:
         """その場で angle [rad] 回す（＋が反時計回り）。Nav2 の spin を呼んで終わるまで待つ。できたら True。
         受け付けられない・時間切れ・版のちがいで呼べないときは False（呼ぶ側は「回れなかった」として進める）。"""
+        # ★先にサーバがあるか確かめる★ nav.spin() は、その場回転のサーバ（behavior_server の spin）が
+        # 見つかるまで永久に待つ。Nav2 の設定から spin を外してあると、ここでブリッジが固まる
+        client = getattr(self.nav, "spin_client", None)
+        try:
+            if client is not None and not client.wait_for_server(timeout_sec=3.0):
+                print("    [nav] （その場回転のサーバが見つかりません。Nav2 の behavior_server と、その設定の spin を確認）")
+                return False
+        except Exception:                             # 版のちがいで確かめられない → そのまま呼んでみる
+            pass
+        self.last_turn_rad = None                     # 今回、実際に回った角度 [rad]（spin の報告。オドメトリで測った値）
+        try:
+            self.nav.feedback = None                  # 前の動作の報告を、今回の回転の報告と取り違えない
+        except Exception:
+            pass
         try:
             accepted = self.nav.spin(spin_dist=angle, time_allowance=time_allowance)
         except Exception as e:                        # 版のちがいなどで呼べない
@@ -605,9 +636,53 @@ class Nav2Navigator:
         while time.time() - t1 < 1.0:                 # AMCL の推定が落ち着くのを少し待つ
             self._spin(0.1)
         try:
+            self.last_turn_rad = float(self.nav.getFeedback().angular_distance_traveled)
+        except Exception:                             # 報告が来なかった・版のちがい
+            self.last_turn_rad = None
+        try:
             return self.nav.getResult() == self._TaskResult.SUCCEEDED
         except Exception:
             return True
+
+    # ---------------- 止まったあとの「いまの位置」 ----------------
+
+    def refresh_pose(self, timeout: float = 1.5):
+        """止まっているいま、AMCL に 1 回更新してもらい、新しい /amcl_pose を受け取ってから現在地を返す。
+
+        AMCL は「10 cm か 0.1 rad 動いたとき」にしか推定を更新しない（update_min_d / update_min_a）。
+        その場で回った直後の /amcl_pose は最大 0.1 rad（約 6°）古く、そのまま UWB の方向と組み合わせると、
+        2 m 先のユニットの位置が 20 cm ずれる。AMCL のサービス request_nomotion_update を呼ぶと、
+        動いていなくても次のスキャンで更新して publish する。
+        更新できたら新しい現在地 (x, y, yaw)。★サービスが無い・新しい推定が来ないときは None★
+        （呼ぶ側は、その場回転で実際に回った角度 last_turn_rad を使うなど、別の手で補う）。走行は止めない。
+        """
+        try:
+            cli = getattr(self, "_nomotion", None)
+            if cli is None:
+                from std_srvs.srv import Empty
+                self._Empty = Empty
+                cli = self._nomotion = self.nav.create_client(Empty, "request_nomotion_update")
+                cli.wait_for_service(timeout_sec=1.0)
+            if not cli.service_is_ready():
+                self._nomotion_note("AMCL の更新のサービス（request_nomotion_update）が見つかりません")
+                return None
+            before = self._pose_count
+            cli.call_async(self._Empty.Request())
+            t0 = time.time()
+            while self._pose_count == before and time.time() - t0 < timeout:
+                self._spin(0.1)
+            if self._pose_count == before:
+                self._nomotion_note(f"{timeout:.1f} 秒待っても、AMCL から新しい推定が来ません")
+                return None
+            return self._pose
+        except Exception as e:
+            self._nomotion_note(f"AMCL に更新を頼めませんでした: {e}")
+            return None
+
+    def _nomotion_note(self, text: str):
+        if not getattr(self, "_nomotion_warned", False):       # 同じ知らせは 1 回だけ
+            self._nomotion_warned = True
+            print(f"    [nav] （{text}。その場回転のあとの向きは、回った角度の報告から計算します）")
 
     # ---------------- 着いたあとの向き合わせ ----------------
 
@@ -643,6 +718,11 @@ class Nav2Navigator:
 #  ブリッジ本体
 # =====================================================================
 
+class BeaconAbort(Exception):
+    """ビーコンへの走行を途中でやめる（その場で回れない・前後が決まらない など）。
+    str(e) が、アプリに出す理由（robot_status.detail）。呼出は canceled になる。"""
+
+
 def beacon_hint_from_row(row: dict | None):
     """ビーコンの行（stop_points、kind='beacon'）の x, y を「前回ロボが推定した場所」として返す。
     まだ一度も推定していない（x も y も 0。sql/05 で入れた最初の値）なら None。"""
@@ -666,7 +746,7 @@ class Bridge:
                  beacon_search_sec: float = 6.0, beacon_retarget_m: float = 0.3, beacon_max_resend: int = 3,
                  uwb_min_fom: float | None = None, uwb_max_nlos: float | None = None,
                  uwb_mount: "BL.Mount | None" = None, beacon_hint: bool = True,
-                 beacon_prior_resolve: bool = False):
+                 beacon_prior_resolve: bool = False, cancel_hold: float = 3.0):
         self.supa = supa
         # ---- UWB ビーコン（S3）。uwb は uwb_reader.UwbReader（None ならビーコンの呼出は取り消す）----
         self.uwb = uwb
@@ -687,6 +767,8 @@ class Bridge:
         self._clock, self._sleep = time.monotonic, time.sleep    # テストで時間を手で進めるための差し替え口
         self._beacon_goal: dict | None = None
         self._beacon_resend = 0
+        self._bpose = None       # 探している間（止まっている間）のロボの位置。回るたびに取り直す（_beacon_turn）
+        self._bnote = ["", "", 0]   # 探している間の進み具合の表示: [行き先の名前, いまの段階, その場回転の回数]
         self.nav = navigator
         self.live = live
         self.arrive_hold = arrive_hold
@@ -697,6 +779,13 @@ class Bridge:
         self.pose_interval = pose_interval
         self.v3 = probe_schema_v3(supa) if schema_v3 is None else schema_v3
         self.seen: set[str] = set()      # Realtime とポーリングの二重処理を防ぐ
+        # 例外で処理が途中になった呼出の後始末（まだ DB に書けていないもの）。id → (呼出を canceled にするか, 理由)
+        # 通信が切れている間は書けないので、ポーリングのたびに書き直しを試す（呼出を「移動中」のまま取り残さない）
+        self._pending: dict[str, tuple[bool, str]] = {}
+        # ロボ側が呼出を取り消したあと、次の呼出を始めるまで待つ秒数と、その期限。
+        # 取り消しの理由は robot_status.detail に書く。すぐ次の呼出を始めると、アプリが読む前に上書きしてしまう
+        self.cancel_hold = cancel_hold
+        self.hold_until = 0.0
         self.current: dict | None = None
         self.busy = False
         self._state_now: str = "idle"    # 走行中の進捗書き込み（_progress）が使う「いまの state」
@@ -717,8 +806,30 @@ class Bridge:
     def set_call(self, call_id: str, status: str):
         print(f"    [db] robot_calls {call_id[:8]}… → {status}"
               + ("" if self.live else "（dry-run なので書き込みません）"))
-        if self.live:
-            self.supa.patch("robot_calls", f"id=eq.{call_id}", {"status": status})
+        if not self.live:
+            return
+        for attempt in range(3):          # 一時的な通信の失敗で、着いたのに「届かなかった」にならないように
+            try:
+                self.supa.patch("robot_calls", f"id=eq.{call_id}", {"status": status})
+                return
+            except requests.RequestException as e:
+                if attempt == 2:
+                    raise
+                print(f"    [warn] robot_calls の書き込みに失敗（やり直します {attempt + 1}/2）: {e}")
+                self._sleep(1.0)
+
+    def cancel_call(self, call_id: str, detail: str):
+        """ロボ側の都合で呼出を取り消す。★理由（robot_status.detail）を先に書いてから、呼出を canceled にする★
+
+        アプリは、自分の呼出が canceled になったのを見つけたときの detail を「ロボ側の理由」として出す。
+        逆の順で書くと、2 つの書き込みの間にアプリが読んで、前の表示（「席2 へ移動中」など）を理由として出してしまう。
+        """
+        try:
+            self.set_status("idle", None, detail=detail, pose=self.nav.current_pose())
+        except requests.RequestException as e:           # 理由が書けなくても、取り消しは続ける
+            print(f"    [warn] 取り消しの理由の書き込みに失敗（続行します）: {e}")
+        self.set_call(call_id, "canceled")
+        self.hold_until = time.time() + self.cancel_hold
 
     def set_status(self, state: str, call_id: str | None = None, detail: str | None = None,
                    pose=None, quiet: bool = False):
@@ -755,6 +866,57 @@ class Bridge:
                 print(f"    [warn] 現在地の書き込みに失敗（続行します）: {e}")
 
         return cb
+
+    # ---------------- 起動時の片付け（前回の取り残し） ----------------
+
+    def cleanup_stale_calls(self) -> int:
+        """
+        前回の取り残しを片付ける。取り消した（dry-run なら、取り消すはずだった）呼出の件数を返す。
+
+        走行中や受取待ちのあいだに Pi の電池が切れたり、ブリッジが kill されたりすると、
+        その呼出は moving / arrived のまま残る（Ctrl-C なら shutdown() が canceled にするが、電源断ではできない）。
+        ブリッジが拾うのは queued だけなので、残った呼出は誰も片付けず、
+        アプリでは「移動中」のまま固まって、呼んだ人は取り消すことも次を呼ぶこともできない。
+
+        起動した時点では、このブリッジが処理中の呼出は 1 件も無い。★つまり moving / arrived はすべて取り残し★
+        なので canceled にする。アプリは canceled を見て「ロボが席まで届きませんでした」と知らせ、呼び直せるようになる。
+        robot_status が idle 以外のまま止まっていたら（returning のまま等）idle に戻す。
+
+        ・arrived も取り消す: ブリッジを起動し直す＝ロボを本棚の場所へ置き直した、が前提（at_home の説明）。
+          席に残って受取を待っているロボは、もう居ない。
+        ・done / canceled / queued には触らない。受取（done）まで済んだ呼出を「届かなかった」にしないため、
+          書き込みは「いまも moving / arrived なら」の条件つきにしてある。
+        ・★ブリッジは 1 つだけ動かすこと★ 別のブリッジが動いている最中に --live で起動すると、
+          そちらが処理中の呼出を取り残しと見なして取り消してしまう。
+        """
+        rows = self.supa.select(
+            "robot_calls", "status=in.(moving,arrived)&order=created_at.asc&select=*")
+        st = self.supa.select("robot_status", "id=eq.1&select=*")
+        state = (st[0].get("state") if st else None) or "idle"
+        if not rows and state == "idle":
+            return 0
+
+        note = "" if self.live else "（dry-run なので書き込みません）"
+        print(f"\n[起動] 前回の取り残しを片付けます{note}")
+        n = 0
+        for r in rows:
+            cid = str(r["id"])
+            print(f"    [db] robot_calls {cid[:8]}…  {r.get('status')} のまま残っていた呼出"
+                  f"（seat={r.get('seat_id')} requested_by={r.get('requested_by')}）→ canceled{note}")
+            if not self.live:
+                n += 1
+                continue
+            out = self.supa.patch("robot_calls", f"id=eq.{cid}&status=in.(moving,arrived)", {"status": "canceled"})
+            if out:
+                n += 1
+            else:
+                print("         （書く直前に状態が変わっていたので、触りませんでした）")
+        if n:
+            detail = f"ブリッジを起動しました。前回の取り残しの呼出 {n} 件を取り消しました"
+        else:
+            detail = f"ブリッジを起動しました（前回は {state} のまま止まっていました）"
+        self.set_status("idle", None, detail=detail)
+        return n
 
     # ---------------- 起動時の自己位置推定 ----------------
 
@@ -796,13 +958,63 @@ class Bridge:
             self._process(call)
         except (KeyboardInterrupt, SystemExit):
             raise                     # Ctrl-C。current は残して shutdown() に後始末させる
-        except Exception:
-            self.current = None       # 通信エラー等。main 側が警告して次のポーリングへ進む
+        except Exception as e:
+            # 通信エラーや思わぬ例外。★走行を止め、この呼出を取り消す★（main 側が警告して次のポーリングへ進む）
+            self._abandon(call, e)
+            self.current = None
             raise
         else:
             self.current = None
         finally:
             self.busy = False
+
+    def _abandon(self, call: dict, err: Exception) -> None:
+        """例外で処理が途中になった呼出の後始末。
+
+        ・Nav2 が走行中なら止める（例外で抜けると、だれも止めないままロボが走り続ける）
+        ・UWB の測距を止める
+        ・呼出を canceled に、状態を idle に戻す。いま書けなければ（通信が切れている）、ポーリングのたびに書き直す
+          → 呼出が「順番待ち」「移動中」のまま残って、後ろの呼出やアプリが固まるのを防ぐ
+        """
+        cid = str(call.get("id"))
+        try:
+            self.nav.cancel()
+        except Exception:
+            pass
+        if self.uwb is not None:
+            try:
+                self.uwb.stop()
+            except Exception:
+                pass
+        why = f"{type(err).__name__}: {err}"[:120]
+        if self._call_finished:
+            # 受取（done）まで済んで帰還中だった。呼出はそのまま、状態だけ戻す
+            self.at_home = False
+            self._pending[cid] = (False, f"帰還の途中でエラーが出て止まりました（{why}）。手で本棚の場所へ戻してください")
+        else:
+            self._pending[cid] = (True, f"ブリッジ側のエラーで中止しました（{why}）")
+        self.flush_pending()
+
+    def flush_pending(self) -> bool:
+        """後始末の書き込み（_abandon で残したもの）を済ませる。全部書けたら True。"""
+        for cid, (cancel, detail) in list(self._pending.items()):
+            if self.live:
+                try:
+                    self.supa.patch("robot_status", "id=eq.1",
+                                    {"state": "idle", "current_call_id": None, **({"detail": detail} if self.v3 else {})})
+                    if cancel:
+                        # いまも進行中のときだけ（アプリ側で done / canceled になっていたら触らない）
+                        self.supa.patch("robot_calls", f"id=eq.{cid}&status=in.(queued,moving,arrived)",
+                                        {"status": "canceled"})
+                except requests.RequestException as e:
+                    print(f"    [warn] 後始末の書き込みに失敗（次のポーリングでやり直します）: {e}")
+                    return False
+            print(f"    [db] 後始末: robot_calls {cid[:8]}… "
+                  + ("→ canceled・" if cancel else "はそのまま・") + f"robot_status → idle  「{detail}」"
+                  + ("" if self.live else "（dry-run なので書き込みません）"))
+            del self._pending[cid]
+            self.hold_until = time.time() + self.cancel_hold
+        return True
 
     def _process(self, call: dict):
         cid = call["id"]
@@ -812,12 +1024,12 @@ class Bridge:
         seat_id = int(call["seat_id"])
         if seat_id == 0:
             print("    [err] seat_id=0 は本棚の場所（ホーム）です。呼出先にはできません → canceled")
-            self.set_call(cid, "canceled")
+            self.cancel_call(cid, "本棚の場所（ホーム）は届け先にできません")
             return
         rows = self.supa.select("stop_points", f"id=eq.{seat_id}&select=*")
         if not rows or rows[0].get("kind") == "home":
             print(f"    [err] stop_points に席 id={seat_id} がありません → canceled")
-            self.set_call(cid, "canceled")
+            self.cancel_call(cid, f"届け先（id={seat_id}）が登録されていません（管理者画面のピンを確認）")
             return
         if rows[0].get("kind") == "beacon":
             # ★UWB ビーコン（sql/05）: 席の座標ではなく、UWB で測って探す（S3）★
@@ -840,9 +1052,7 @@ class Bridge:
         self.home_pose_trusted = False      # ここから先の位置は AMCL が追う。ピンの座標で上書きしない
         ok = self.nav.go(goal, on_progress=self._progress(f"{label} へ移動中"))
         if not ok:
-            self.set_call(cid, "canceled")
-            self.set_status("idle", None, detail=f"{label} への走行に失敗（タイムアウトか中止）",
-                            pose=self.nav.current_pose())
+            self.cancel_call(cid, f"{label} への走行に失敗（タイムアウトか中止）")
             return
 
         # ---- ③ 到着 → 受取待ち ----
@@ -865,10 +1075,7 @@ class Bridge:
         self.set_status("localizing", cid, detail=f"自己位置推定中（{where}）")
         init = goal_from_stop_point(self.home) if use_home else None
         if not self.nav.localize(init):
-            self.set_call(cid, "canceled")
-            self.set_status("idle", None,
-                            detail="自己位置推定に失敗（AMCL の応答なし）。LiDAR・TF・Nav2 を確認してください",
-                            pose=self.nav.current_pose())
+            self.cancel_call(cid, "自己位置推定に失敗（AMCL の応答なし）。LiDAR・TF・Nav2 を確認してください")
             return False
         return True
 
@@ -878,17 +1085,20 @@ class Bridge:
     #   → 0.5 m 手前のゴールへ走る（走りながら測り直し、推定が 0.3 m 以上動いたらゴールを差し替える）
     #   → 着いたら向きを合わせる（ゴールの向き＝ユニットのほう。ナビの align_heading が回す）
     #   → 受取待ち → 帰還（席と同じ）
-    #   見つからない・走れない・基板と話せない → canceled にして理由を robot_status.detail に書く（アプリに出る）
+    #   見つからない・前後が決まらない・回れない・走れない・基板と話せない
+    #     → 走り出さずに canceled にして、理由を robot_status.detail に書く（アプリに出る）
+    #
+    #   ★古い測定を使わない★ 基板は 1 秒に 5 行出し続け、読まない間の行は受信バッファにたまる。
+    #   ロボが回っている数秒間にたまった行は「回る前・回っている途中」の測定で、あとから読んで「いまの向き」と
+    #   組み合わせると、ユニットの方向が回った角度のぶんだけずれる（前後の取り違えの原因になる）。
+    #   回ったあと・走っている途中は、必ず flush_input() でたまった行を捨ててから測る。
 
     def _process_beacon(self, call: dict, row: dict):
         cid = call["id"]
         label = row.get("label") or "ビーコン（UWB）"
         if self.uwb is None:
             print(f"    [err] id={row['id']} は UWB ビーコンの行き先ですが、UWB の読み取りが起動していません（--uwb を付けて起動）→ canceled")
-            self.set_call(cid, "canceled")
-            self.set_status("idle", None,
-                            detail="ビーコン（UWB）への走行は、ブリッジを --uwb 付きで起動したときだけ使えます",
-                            pose=self.nav.current_pose())
+            self.cancel_call(cid, "ビーコン（UWB）への走行は、ブリッジを --uwb 付きで起動したときだけ使えます")
             return
         print(f"    [ビーコン] {label} を UWB で探して、手前 {self.beacon_standoff:.2f} m まで行きます")
         self.set_call(cid, "moving")
@@ -902,27 +1112,39 @@ class Bridge:
                                  min_fom=self.uwb_min_fom, max_nlos=self.uwb_max_nlos,
                                  prior=hint if self.beacon_prior_resolve else None)
         ok = False
+        note = ""
+        self._bpose = None
         try:
-            self.uwb.start(sleep=self._sleep)         # stop → uwbcfg 9 … → antenna js1055-9 → initf（電波法のガード付き）
+            # stop → uwbcfg 9 … → antenna js1055-9 → 設定の確認 → initf（電波法のガード付き。確かめられなければ測り始めない）
+            self.uwb.start(sleep=self._sleep)
             found = self._beacon_search(est, label, hint=hint)
             if found is None:
-                self.set_call(cid, "canceled")
-                self.set_status("idle", None,
-                                detail=f"{label} が見つかりません（席のユニットの電源と向き、距離を確認してください）",
-                                pose=self.nav.current_pose())
+                self.cancel_call(cid, f"{label} が見つかりません（席のユニットの電源と向き、距離を確認してください）")
                 return
-            if not found.ambiguous:
-                self._save_beacon_estimate(row, found)        # 地図（/admin/pins）に出す＋次の呼出の手がかり
+            if found.ambiguous:
+                # ★前後が決まらないまま走らない★ 前の候補を仮に選んで走ると、半分の確率で反対側へ行ってしまう
+                print("    [ビーコン] 前後が決まりませんでした → 走らずに取り消します")
+                self.cancel_call(cid, f"{label} の方向を決められませんでした（ロボとユニットの間に物が無いか確認して、"
+                                      "もう一度呼んでください）")
+                return
+            self._save_beacon_estimate(row, found)            # 地図（/admin/pins）に出す＋次の呼出の手がかり
             ok = self._beacon_drive(est, found, label)
             final = est.estimate()
             if ok and final is not None and not final.ambiguous and final.dist_from((found.x, found.y, 0.0)) > 0.05:
                 self._save_beacon_estimate(row, final)        # 走りながら測り直して動いたぶん
+            if ok:
+                note = self._beacon_arrival_check(est, final if (final is not None and not final.ambiguous) else found)
         except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception as e:                        # 基板との通信エラーなど。ロボを止めたまま呼出を取り消す
+        except BeaconAbort as e:                      # その場で回れない など。理由を出して取り消す
+            print(f"    [ビーコン] 中止: {e}")
+            self.nav.cancel()
+            self.cancel_call(cid, f"{label}: {e}")
+            return
+        except Exception as e:                        # 基板との通信エラーなど。ロボを止めて呼出を取り消す
             print(f"    [err] UWB: {e}")
-            self.set_call(cid, "canceled")
-            self.set_status("idle", None, detail=f"UWB の読み取りに失敗（{e}）", pose=self.nav.current_pose())
+            self.nav.cancel()                         # 走行中の例外なら、Nav2 を止める（止めないと走り続ける）
+            self.cancel_call(cid, f"UWB の読み取りに失敗（{str(e)[:160]}）")
             return
         finally:
             try:
@@ -930,12 +1152,10 @@ class Bridge:
             except Exception:
                 pass
         if not ok:
-            self.set_call(cid, "canceled")
-            self.set_status("idle", None, detail=f"{label} への走行に失敗（タイムアウトか中止）",
-                            pose=self.nav.current_pose())
+            self.cancel_call(cid, f"{label} への走行に失敗（タイムアウトか中止）")
             return
         self.set_call(cid, "arrived")
-        self.set_status("arrived", cid, detail=f"{label} に到着。アプリの「本を取得した」を待っています",
+        self.set_status("arrived", cid, detail=f"{label} に到着。アプリの「本を取得した」を待っています" + note,
                         pose=self.nav.current_pose())
         self.wait_for_receipt(cid)
         self._call_finished = True
@@ -958,8 +1178,75 @@ class Bridge:
         except Exception as ex:                          # 書けなくても走行は続ける（sql/03 の update ポリシーが要る）
             print(f"    [warn] ビーコンの推定の書き込みに失敗（続行します）: {ex}")
 
-    def _beacon_collect(self, est, seconds: float) -> int:
-        """seconds 秒のあいだ基板を読んで推定にためる。使えた測定の数を返す。"""
+    def _beacon_note(self, detail: str, quiet: bool = True) -> None:
+        """探している間の進み具合を robot_status に書く（アプリの「ロボの状態」に出る）。
+        書かないと、探している間 robot_status が止まったままになり、アプリが 1 分で「更新が止まっています」と出す。"""
+        try:
+            self.set_status("moving", self._call_now, detail=detail, pose=self.nav.current_pose(), quiet=quiet)
+        except requests.RequestException as e:            # 通信の一時失敗で探索を止めない
+            print(f"    [warn] 進み具合の書き込みに失敗（続行します）: {e}")
+
+    def _beacon_pose(self):
+        """探している間（止まっている間）のロボの位置。回るたびに取り直した値。まだ無ければ、いまの推定。"""
+        return self._bpose if self._bpose is not None else self.nav.current_pose()
+
+    def _beacon_settle_pose(self, before=None):
+        """止まっているいまの位置を取り直して _bpose に入れる。
+
+        AMCL は「10 cm か 0.1 rad 動いたとき」にしか推定を更新しないので、回った直後の current_pose() は古い。
+          ① ナビに refresh_pose があれば、AMCL に 1 回更新してもらう（いちばん確か）
+          ② だめなら、回る前の位置に「実際に回った角度」（ナビの last_turn_rad。オドメトリの値）を足す
+          ③ どちらも無ければ、いまの推定のまま
+        """
+        pose = None
+        refresh = getattr(self.nav, "refresh_pose", None)
+        if callable(refresh):
+            try:
+                pose = refresh()
+            except Exception:
+                pose = None
+        trav = getattr(self.nav, "last_turn_rad", None)
+        if pose is None and before is not None and trav is not None:
+            pose = (before[0], before[1], BL.wrap_angle(before[2] + trav))
+        if pose is None:
+            pose = self.nav.current_pose()
+        self._bpose = pose
+        return pose
+
+    def _beacon_turn(self, deg: float) -> float | None:
+        """その場で deg [度] 回す（＋が反時計回り）。実際に回った角度 [度] を返す（位置が分からなければ None）。
+
+        ・回ったあと、止まっているいまの位置を取り直す（_beacon_settle_pose）
+        ・★回っている間に基板がためた行を捨てる★（古い測定を、回ったあとの向きで使わない）
+        ・ナビが「回れなかった」と言い、実際にもほとんど回っていなければ 1 回やり直す。それでもだめなら BeaconAbort
+        """
+        turned = None
+        for attempt in (1, 2):
+            before = self._beacon_pose()
+            ok = self.nav.turn(math.radians(deg))
+            after = self._beacon_settle_pose(before)
+            # 回るたびに進み具合を書く（探している間 robot_status が止まると、アプリが「更新が止まっています」と出す）
+            label, phase, cnt = self._bnote
+            self._bnote[2] = cnt + 1
+            if label:
+                self._beacon_note(f"{label} を探しています（{phase or 'UWB で測定中'}・その場回転 {cnt + 1} 回目）")
+            self.uwb.flush_input()                    # 回っている間（と、上の書き込みの間）にたまった行を捨てる
+            turned = None
+            if before is not None and after is not None:
+                turned = math.degrees(BL.wrap_angle(after[2] - before[2]))
+            if ok:
+                if turned is not None and abs(deg) >= 20.0 and abs(turned) < 0.5 * abs(deg):
+                    print(f"    [ビーコン] （{deg:+.0f}° 回したはずですが、推定の向きは {turned:+.0f}° しか変わっていません）")
+                return turned
+            if turned is not None and abs(turned) >= max(10.0, 0.5 * abs(deg)):
+                print(f"    [ビーコン] （その場回転は途中で終わりました。{turned:+.0f}° 回っています → そのまま続けます）")
+                return turned
+            print(f"    [ビーコン] その場で回れませんでした（{attempt}/2）")
+        raise BeaconAbort("その場で回れませんでした（ロボのまわりに物が無いか、Nav2 の behavior_server が動いているか確認してください）")
+
+    def _beacon_collect(self, est, seconds: float, enough: int | None = None) -> int:
+        """seconds 秒のあいだ基板を読んで推定にためる。使えた測定の数を返す。
+        enough を渡すと、使えた測定がその数になったところで切り上げる（推定が使うのは最近の enough 回だけ）。"""
         t0 = self._clock()
         n = 0
         while self._clock() - t0 < seconds:
@@ -967,10 +1254,12 @@ class Bridge:
             if not rs:
                 self._sleep(0.02)
                 continue
-            pose = self.nav.current_pose()
+            pose = self._beacon_pose()
             for r in rs:
                 if est.add(pose, r):
                     n += 1
+            if enough is not None and n >= enough:
+                break
         return n
 
     def _beacon_search(self, est, label: str, hint=None):
@@ -983,21 +1272,25 @@ class Bridge:
           ② その場で測る（何も読めなければ 60° ずつ回って探す）→ だいたいの方向
           ③ その方向へアンテナを向け、それまでの測定を捨てて測り直す（その場 → 30° 回ってもう一度。回ると前後が決まる）
           ④ 前後が決まらない、または「後ろ」と出たら、反対側（相手のほう）へ向けて、もう一度 ③
+        回るたびに、回っている間にたまった行を捨てる（_beacon_turn）。その場で回れなければ BeaconAbort。
         """
-        self.set_status("moving", self._call_now, detail=f"{label} を探しています（UWB で測定中）",
-                        pose=self.nav.current_pose())
-        pose = self.nav.current_pose()
+        self._bnote = [label, "前回の場所へアンテナを向けています" if hint is not None else "", 0]
+        self._beacon_note(f"{label} を探しています（UWB で測定中）", quiet=False)
+        pose = self._beacon_settle_pose()                              # 止まっているいまの位置（AMCL に更新してもらう）
+        self.uwb.flush_input()                                         # 位置を取り直している間にたまった行は捨てる
         if hint is not None and pose is not None:                      # ①
             b = BL.bearing_from_antenna(hint, pose, self.uwb_mount)
             if abs(b) > 20.0:
                 print(f"    [ビーコン] 前回の場所 ({hint[0]:.2f}, {hint[1]:.2f}) のほうへアンテナを向けます（{b:+.0f}°）")
-                self.nav.turn(math.radians(b))
-        self._beacon_collect(est, self.beacon_search_sec)              # ②
+                self._beacon_turn(b)
+        self._bnote[1] = ""
+        self._beacon_collect(est, self.beacon_search_sec, enough=est.obs.maxlen)   # ②
         turns = 0
         while est.estimate() is None and turns < 6:
             turns += 1
             print(f"    [ビーコン] まだ読めません → 60° 回して探します（{turns}/6）")
-            self.nav.turn(math.radians(60.0))
+            self._bnote[1] = "まだ読めません。回って探しています"
+            self._beacon_turn(60.0)
             self._beacon_collect(est, 1.5)
         e = est.estimate()
         if e is None:
@@ -1005,16 +1298,18 @@ class Bridge:
         if not e.ambiguous and self._beacon_facing(est, e):           # 前回の場所で前後まで決まった（--beacon-hint-resolve）
             self._beacon_report(e)
             return e
+        self._bnote[1] = "アンテナを向けて測り直しています"
         first, check = self._beacon_measure_fresh(est, e.bearing_deg)  # ③
         first = first or e
         if not first.ambiguous and self._beacon_facing(est, first):
             self._beacon_report(first)
             return first
+        self._bnote[1] = "反対側へ向けて測り直しています"
         if first.ambiguous:                                            # ④ 決まらない＝いまの側は陰の測定が多い → 反対側へ
             print("    [ビーコン] 前後が決まりません（陰の測定が多い）→ 反対側へ向けて測り直します")
             back = math.copysign(180.0, check) - check                 # ③の確かめで回ったぶんを戻した、向けた方向の真反対
         else:
-            back = BL.bearing_from_antenna((first.x, first.y), self.nav.current_pose(), self.uwb_mount)
+            back = BL.bearing_from_antenna((first.x, first.y), self._beacon_pose(), self.uwb_mount)
             print(f"    [ビーコン] 相手はアンテナの後ろ（{back:+.0f}°）→ そちらへ向けて測り直します")
         second, _ = self._beacon_measure_fresh(est, back)
         cands = [c for c in (second, first) if c is not None]
@@ -1030,13 +1325,13 @@ class Bridge:
         (推定, 確かめで回った角度の合計) を返す。"""
         if abs(turn_deg) > 20.0:
             print(f"    [ビーコン] 相手らしい方向（{turn_deg:+.0f}°）へアンテナを向けます")
-            self.nav.turn(math.radians(turn_deg))
+            self._beacon_turn(turn_deg)
         est.reset()
         self._beacon_collect(est, max(1.5, self.beacon_search_sec / 2.0))
         raw = est.last_raw_bearing()
         if raw is not None and abs(raw) > 45.0:                 # 相手が正面の範囲の端: もう一度向け直してから確かめる
             print(f"    [ビーコン] 相手がアンテナの正面から外れています（{raw:+.0f}°）→ もう一度向けます")
-            self.nav.turn(math.radians(raw))
+            self._beacon_turn(raw)
             est.reset()
             self._beacon_collect(est, max(1.5, self.beacon_search_sec / 2.0))
             raw = est.last_raw_bearing()
@@ -1045,8 +1340,8 @@ class Bridge:
         for _ in range(2):                                       # 前後が決まるまで、確かめの 30° は 2 回まで
             check = -30.0 if (raw is not None and raw < 0.0) else 30.0   # 左右（符号）は鏡写しでも同じ → 相手の側へ回る
             print(f"    [ビーコン] 前後を決めるために {check:+.0f}° 回ります")
-            self.nav.turn(math.radians(check))
-            total += check
+            turned = self._beacon_turn(check)
+            total += check if turned is None else turned
             self._beacon_collect(est, 1.5)
             e = est.estimate()
             if e is not None and not e.ambiguous:
@@ -1056,20 +1351,21 @@ class Bridge:
 
     def _beacon_facing(self, est, e) -> bool:
         """推定した場所が、いまのアンテナの正面 ±60° の内か（＝さっきの測定は陰ではなかった）。"""
-        pose = self.nav.current_pose()
+        pose = self._beacon_pose()
         return pose is not None and BL.in_antenna_cone((e.x, e.y), pose, self.uwb_mount, est.usable_deg)
 
     def _beacon_report(self, e):
         how = {"turn": "回って確認", "range": "距離だけの解", "prior": "前回の場所"}.get(e.resolved_by, "")
         print(f"    [ビーコン] 推定 ({e.x:.2f}, {e.y:.2f})  距離 {e.distance_m:.2f} m  方向 {e.bearing_deg:+.0f}°  "
               f"n={e.n}  ばらつき {e.spread_m:.2f} m"
-              + ("  ★前後は未確定（前と仮定）★" if e.ambiguous else (f"  前後は{how}で決定" if how else "")))
+              + ("  ★前後は未確定★" if e.ambiguous else (f"  前後は{how}で決定" if how else "")))
 
     def _beacon_drive(self, est, e, label: str) -> bool:
         """手前のゴールへ走る。走りながら測り直す。失敗したら手前を 0.2 m 広げてもう一度。"""
         standoff = self.beacon_standoff
         for attempt in range(2):
-            pose = self.nav.current_pose() or (e.x, e.y, 0.0)
+            pose = self._beacon_pose() or (e.x, e.y, 0.0)
+            self._bpose = None                       # ここからは走る。位置はナビが追う（止まっているときの値は使わない）
             goal = BL.standoff_goal(e, pose, standoff, label=label)
             self._beacon_goal, self._beacon_resend = goal, 0
             print(f"    [ビーコン] ゴール ({goal['x']:.2f}, {goal['y']:.2f}) 向き {math.degrees(goal['theta']):.0f}°（手前 {standoff:.1f} m）")
@@ -1078,14 +1374,16 @@ class Bridge:
             if self.nav.go(goal, on_progress=self._beacon_progress(est, label)):
                 return True
             if attempt == 0:
-                e = est.estimate() or e
+                e2 = est.estimate()
+                if e2 is not None and not e2.ambiguous:        # 前後が決まっている推定だけ使う
+                    e = e2
                 standoff += 0.2
                 print(f"    [ビーコン] 走行に失敗 → 手前を {standoff:.1f} m に広げてもう一度")
         return False
 
     def _beacon_progress(self, est, label: str):
         """走行中に 1 秒ごとに呼ばれる。測り直して、推定が動いていれば新しいゴールを返す（ナビがそれに差し替える）。"""
-        last = {"t": 0.0}
+        last = {"t": 0.0, "uwb_err": False}
 
         def cb(remaining, pose):
             # 推定が決まっていて、その場所がアンテナの正面 ±60° の外なら、いまの測定は機体ごし（陰）。
@@ -1097,14 +1395,23 @@ class Bridge:
                 ref = (e0.x, e0.y) if (e0 is not None and not e0.ambiguous) else None
             shadowed = (ref is not None and pose is not None
                         and not BL.in_antenna_cone(ref, pose, self.uwb_mount, est.usable_deg))
-            for _ in range(8):                             # たまっている行を読む（長くは読まない）
-                rs = self.uwb.poll()
-                if not rs:
-                    break
-                if shadowed:
-                    continue
-                for r in rs:
-                    est.add(pose, r)
+            try:
+                # ★この 1 秒にたまった行は、走っている途中の「古い位置」での測定★ いまの位置と組み合わせられないので捨て、
+                # 捨てたあとに届く新しい 1 回だけを使う（基板は 0.2 秒ごとに出す）
+                self.uwb.flush_input()
+                if not shadowed:
+                    for _ in range(2):
+                        rs = self.uwb.poll()
+                        if rs:
+                            for r in rs:
+                                est.add(pose, r)
+                            break
+            except Exception as ex:
+                # 基板との通信エラー（USB が抜けた等）。ここで例外を外へ出すと、Nav2 は走り続けたまま、だれも止めない。
+                # 測り直しだけあきらめて、いまのゴールへの走行は続ける（ゴールは探したときの推定のまま）
+                if not last["uwb_err"]:
+                    last["uwb_err"] = True
+                    print(f"    [warn] 走行中の UWB の読み取りに失敗（測り直しをやめ、いまのゴールへ走ります）: {ex}")
             new_goal = None
             e = est.estimate()
             if (e is not None and not e.ambiguous and pose is not None and self._beacon_goal is not None
@@ -1128,6 +1435,39 @@ class Bridge:
             return new_goal
 
         return cb
+
+    def _beacon_arrival_check(self, est, e, seconds: float = 1.0, warn_m: float = 1.5) -> str:
+        """着いたあとに 1 秒測り、UWB の距離が「推定した場所までの距離」と合っているかを見る（記録と注意書きだけ）。
+
+        着いた場所が合っていれば、ユニットはすぐ近く（手前 0.5 m）にある。測った距離がそれより warn_m 以上長ければ、
+        推定した場所が違っている（前後や左右の取り違え）おそれがある。★ここでは取り消さない★（機体ごしの測定は
+        距離が長めに出るので、これだけで失敗とは決められない）。アプリの表示に注意書きを足し、窓に数値を残す。
+        戻り値は、到着の表示に足す文（問題なければ空）。
+        """
+        try:
+            self.uwb.flush_input()
+            ds = []
+            t0 = self._clock()
+            while self._clock() - t0 < seconds:
+                rs = self.uwb.poll()
+                if not rs:
+                    self._sleep(0.02)
+                    continue
+                ds += [r.distance_m for r in rs if r.ok and r.distance_m is not None]
+            pose = self.nav.current_pose()
+            if not ds or pose is None:
+                print("    [ビーコン] 到着後の確認: 測定が読めませんでした（機体の陰になっていると読めないことがあります）")
+                return ""
+            ax, ay, _ = BL.antenna_pose(pose, self.uwb_mount)
+            expect = math.hypot(math.hypot(e.x - ax, e.y - ay), est.dz)        # アンテナからユニットまでの斜めの距離
+            got = sorted(ds)[len(ds) // 2]
+            print(f"    [ビーコン] 到着後の確認: UWB の距離 {got:.2f} m／推定した場所までの計算 {expect:.2f} m（{len(ds)} 回の中央値）")
+            if got - expect > warn_m:
+                print("    [ビーコン] ★距離が計算より大きく違います。着いた場所が違うかもしれません（前後・左右の取り違え）★")
+                return f"（★UWB の距離が計算より {got - expect:.1f} m 長いです。場所が違うかもしれません★）"
+        except Exception as ex:
+            print(f"    [warn] 到着後の確認ができませんでした（続行します）: {ex}")
+        return ""
 
     # ---------------- 受取待ち ----------------
 
@@ -1194,11 +1534,15 @@ class Bridge:
     def poll_once(self):
         if self.busy:
             return
+        if self._pending and not self.flush_pending():
+            return                      # 前の呼出の後始末がまだ書けていない（通信が切れている）。次の呼出には進まない
         rows = self.supa.select(
             "robot_calls",
-            "status=eq.queued&order=created_at.asc&limit=1&select=*")   # FIFO
-        if rows:
-            self.handle(rows[0])
+            "status=eq.queued&order=created_at.asc&limit=20&select=*")  # FIFO
+        for row in rows:                # 古い順。処理済みの行が queued のまま残っていても、後ろの呼出を止めない
+            if row["id"] not in self.seen:
+                self.handle(row)
+                return
 
     # ---------------- 後始末 ----------------
 
@@ -1291,6 +1635,34 @@ def try_realtime(url: str, key: str, on_insert):
 #  main
 # =====================================================================
 
+def turn_test(navigator, deg: float) -> bool:
+    """--turn-test: その場で deg 度回り、回る前とあとの向きを比べて知らせる（呼出は受けない）。
+
+    ビーコン（UWB）への走行は、その場回転と「回ったあとの向き」が正しく読めることが前提。
+    ここで、Nav2 の spin が受け付けられるか・AMCL の更新（request_nomotion_update）が効くかを、UWB 抜きで確かめる。
+    """
+    refresh = getattr(navigator, "refresh_pose", None)
+    before = (refresh() if callable(refresh) else None) or navigator.current_pose()
+    print(f"\n[その場回転の試験] {deg:+.0f}° 回ります。回る前の推定: "
+          + ("なし" if before is None else f"({before[0]:.2f}, {before[1]:.2f}) 向き {math.degrees(before[2]):+.0f}°"))
+    ok = navigator.turn(math.radians(deg))
+    stale = navigator.current_pose()
+    fresh = refresh() if callable(refresh) else None
+    trav = getattr(navigator, "last_turn_rad", None)
+    print(f"    ナビの返事              : {'回れた' if ok else '★回れなかった★'}")
+    print("    回った角度（spin の報告） : " + ("なし" if trav is None else f"{math.degrees(trav):+.1f}°"))
+    for name, p in (("AMCL（更新を頼む前）", stale), ("AMCL（更新を頼んだあと）", fresh)):
+        if before is None or p is None:
+            print(f"    {name:<22}: なし")
+        else:
+            d = math.degrees(math.atan2(math.sin(p[2] - before[2]), math.cos(p[2] - before[2])))
+            print(f"    {name:<22}: 向き {math.degrees(p[2]):+.0f}°（回る前から {d:+.1f}°）")
+    good = ok and (fresh is not None or trav is not None)
+    print("    → " + ("OK（その場回転と、回ったあとの向きの読み取りが動いています）" if good else
+                    "★要確認★ 上の「なし」「回れなかった」の行を見てください（Nav2 の behavior_server・AMCL）"))
+    return good
+
+
 def main():
     ap = argparse.ArgumentParser(description="Supabase ↔ ロボ ブリッジ")
     ap.add_argument("--live", action="store_true",
@@ -1349,6 +1721,9 @@ def main():
                     help="前回ロボが推定したユニットの場所（ビーコンの行の x, y）へ、最初にアンテナを向けない")
     ap.add_argument("--beacon-hint-resolve", action="store_true",
                     help="前回の場所で前後まで決める（30° 回って確かめない）。★ユニットを動かさない運用のときだけ★")
+    ap.add_argument("--turn-test", type=float, default=None, metavar="DEG",
+                    help="（--nav2 と一緒に）起動して自己位置推定が済んだら、その場で DEG 度回って終わる。"
+                         "その場回転（Nav2 の spin）と、回ったあとの向きの読み取りが実機で動くかの確認用。呼出は受けない")
     args = ap.parse_args()
     try:                                     # 書き間違いは、ほかの準備より先に知らせる
         uwb_mount = BL.parse_mount(args.uwb_mount) if args.uwb_mount else BL.Mount()
@@ -1448,6 +1823,12 @@ def main():
                     uwb_mount=uwb_mount, beacon_hint=not args.no_beacon_hint,
                     beacon_prior_resolve=args.beacon_hint_resolve)
 
+    # 前回の取り残し（電池切れ・kill で moving / arrived のまま残った呼出）を片付けてから始める
+    try:
+        bridge.cleanup_stale_calls()
+    except requests.RequestException as e:
+        print(f"[warn] 取り残しの片付けに失敗（続行します）: {e}")
+
     if args.nav2:
         # 順番が大事: 初期位置を与える → それで Nav2 の残り（costmap・bt_navigator）が起動を完了できる
         try:
@@ -1468,19 +1849,45 @@ def main():
             print("終了しました。")
             return
 
+    if args.turn_test is not None:
+        if not args.nav2:
+            sys.exit("--turn-test は --nav2 と一緒に使います（ラズパイの上で、Nav2 を起動した状態で）")
+        try:
+            turn_test(navigator, args.turn_test)
+        except KeyboardInterrupt:
+            navigator.cancel()
+        print("終了しました（--turn-test。呼出は受けていません）。")
+        return
+
     if args.realtime:
         try_realtime(url, key, bridge.handle)
 
     stop = {"flag": False}
     signal.signal(signal.SIGTERM, lambda *a: stop.update(flag=True))
 
+    def _on_hup(*_a):
+        # 端末（SSH）が切れた。出力先が無くなるので捨て先に替えてから、Ctrl-C と同じ後始末（走行の中止・呼出の取り消し）へ
+        try:
+            sys.stdout = sys.stderr = open(os.devnull, "w")
+        except Exception:
+            pass
+        raise KeyboardInterrupt
+
+    if hasattr(signal, "SIGHUP"):                 # Windows には無い
+        signal.signal(signal.SIGHUP, _on_hup)
+
     print(f"\n{args.interval:.0f}秒ごとに robot_calls を見ています。Ctrl-C で終了。")
     try:
         while not stop["flag"]:
             try:
-                bridge.poll_once()
+                if time.time() >= bridge.hold_until:      # 取り消した直後は少し待つ（理由がアプリに届く前に上書きしない）
+                    bridge.poll_once()
             except requests.RequestException as e:
                 print(f"[warn] 通信エラー（続行します）: {e}")
+            except Exception:
+                # 思わぬ例外でブリッジごと落とさない。その呼出は handle() が止めて取り消してある（_abandon）
+                traceback.print_exc()
+                print("[err] 呼出の処理中に例外が出ました（上の表示）。その呼出は取り消しました。次の呼出を待ちます")
             time.sleep(args.interval)
     except KeyboardInterrupt:
         pass

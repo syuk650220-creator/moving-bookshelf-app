@@ -201,6 +201,11 @@ velocity_smoother:
 #  会場方針: 後退(backup)・その場旋回(spin) は接触リスクなので使わない。
 #  wait とコストマップのクリアだけ残します。[会場 D3]
 #
+#  ★この節を重ねる（make_nav2_params.py --with-behavior-server）と、ブリッジのその場回転も使えなくなる★
+#  bookshelf_bridge.py は、着いたあとの向き合わせと、UWB ビーコンの探索（アンテナを向ける・前後を決める）で
+#  Nav2 の spin を呼ぶ。spin を外すと、向き合わせは「できなかった」として進み、ビーコンの呼出は
+#  「その場で回れませんでした」で取り消される。UWB ビーコンを使うなら、この節は重ねないこと。
+#
 #  ★これは behavior_server のプラグイン一覧を減らすだけでは足りません★
 #  ビヘイビアツリーの XML からも該当ノードを外す必要があります。
 #  既定の navigate_to_pose_w_replanning_and_recovery.xml をコピーして

@@ -25,6 +25,8 @@ uwb_reader.py（S1）が出す 1 回の測定（distance_m・bearing_deg）は�
      「方向」には使わず「距離」にだけ使う。
   ④ 距離だけで決める … 一直線でない 3 か所以上から (x_i, y_i, d_i) が取れれば、円の交わり（三点測位）を
      最小二乗で解ける（numpy 不要の 2×2）。方向が当てにならないときの保険と、②の決め手。
+     ★測った場所が十分に広がっているときだけ使う（TRI_MIN_SPREAD_M）★ その場で回るだけだと、アンテナは
+     半径 15 cm ほどの円の上を動くだけで、測距のばらつき（数 cm〜）に対して足場が小さすぎ、答えが大きく外れる。
 
 使い方（S3 から）:
     est = BeaconEstimator()                       # 呼出ごとに新しく作る
@@ -34,7 +36,7 @@ uwb_reader.py（S1）が出す 1 回の測定（distance_m・bearing_deg）は�
     goal = standoff_goal(e, nav.current_pose())   # 0.5 m 手前の Nav2 ゴール（向きはユニットのほう）
 
 確かめ方（基板なし）:
-    python3 beacon_locator.py --robot 1.0 0.5 90 --d 1.66 --b -9.65     # ロボ (1.0, 0.5) 向き 90°・距離 1.66 m・方向 −9.65°
+    python3 beacon_locator.py --robot 1.0 0.5 90 --d 1.52 --b 19.8      # ロボ (1.0, 0.5) 向き 90°・距離 1.52 m・方向 +19.8°
 """
 
 from __future__ import annotations
@@ -56,6 +58,7 @@ from uwb_reader import UwbReading, is_usable
 USABLE_BEARING_DEG = 60.0     # ★実測で決める（ロードマップ 6-1 ③）★ これより横の回は「方向」に使わない（「距離」には使う）
 CLUSTER_RADIUS_M = 0.40       # 候補の点が「同じ場所」と見なす半径 [m]。ばらつき（±9 cm）と動きながらの測定の余裕
 PRIOR_RADIUS_M = 0.8          # 前回の推定（stop_points のビーコンの行）から、この半径の内にある山を「同じユニット」とみなす [m]
+TRI_MIN_SPREAD_M = 0.15       # 距離だけの解（三点測位）を使うのに要る、測った場所の広がり [m]（いちばん狭い向きのばらつき）
 
 
 # =====================================================================
@@ -167,6 +170,22 @@ def trilaterate(points, dists) -> tuple[float, float] | None:
     return ((a22 * b1 - a12 * b2) / det, (a11 * b2 - a12 * b1) / det)
 
 
+def position_spread(points) -> float:
+    """点の集まりの「いちばん狭い向きの広がり」[m]（位置のばらつきの小さいほうの主成分の標準偏差）。
+    一直線に並んでいれば 0。三点測位の足場が十分かを見るのに使う。"""
+    pts = list(points)
+    n = len(pts)
+    if n < 3:
+        return 0.0
+    mx = sum(p[0] for p in pts) / n
+    my = sum(p[1] for p in pts) / n
+    sxx = sum((p[0] - mx) ** 2 for p in pts) / n
+    syy = sum((p[1] - my) ** 2 for p in pts) / n
+    sxy = sum((p[0] - mx) * (p[1] - my) for p in pts) / n
+    lam = 0.5 * (sxx + syy - math.sqrt((sxx - syy) ** 2 + 4.0 * sxy * sxy))
+    return math.sqrt(max(0.0, lam))
+
+
 # =====================================================================
 #  何回かの測定をまとめて 1 つの推定にする
 # =====================================================================
@@ -193,7 +212,8 @@ class BeaconEstimator:
     def __init__(self, mount: Mount | None = None, beacon_height: float = P.BEACON_HEIGHT,
                  window: int = 15, min_fom: float | None = None, max_nlos: float | None = None,
                  max_range_m: float = 8.0, usable_deg: float = USABLE_BEARING_DEG,
-                 cluster_m: float = CLUSTER_RADIUS_M, prior=None, prior_m: float = PRIOR_RADIUS_M):
+                 cluster_m: float = CLUSTER_RADIUS_M, prior=None, prior_m: float = PRIOR_RADIUS_M,
+                 tri_min_spread_m: float = TRI_MIN_SPREAD_M):
         self.mount = mount or Mount()
         # 前回ロボが推定した場所 (x, y)（stop_points のビーコンの行）。止まったままで前後が決まらないとき、
         # 2 つの山のうち片方だけがこの近くにあれば、そちらを選ぶ（回って確かめる手間を省く）。None なら使わない
@@ -202,6 +222,7 @@ class BeaconEstimator:
         self.dz = beacon_height - self.mount.height      # 相手とアンテナの高さの差
         self.min_fom, self.max_nlos, self.max_range_m = min_fom, max_nlos, max_range_m
         self.usable_deg, self.cluster_m = usable_deg, cluster_m
+        self.tri_min_spread_m = tri_min_spread_m
         self.obs: deque = deque(maxlen=window)            # (ant_pose, dh, b_deg, front_pt, back_pt | None)
         self.n_total = 0                                  # 受け取った測定（測れなかった回も含む）
         self.n_used = 0                                   # 位置の計算に使った測定
@@ -264,7 +285,12 @@ class BeaconEstimator:
         cands_per_obs = [(o[3], o[4]) for o in self.obs if o[3] is not None]
 
         # ④ 距離だけの解（一直線でない 3 か所以上から測れていれば出る）
-        tri = trilaterate([o[0][:2] for o in self.obs], [o[1] for o in self.obs]) if len(self.obs) >= 3 else None
+        # ★測った場所が十分に広がっているときだけ★ その場で回っただけ（アンテナが小さな円の上を動いただけ）の測定から
+        # 解くと、測距のばらつきが何十倍にも効いて答えが大きく外れ、前後を間違った側に「決めて」しまう
+        ant_pts = [o[0][:2] for o in self.obs]
+        tri = None
+        if len(self.obs) >= 3 and position_spread(ant_pts) >= self.tri_min_spread_m:
+            tri = trilaterate(ant_pts, [o[1] for o in self.obs])
 
         if not cands_per_obs:                           # 方向が一度も使えていない → 距離だけ
             if tri is None:
