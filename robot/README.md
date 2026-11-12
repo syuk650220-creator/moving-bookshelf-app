@@ -632,7 +632,7 @@ Pi の `~/bringup/temp_tf_launch.py` に入っている値は `base_footprint→
 入っているのは **読み取り（S1）・位置の計算（S2）・ブリッジの走行（S3）・DB の行き先（S4）・アプリの表示（S5）・検算（S6）・USB の固定名（S7）・アンテナの TF（S8）**。
 2 枚の評価基板への書き込みと、2 枚の間の距離（ゲート B）は 2026-11-09 に実機で確認した（基板の出力は `parse_line()` でそのまま読めた）。ロボに載せての走行はこれから。**載せたら、走らせる前に §11-3 の「先に確かめる 3 つ」（設定の読み返し・方向の符号・その場回転）を通すこと。** 初心者向けの説明は OneDrive の ⑫（§10 の表）。
 
-**取り付け（2026-11-09 決定）**: 機体の前は本棚の出し入れ口のまま（前後は入れ替えない）。UWB 基板は本棚の後ろ（Pi などの上）の台座に縦に立て、アンテナの面を後ろへ向ける。`robot_params.py` §5 の既定はこの形（仮の値）。
+**取り付け（学会ver の機体）**: 機体の前は本棚の出し入れ口のまま（前後は入れ替えない）。UWB 基板は機体の後ろの端（コードカバーの上の台座）に縦に立て、アンテナの面を前（本棚・LiDAR の側）へ向ける。`robot_params.py` §5 の既定はこの形（CAD から読んだ値: 回転の中心から後ろへ 0.13 m・左右の中央・床から 0.28 m）。アンテナの正面に本棚のふたと LiDAR があるので、**席のユニットは机の高さ（床から 0.70 m 以上）に置く**（正面 ±10° の内で、見上げる角度が 15° より小さい方向は LiDAR ごしになる。0.75 m なら、アンテナから 1.7 m より近い正面は LiDAR の上を越える）。
 
 ### 11-1 入っているもの
 
@@ -641,7 +641,7 @@ Pi の `~/bringup/temp_tf_launch.py` に入っている値は `base_footprint→
 | `uwb_reader.py` | 基板の出力（1 秒 5 回・1 行 1 JSON）を読み、距離 [m] と方向 [度]（左が＋）にする。送れる命令は許可した形だけ。測り始める前に、基板の返事から設定を確かめる。基板なしのシミュレータ `--simulate`、生の行の保存 `--log`、CSV `--csv`、方向の符号の確認 `--sign-check` |
 | `beacon_locator.py` | ロボの位置（AMCL）＋アンテナの取り付け位置（`robot_params` §5）＋距離・方向 → ユニットの地図座標。中央値で外れ値を落とす。前後（基板は鏡写しの角しか出せない）はロボが回ると決まる。距離だけの三点測位も持つ（測った場所が十分に広がっているときだけ使う。その場で回っただけの測定からは解かない）。手前 0.5 m のゴールを作る。ほかに、点がアンテナの正面 ±60° の内か（`in_antenna_cone`）、取り付けの文字 → 値（`parse_mount`）、前回の場所で前後を決める（`prior`。既定では使わない） |
 | `bookshelf_bridge.py` | kind=`'beacon'` の呼出: ① 前回の場所（ビーコンの行の x, y）があれば、まずそちらへアンテナを向ける → ② その場で測る（読めなければ 60° ずつ回る）→ ③ 相手らしい方向へアンテナを向け、それまでの測定を捨てて測り直す（その場 → 相手の側へ 30° 回ってもう一度。前後が決まるまで 2 回まで）→ ④ 決まらない／アンテナの後ろと出たら、反対側へ向けて ③ をもう一度 → 推定をビーコンの行へ書き戻す → 手前 0.5 m のゴールへ（走りながら測り直し、推定が 0.3 m 動いたらゴールを差し替え。向かっているユニットがアンテナの正面 ±60° の外＝機体の陰なら、その間の測定は読み捨てる。失敗したら手前を 0.2 m 広げてもう一度）→ 着いたら出し入れ口をユニットへ向ける → 受取 → 帰還。**回るたびに、回っている間に基板がためた行を捨て、止まった位置を取り直してから測る**（古い測定を、回ったあとの向きで使うと前後を取り違える）。探している間は、回るたびに進み具合を `robot_status` に書く。**前後が決まらない／その場で回れない／見つからない／走れない／基板の設定を確かめられない／基板と話せないときは、走り出さずに canceled にして理由を `robot_status.detail` に。** 着いたあとに 1 秒測り、UWB の距離が計算より 1.5 m 以上長ければ、到着の表示に「場所が違うかもしれません」と足す（取り消しはしない）。`--uwb` 無しで起動していれば取り消すだけ |
-| `robot_params.py` §5 | アンテナの取り付け位置 `UWB_MOUNT_X / Y / YAW`・`UWB_ANTENNA_HEIGHT`（既定は後ろの台座・後ろ向き 180°。★台座が決まったら実測★）と、席のユニットの高さ `BEACON_HEIGHT`。起動時に `--uwb-mount` で上書きできる |
+| `robot_params.py` §5 | アンテナの取り付け位置 `UWB_MOUNT_X / Y / YAW`・`UWB_ANTENNA_HEIGHT`（既定は学会ver の機体: 後ろの台座・前向き 0°）と、席のユニットの高さ `BEACON_HEIGHT`。起動時に `--uwb-mount` で上書きできる |
 | `nav2/robot_tf_launch.py` | `base_link → uwb_link` の静的 TF（値は `robot_params` から読む） |
 | `udev/99-uwb.rules` ／ `udev/99-rplidar.rules` | 固定名 `/dev/uwb`（USB ID 1915:520f）・`/dev/rplidar`。`pi_setup.sh` の 6/8 が入れる |
 | `sql/05_beacons.sql` | `stop_points.kind` に `'beacon'`、行き先の行 id=100「ビーコン（UWB）」。`supabase/schema.sql` と `selfhost/compose.yaml`（25_beacons）にも同じものが入っている |
@@ -676,8 +676,8 @@ python3 bookshelf_bridge.py --live --nav2 --uwb                       # /dev/uwb
 python3 bookshelf_bridge.py --live --nav2 --uwb --beacon-height 0.75 --beacon-standoff 0.5 --uwb-angle-sign -1
 # 取り付けを robot_params を直さずに試す（回転の中心から X 前が＋, Y 左が＋ [m], アンテナの面の向き [度] 前 0／後ろ 180, 床からの高さ [m]）
 #   ★値がマイナスで始まるので、= でつなぐ（空白で区切っても受けるが、= が確実）★
-python3 bookshelf_bridge.py --live --nav2 --uwb --uwb-mount=-0.15,0,180,0.25
-#   ★TF（RViz の表示用）も合わせるなら: ros2 launch robot_tf_launch.py uwb_x:=-0.15 uwb_y:=0.0 uwb_z:=0.20 uwb_yaw:=3.1416★
+python3 bookshelf_bridge.py --live --nav2 --uwb --uwb-mount=-0.13,0,0,0.28
+#   ★TF（RViz の表示用）も合わせるなら: ros2 launch robot_tf_launch.py uwb_x:=-0.13 uwb_y:=0.0 uwb_z:=0.23 uwb_yaw:=0.0★
 #   （uwb_z は base_link からの高さ＝床からの高さ − 0.05）
 # 前回の場所を使わない／前回の場所で前後まで決める（★ユニットを動かさない運用のときだけ★）
 python3 bookshelf_bridge.py --live --nav2 --uwb --no-beacon-hint

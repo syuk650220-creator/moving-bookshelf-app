@@ -76,7 +76,7 @@ class Mount:
 
 
 def parse_mount(text: str) -> Mount:
-    """「X,Y,向き[度],高さ」の文字（例 "-0.15,0,180,0.25"）→ Mount。ブリッジの --uwb-mount 用。
+    """「X,Y,向き[度],高さ」の文字（例 "-0.13,0,0,0.28"）→ Mount。ブリッジの --uwb-mount 用。
     X は前が＋、Y は左が＋ [m]（base_link＝回転の中心から）。向きはアンテナの面が向く方向（前 0、後ろ 180）。"""
     parts = [p.strip() for p in str(text).split(",")]
     if len(parts) != 4:

@@ -21,7 +21,7 @@ Nav2 標準の nav2_params.yaml のフレーム名（amcl は base_footprint、c
 ★既定値はこの機体（2026-09-20 に Pi の temp_tf_launch.py と実機で確認）★
     base_footprint→base_link  z 0.05
     base_link→laser           x 0.10, z 0.15, yaw 3.14159
-    base_link→uwb_link        robot_params.py の UWB_MOUNT_X / Y / YAW と UWB_ANTENNA_HEIGHT − 0.05（★取り付けてから実測★）
+    base_link→uwb_link        robot_params.py の UWB_MOUNT_X / Y / YAW と UWB_ANTENNA_HEIGHT − 0.05（学会ver の機体の値）
   yaw が 3.14159 なのは、RPLIDAR の 0° が機体の「後ろ」（基板側）を向いて付いているためです
   （機体の前＝本棚側）。0 のままだと地図は作れてしまいますが、Nav2 がゴールと反対へ走らせます。
   確かめ方: ラジコンで前進させたとき、RViz の base_link の赤い軸の向きへロボが進めば合っています。

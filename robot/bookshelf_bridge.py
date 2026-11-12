@@ -1670,7 +1670,7 @@ def normalize_argv(argv: list[str]) -> list[str]:
     """--uwb-mount -0.15,0,180,0.25 のように、値がマイナスで始まる書き方を --uwb-mount=-0.15,… に直す。
 
     argparse は「-0.15,0,180,0.25」を数値と見なせず、別のオプションだと思って「expected one argument」で止まる
-    （Python 3.12 で確認）。後ろ向きの取り付けは X が必ずマイナスなので、空白で区切った書き方でも受けられるようにする。
+    （Python 3.12 で確認）。機体の後ろに付けると X がマイナスになるので、空白で区切った書き方でも受けられるようにする。
     """
     out: list[str] = []
     i = 0
@@ -1739,7 +1739,7 @@ def main():
     ap.add_argument("--uwb-max-nlos", type=float, default=None, help="この NLOS%% を超える回は使わない（diag 1 のとき）")
     ap.add_argument("--uwb-mount", default=None, metavar="X,Y,YAW_DEG,Z",
                     help="UWB アンテナの取り付け（回転の中心から前が＋の X・左が＋の Y [m]、アンテナの面の向き [度] 前 0／後ろ 180、"
-                         "床からの高さ [m]）。既定は robot_params の UWB_MOUNT_*。例: --uwb-mount=-0.15,0,180,0.25"
+                         "床からの高さ [m]）。既定は robot_params の UWB_MOUNT_*。例: --uwb-mount=-0.13,0,0,0.28"
                          "（値がマイナスで始まるので、= でつなぐ書き方が確実）")
     ap.add_argument("--no-beacon-hint", action="store_true",
                     help="前回ロボが推定したユニットの場所（ビーコンの行の x, y）へ、最初にアンテナを向けない")

@@ -1591,6 +1591,25 @@ def _yaw_before_go(events, start_yaw=0.0):
     return math.radians(sum(_turns_before_go(events))) + start_yaw
 
 
+print("  --- 既定の取り付け（学会ver の機体: 後ろの端の台座・アンテナの面は前）: 機体の陰あり ---")
+MD = BL.Mount()
+check("既定の取り付けは、回転の中心から後ろへ 0.13 m・左右の中央・前向き・床から 0.28 m",
+      (MD.x, MD.y, MD.yaw, MD.height), (-0.13, 0.0, 0.0, 0.28))
+check("既定: 機体の前 2 m の点はアンテナの正面の範囲の内、後ろ 2 m の点は外（機体の陰）",
+      (BL.in_antenna_cone((2.0, 0.0), (0.0, 0.0, 0.0), MD), BL.in_antenna_cone((-2.0, 0.0), (0.0, 0.0, 0.0), MD)), (True, False))
+for _bxy, _cid in (((2.0, 1.0), "cd1"), ((3.5, 0.0), "cd2"), ((0.5, 2.0), "cd3"), ((-2.0, 0.5), "cd4"), ((1.2, -2.5), "cd5")):
+    s, n, br, uwb, board = _mk_world(_bxy, mount=MD, shadow=True, nav=FakeNavT())
+    with contextlib.redirect_stdout(io.StringIO()):
+        br.handle(call(_cid, 100))
+    _g = n.goals[0]
+    _x, _y, _th = _expected_standoff(_bxy)
+    check(f"既定の取り付け・ユニット {_bxy}: done・ゴールは 0.5 m 手前（誤差 5 cm 以内）・向きはユニットのほう",
+          (s.calls[_cid], math.hypot(_g[0] - _x, _g[1] - _y) < 0.05,
+           abs(math.atan2(math.sin(_g[2] - _th), math.cos(_g[2] - _th))) < math.radians(3)),
+          ("done", True, True))
+    check(f"既定の取り付け・ユニット {_bxy}: 推定した場所を書き戻す（誤差 10 cm 以内）",
+          math.hypot(s.sp[100]["x"] - _bxy[0], s.sp[100]["y"] - _bxy[1]) < 0.10, True)
+
 print("  --- 後ろ向きの取り付け（本棚の後ろの台座・アンテナの面は後ろ）: 前方のユニット (2, 1)・機体の陰あり ---")
 MR = BL.Mount(x=-0.15, y=0.0, yaw=math.pi, height=0.25)
 s, n, br, uwb, board = _mk_world((2.0, 1.0), mount=MR, shadow=True, nav=FakeNavT())
