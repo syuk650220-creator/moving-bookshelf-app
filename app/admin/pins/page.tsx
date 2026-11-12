@@ -65,6 +65,23 @@ function toDraft(p: Pin): Draft {
   return { label: p.label, x: String(p.x), y: String(p.y), theta: String(p.theta) }
 }
 
+// 読み直したとき、入力欄をどうするか。★手で書きかけの欄はそのまま残す★
+//   d … いまの入力、was … 前に読んだ DB の値、now … 読み直した DB の値
+//   欄ごとに、「前に読んだ DB の値と違う」＝書きかけ → 残す。同じ → 新しい DB の値に揃える
+function mergeDraft(d: Draft | undefined, was: Pin | undefined, now: Pin): Draft {
+  const fresh = toDraft(now)
+  if (!d || !was) return fresh
+  const old = toDraft(was)
+  return {
+    label: d.label !== old.label ? d.label : fresh.label,
+    x: d.x !== old.x ? d.x : fresh.x,
+    y: d.y !== old.y ? d.y : fresh.y,
+    theta: d.theta !== old.theta ? d.theta : fresh.theta,
+  }
+}
+
+const COORD_LIMIT_M = 100   // 座標として受け付ける範囲 [m]（打ち間違いで桁が増えた値を保存しない）
+
 // 「90d」のように末尾 d を付けると度として受け付ける
 function parseTheta(s: string): number {
   const t = s.trim().toLowerCase()
@@ -97,15 +114,30 @@ export default function AdminPinsPage() {
 
   // ---------------- 読み込み ----------------
 
-  const loadPins = useCallback(async () => {
+  // いま画面が持っている DB の値（読み直しのとき「書きかけの欄か」を見分けるのに使う）
+  const pinsRef = useRef<Pin[]>([])
+  useEffect(() => {
+    pinsRef.current = pins
+  }, [pins])
+
+  // savedId … いま保存した行。その行の入力欄は DB の値に揃える。ほかの行の書きかけの欄は残す
+  const loadPins = useCallback(async (savedId?: number) => {
     const { data, error } = await supabase.from('stop_points').select('*').order('id')
     if (error) {
       setMessage({ kind: 'err', text: `ピンの取得に失敗しました: ${error.message}` })
       return
     }
     const rows = (data ?? []) as Pin[]
+    const old = pinsRef.current
     setPins(rows)
-    setDrafts(Object.fromEntries(rows.map((p) => [p.id, toDraft(p)])))
+    setDrafts((prev) =>
+      Object.fromEntries(
+        rows.map((p) => [
+          p.id,
+          p.id === savedId ? toDraft(p) : mergeDraft(prev[p.id], old.find((o) => o.id === p.id), p),
+        ]),
+      ),
+    )
     if (rows.length > 0) {
       setSchemaOk('kind' in rows[0])
     } else {
@@ -121,10 +153,6 @@ export default function AdminPinsPage() {
 
   // ビーコンの推定（ブリッジが呼出のたびに x, y を書き戻す）を 3 秒ごとに読み直す。
   // 手で編集中の入力欄は上書きしない（入力欄が DB の前の値のままのときだけ、新しい値に揃える）
-  const pinsRef = useRef<Pin[]>([])
-  useEffect(() => {
-    pinsRef.current = pins
-  }, [pins])
   useEffect(() => {
     if (schemaOk === false) return
     let alive = true
@@ -190,19 +218,41 @@ export default function AdminPinsPage() {
       setMessage({ kind: 'err', text: `id=${p.id}: ラベル・x・y・theta を正しく入力してください` })
       return
     }
+    if (Math.abs(x) > COORD_LIMIT_M || Math.abs(y) > COORD_LIMIT_M) {
+      setMessage({ kind: 'err', text: `id=${p.id}: x・y は ±${COORD_LIMIT_M} m の範囲で入力してください（地図の座標 [m]。桁の打ち間違いではありませんか）` })
+      return
+    }
+    // ★変えた欄だけを書く★ 触っていない欄まで書くと、この画面を開いたあとにロボ側（pin_tool.py や
+    // ビーコンの推定の書き戻し）が入れた新しい値を、古い値で上書きしてしまう
+    const body: Record<string, string | number> = {}
+    if (d.label.trim() !== p.label) body.label = d.label.trim()
+    if (x !== p.x) body.x = x
+    if (y !== p.y) body.y = y
+    if (theta !== p.theta) body.theta = theta
+    if (Object.keys(body).length === 0) {
+      setMessage({ kind: 'ok', text: `${p.label}（id=${p.id}）は、DB の値から変わっていません（保存するものがありません）。` })
+      return
+    }
     setBusyId(p.id)
     setMessage(null)
-    const { error } = await supabase
-      .from('stop_points')
-      .update({ label: d.label.trim(), x, y, theta })
-      .eq('id', p.id)
+    const { data: saved, error } = await supabase.from('stop_points').update(body).eq('id', p.id).select('id')
     setBusyId(null)
     if (error) {
       setMessage({ kind: 'err', text: explainError(error.message) })
       return
     }
-    setMessage({ kind: 'ok', text: `${d.label.trim()}（id=${p.id}）を保存しました。ロボ側は次の呼出から新しい座標を使います。` })
-    await loadPins()
+    if (!saved || saved.length === 0) {
+      // 書き込みが 1 行も通っていない（権限が無いと、エラーにならずに 0 行になる）
+      setMessage({ kind: 'err', text: explainError('permission: stop_points を更新できませんでした（0 行）') })
+      return
+    }
+    const when = isHome(p)
+      ? 'ロボ側は、ブリッジを起動し直すと新しい座標を使います（本棚の場所は起動時に読むため）。'
+      : isBeacon(p)
+        ? '次の呼出で、ロボが最初にアンテナを向ける方向が変わります（座標は、ロボが測るたびに書き直します）。'
+        : 'ロボ側は次の呼出から新しい座標を使います。'
+    setMessage({ kind: 'ok', text: `${d.label.trim()}（id=${p.id}）を保存しました。${when}` })
+    await loadPins(p.id)
   }
 
   const addHome = async () => {
@@ -225,6 +275,14 @@ export default function AdminPinsPage() {
     const used = new Set(pins.map((p) => p.id))
     let nextId = Math.max(0, ...pins.filter(isSeat).map((p) => p.id)) + 1
     while (used.has(nextId)) nextId += 1
+    // 追加した席は、この画面からは消せない。座標は (0, 0) で入る（座標を入れるまで、「ロボを呼ぶ」の届け先には出ない）
+    if (
+      !window.confirm(
+        `席${nextId}（id=${nextId}）を追加します。\n\n・追加した席は、この画面からは消せません（消すときは Supabase の SQL Editor で）。\n・座標は (0, 0) で入ります。x・y を入れて保存するまで、「ロボを呼ぶ」の届け先には出ません。\n\n追加しますか？`,
+      )
+    ) {
+      return
+    }
     setBusyId(nextId)
     setMessage(null)
     const row: Record<string, unknown> = { id: nextId, label: `席${nextId}`, x: 0, y: 0, theta: 0 }
@@ -235,7 +293,7 @@ export default function AdminPinsPage() {
       setMessage({ kind: 'err', text: explainError(error.message) })
       return
     }
-    setMessage({ kind: 'ok', text: `席${nextId}（id=${nextId}）を追加しました。` })
+    setMessage({ kind: 'ok', text: `席${nextId}（id=${nextId}）を追加しました。x・y・theta を入れて保存してください（座標を入れるまで、届け先には出ません）。` })
     await loadPins()
   }
 
@@ -283,7 +341,9 @@ export default function AdminPinsPage() {
     minY = cy - spanY / 2; maxY = cy + spanY / 2
     const s = W / spanX                   // px / m
     const H = Math.round(spanY * s)
-    const grid = spanX > 8 ? 2 : 1        // 目盛りの間隔 [m]
+    let grid = spanX > 8 ? 2 : 1          // 目盛りの間隔 [m]
+    // 目盛りは多くても 60 本ほどに抑える（DB に極端な座標が入っていても、線を引き続けて画面が固まらないように）
+    while (Math.max(spanX, spanY) / grid > 60) grid *= 10
     const toPx = (x: number, y: number) => ({ px: (x - minX) * s, py: H - (y - minY) * s })
     const gx: number[] = []
     for (let v = Math.ceil(minX / grid) * grid; v <= maxX; v += grid) gx.push(v)

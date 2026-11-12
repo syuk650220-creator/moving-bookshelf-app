@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getGuestName, setGuestName } from "@/lib/guestName";
+import { getGuestName, setGuestName, isGuestName, makeGuestName, GUEST_LABEL } from "@/lib/guestName";
 
 // 💡 ここに研究室のメンバーの名前を登録します（自由に変更してください）
 const STUDENT_DATA = {
@@ -26,9 +26,12 @@ export default function Login() {
   useEffect(() => {
     const saved = getGuestName();
     if (saved) {
-      if (saved === "ゲスト") {
+      if (isGuestName(saved)) {
+        // この端末のゲストの名前（例: ゲスト-7K2Q）をそのまま使う。
+        // 前の作りで「ゲスト」だけを保存していた端末は、ここで端末ごとの名前に替える
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- 外部ストア(localStorage)からの初期値読み込みのため
         setCategory("ゲスト");
-        setName("ゲスト");
+        setName(saved === GUEST_LABEL ? makeGuestName() : saved);
       } else {
         // 保存された名前から、その人がどのカテゴリ（B4, M1, M2）かを探してセットする
         let foundCategory: Category = "";
@@ -83,9 +86,11 @@ export default function Login() {
               const selectedCat = e.target.value as Category;
               setCategory(selectedCat);
               
-              // 所属が変わったら、名前をリセットする（ただしゲストの場合は「ゲスト」をセット）
+              // 所属が変わったら、名前をリセットする（ただしゲストの場合は、この端末のゲストの名前をセット）
+              // ゲストの名前は端末ごとに違う（例: ゲスト-7K2Q）。全員が同じ名前だと、ロボの呼出が混ざるため
               if (selectedCat === "ゲスト") {
-                setName("ゲスト");
+                const saved = getGuestName();
+                setName(saved && isGuestName(saved) && saved !== GUEST_LABEL ? saved : makeGuestName());
               } else {
                 setName("");
               }
@@ -130,7 +135,7 @@ export default function Login() {
         {/* ゲスト選択時のメッセージ表示（任意） */}
         {category === "ゲスト" && (
           <p className="text-sm text-blue-600 bg-blue-50 p-2 rounded">
-            ※ゲストとしてアプリを利用します
+            ※ゲストとしてアプリを利用します（この端末の名前: {name}）
           </p>
         )}
 
