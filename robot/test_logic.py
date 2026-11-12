@@ -1281,7 +1281,24 @@ class _NoFlush(_MuteBoard):          # reset_input_buffer を持たない相手�
 
 
 check("捨てる手段が無い相手でも flush_input() は例外にしない", U.UwbReader(_NoFlush()).flush_input(), None)
-check("ポート探し: 固定名が無く USB にも無ければ None", U.find_port("/dev/__no_such_uwb__"), None)
+check("ポート探し: 既定の固定名（/dev/uwb）が無く、USB にも無ければ None",
+      None if os.path.exists(U.DEFAULT_PORT) else U.find_port(U.DEFAULT_PORT), None)
+check("ポート探し: 名前を指定されたら、そのまま返す（COM6 のような名前は、ファイルの有無では確かめられない）",
+      (U.find_port("COM6"), U.find_port("/dev/ttyACM1")), ("COM6", "/dev/ttyACM1"))
+_P = type("P", (), {})
+_two = []
+for _dev in ("COM8", "COM6"):
+    _p = _P()
+    _p.vid, _p.pid, _p.device = U.UWB_VID, U.UWB_PID, _dev
+    _two.append(_p)
+_comports0 = _lp.comports
+_lp.comports = lambda: _two                    # 基板を 2 枚つないだ PC（どちらも同じ USB の ID）
+_buf2 = io.StringIO()
+with contextlib.redirect_stdout(_buf2):
+    _auto = U.find_port("auto")
+check("基板が 2 枚あっても、指定した名前のほうを返す（USB の ID で探し直して別の基板を開かない）",
+      (U.find_port("COM6"), _auto, "2 枚見つかりました" in _buf2.getvalue()), ("COM6", "COM8", True))
+_lp.comports = _comports0
 
 
 # =====================================================================

@@ -360,17 +360,27 @@ def csv_row(r: UwbReading, when: datetime | None = None) -> list:
 # =====================================================================
 
 def find_port(prefer: str = DEFAULT_PORT) -> str | None:
-    """ポートを探す。固定名があればそれ、無ければ USB の ID（1915:520f）で探す。見つからなければ None。"""
-    if prefer and prefer != "auto" and os.path.exists(prefer):
+    """ポートを決める。見つからなければ None。
+
+      ・名前を指定された（既定の /dev/uwb でも "auto" でもない。例: COM6・/dev/ttyACM1）→ ★その名前をそのまま返す★
+        Windows の COM6 のような名前は「その名前のファイルがあるか」では確かめられない。ここで USB の ID で探し直すと、
+        基板を 2 枚つないでいるとき（どちらも同じ ID）に、指定と違うほうを開いてしまう。違っていれば、開くときにエラーになる
+      ・既定の固定名 /dev/uwb があればそれ
+      ・無ければ USB の ID（1915:520f）で探す。2 枚以上見つかったら、知らせたうえで最初の 1 枚
+    """
+    if prefer and prefer not in ("auto", DEFAULT_PORT):
+        return prefer
+    if prefer == DEFAULT_PORT and os.path.exists(prefer):
         return prefer
     try:
         from serial.tools import list_ports
     except ImportError:
         return None
-    for p in list_ports.comports():
-        if (p.vid, p.pid) == (UWB_VID, UWB_PID):
-            return p.device
-    return None
+    found = [p.device for p in list_ports.comports() if (p.vid, p.pid) == (UWB_VID, UWB_PID)]
+    if len(found) > 1:
+        print(f"★UWB 基板が {len(found)} 枚見つかりました（{'・'.join(found)}）。{found[0]} を開きます。"
+              "違うほうを使うときは、ポートの名前を指定してください（--port／--uwb）★", flush=True)
+    return found[0] if found else None
 
 
 def open_serial(port: str, baud: int = BAUD, timeout: float = 0.3):
