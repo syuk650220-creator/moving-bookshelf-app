@@ -16,6 +16,7 @@ import re
 import struct
 import sys
 import threading
+import time
 import types
 
 # --- pyserial / requests をスタブ化（インストール不要で走らせるため）---
@@ -485,6 +486,95 @@ check("ホーム未登録なら何もしない", (make_bridge(s, n).startup_loca
 s, n = FakeSupa(PINS), FakeNav()
 check("--no-localize なら何もしない", (make_bridge(s, n, localize=False).startup_localize(), n.events), (False, []))
 
+print("  --- 起動時の片付け: 前回の取り残し（moving / arrived のまま残った呼出）を canceled にする ---")
+
+
+class StaleSupa(FakeSupa):
+    """robot_calls を行として持つ版。PostgREST の status=in.(…) と、条件つきの patch をまねる。"""
+
+    def __init__(self, calls, state="idle", current=None):
+        super().__init__(PINS)
+        self.rows = [dict(c) for c in calls]
+        self.status = {"state": state, "current_call_id": current}
+        self.race = set()                 # select のあと patch の前に、アプリが done にした呼出の id
+        self.patch_queries = []
+
+    def select(self, table, query=""):
+        if table == "robot_calls" and "status=in." in query:
+            want = re.search(r"status=in\.\(([^)]*)\)", query).group(1).split(",")
+            return [dict(r) for r in self.rows if r["status"] in want]
+        return super().select(table, query)
+
+    def patch(self, table, query, body):
+        if table != "robot_calls":
+            return super().patch(table, query, body)
+        self.log.append((table, dict(body)))
+        self.patch_queries.append(query)
+        cid = re.search(r"id=eq\.([\w-]+)", query).group(1)
+        cond = re.search(r"status=in\.\(([^)]*)\)", query)
+        out = []
+        for r in self.rows:
+            if r["id"] != cid:
+                continue
+            if cid in self.race:
+                r["status"] = "done"
+            if cond and r["status"] not in cond.group(1).split(","):
+                continue                  # 条件に合わない行は更新されない（PostgREST は空の配列を返す）
+            r.update(body)
+            out.append(dict(r))
+        return out
+
+    def by_id(self):
+        return {r["id"]: r["status"] for r in self.rows}
+
+
+def stale_call(cid, status, who="guest"):
+    return {"id": cid, "status": status, "seat_id": 1, "requested_by": who, "book_id": "b" * 36}
+
+
+LEFT = [stale_call("m1", "moving", "A"), stale_call("a1", "arrived", "B"), stale_call("q1", "queued", "C"),
+        stale_call("d1", "done", "D"), stale_call("x1", "canceled", "E")]
+
+s, n = StaleSupa([stale_call("q1", "queued"), stale_call("d1", "done")]), FakeNav()
+with contextlib.redirect_stdout(io.StringIO()) as _clog:
+    got = make_bridge(s, n).cleanup_stale_calls()
+check("取り残しが無ければ何もしない（書き込みなし・表示なし）", (got, s.log, _clog.getvalue()), (0, [], ""))
+
+s, n = StaleSupa(LEFT, state="moving", current="m1"), FakeNav()
+got = make_bridge(s, n).cleanup_stale_calls()
+check("moving と arrived の 2 件を取り消す", got, 2)
+check("moving / arrived → canceled。queued・done・canceled には触らない", s.by_id(),
+      {"m1": "canceled", "a1": "canceled", "q1": "queued", "d1": "done", "x1": "canceled"})
+check("書き込みは「いまも moving / arrived なら」の条件つき",
+      all("status=in.(moving,arrived)" in q for q in s.patch_queries), True)
+check("robot_status は idle・current_call_id なし・detail に件数",
+      (s.status["state"], s.status["current_call_id"], "2 件" in (s.status.get("detail") or "")), ("idle", None, True))
+check("ナビには何も送らない（走らせない）", n.events, [])
+
+s, n = StaleSupa(LEFT, state="moving", current="m1"), FakeNav()
+with contextlib.redirect_stdout(io.StringIO()) as _clog:
+    got = make_bridge(s, n, live=False).cleanup_stale_calls()
+check("dry-run: 件数は数えるが、DB は書き換えない", (got, s.by_id()["m1"], s.by_id()["a1"], s.status["state"], s.log),
+      (2, "moving", "arrived", "moving", []))
+check("dry-run: 書き込まないことを表示する", "dry-run なので書き込みません" in _clog.getvalue(), True)
+
+s, n = StaleSupa([stale_call("a1", "arrived"), stale_call("m1", "moving")], state="arrived", current="a1"), FakeNav()
+s.race.add("a1")                          # 片付けの直前に、アプリで「本を取得した」が押された
+got = make_bridge(s, n).cleanup_stale_calls()
+check("書く直前に done になった呼出は、取り消さない（届いた本を「届かなかった」にしない）",
+      (got, s.by_id()), (1, {"a1": "done", "m1": "canceled"}))
+
+s, n = StaleSupa([stale_call("d1", "done")], state="returning", current="d1"), FakeNav()
+got = make_bridge(s, n).cleanup_stale_calls()
+check("帰還中に止まっていた（呼出は done）: 呼出には触らず、robot_status だけ idle に戻す",
+      (got, s.by_id(), s.status["state"], s.status["current_call_id"], "returning" in (s.status.get("detail") or "")),
+      (0, {"d1": "done"}, "idle", None, True))
+
+import inspect as _inspect     # noqa: E402
+_main_src = _inspect.getsource(B.main)
+check("main は、初期位置を送る前に取り残しを片付ける",
+      0 < _main_src.find("bridge.cleanup_stale_calls()") < _main_src.find("bridge.startup_localize()"), True)
+
 print("  --- LoggingNavigator（--simulate 0）---")
 ln = B.LoggingNavigator(0.0, start_pose=(1.0, 1.0, 0.0))
 check("localize は初期位置に飛ぶ", (ln.localize(B.goal_from_stop_point(PINS[0])), ln.pose), (True, (0.0, 0.0, 0.0)))
@@ -884,26 +974,27 @@ print("\n=== uwb_reader（UWB 基板の出力の読み取り。S1）===")
 #   基板は 1 秒 5 回、1 行 1 JSON を流す。文字 → 数値（距離 m・方向 deg）に直し、
 #   測れなかった回・命令の返事・途中で切れた行を捨てる。命令は電波法のガードを通してからしか送れない。
 
-SAMPLE = ('{"Block":0, "results":[{"Addr":"0x0001","Status":"Ok","D_cm":166,"LPDoA_deg":-30.99,'
-          '"LAoA_deg":-9.65,"LFoM":86,"RAoA_deg":15.52,"CFO_100ppm":415}]}')
+# （数値は説明用の作り物。実測値や資料の例の値は、このリポジトリに入れない）
+SAMPLE = ('{"Block":0, "results":[{"Addr":"0x0001","Status":"Ok","D_cm":152,"LPDoA_deg":47.5,'
+          '"LAoA_deg":19.8,"LFoM":200,"RAoA_deg":-15.8,"CFO_100ppm":120}]}')
 rs = U.parse_line(SAMPLE, angle_sign=+1, t=10.0)
 check("測定の行は 1 件（相手 1 台）", len(rs), 1)
 r = rs[0]
 check("Block / Addr / Ok", (r.block, r.addr, r.ok), (0, "0x0001", True))
-check("D_cm 166 → 1.66 m", r.distance_m, 1.66)
-check("LAoA_deg −9.65 → bearing（angle_sign=+1 なら同じ値）", (r.laoa_deg, r.bearing_deg), (-9.65, -9.65))
+check("D_cm 152 → 1.52 m", r.distance_m, 1.52)
+check("LAoA_deg 19.8 → bearing（angle_sign=+1 なら同じ値）", (r.laoa_deg, r.bearing_deg), (19.8, 19.8))
 _q = U.parse_line(SAMPLE, angle_sign=-1)[0]
-check("angle_sign=−1 なら bearing の符号が反転（LAoA はそのまま残す）", (_q.laoa_deg, _q.bearing_deg), (-9.65, 9.65))
-check("PDoA / FoM / RAoA", (r.pdoa_deg, r.fom, r.raoa_deg), (-30.99, 86.0, 15.52))
+check("angle_sign=−1 なら bearing の符号が反転（LAoA はそのまま残す）", (_q.laoa_deg, _q.bearing_deg), (19.8, -19.8))
+check("PDoA / FoM / RAoA", (r.pdoa_deg, r.fom, r.raoa_deg), (47.5, 200.0, -15.8))
 check("diag なしなら RSSI / NLOS は None", (r.rssi_dbm, r.nlos_pct), (None, None))
-check("bearing_rad", round(r.bearing_rad, 4), round(math.radians(-9.65), 4))
+check("bearing_rad", round(r.bearing_rad, 4), round(math.radians(19.8), 4))
 check("読んだ時刻 t", r.t, 10.0)
 
 print("  --- 書式のゆれ・測れなかった回・ほかの行 ---")
 check("Status の前後に空白があっても Ok",
       U.parse_line('{"Block":3,"results":[{"Addr":"0x0001","Status":" Ok ","D_cm":100,"LAoA_deg":5}]}')[0].ok, True)
 _diag = ('{"Block":7,"results":[{"Addr":"0x0001","Status":"Ok","D_cm":212,"LPDoA_deg":1.2,"LAoA_deg":0.4,'
-         '"LFoM":90,"RAoA_deg":-1.0,"CFO_100ppm":400,"RSSI_dBm":"-61.3","NLOS_%":12}]}')
+         '"LFoM":180,"RAoA_deg":-1.0,"CFO_100ppm":100,"RSSI_dBm":"-61.3","NLOS_%":12}]}')
 r7 = U.parse_line(_diag)[0]
 check("diag 1 の RSSI（文字列）と NLOS を数値に", (r7.rssi_dbm, r7.nlos_pct), (-61.3, 12.0))
 bad = U.parse_line('{"Block":8,"results":[{"Addr":"0x0001","Status":"Err","D_cm":0,"LAoA_deg":0,"LFoM":0}]}')[0]
@@ -918,6 +1009,7 @@ check("命令の返事 JS00BE{…} は測定ではない",
 check("ok / error / 空行 / その他の行の種類",
       [U.line_kind(x) for x in ("ok", "ERROR", "", "   ", "CURRENT ANTENNA_TYPE:JS1055-9")],
       ["ack", "ack", "empty", "empty", "other"])
+check("失敗の返事は理由が付いても「返事の終わり」", [U.line_kind(x) for x in ("error ", "error  busy")], ["ack", "ack"])
 check("途中で切れた行は捨てる（例外にしない）", U.parse_line('{"Block":10,"results":[{"Addr":"0x0001","Sta'), [])
 # 測定中に打った命令の文字が、測定の行の頭に混ざる（実物で確認した形。数値は作り物）
 _echo = 's{"Block":12, "results":[{"Addr":"0x0001","Status":"Ok","D_cm":123,"LPDoA_deg":1.5,"LAoA_deg":0.5,"LFoM":200,"RAoA_deg":0.0,"CFO_100ppm":0}]}'
@@ -931,26 +1023,31 @@ check("results の無い JSON も捨てる", U.parse_line('{"Block":11}'), [])
 print("  --- 使える回か（しきい値は実測で決めるまで None＝見ない）---")
 check("Ok で距離 > 0 なら使える", U.is_usable(r), True)
 check("測れなかった回は使えない", U.is_usable(bad), False)
-check("FoM のしきい値", (U.is_usable(r, min_fom=80), U.is_usable(r, min_fom=90)), (True, False))
+check("FoM のしきい値", (U.is_usable(r, min_fom=150), U.is_usable(r, min_fom=250)), (True, False))
 check("NLOS のしきい値（値が無い回は見ない）",
       (U.is_usable(r7, max_nlos=10), U.is_usable(r7, max_nlos=20), U.is_usable(r, max_nlos=10)), (False, True, True))
 check("遠すぎる回", U.is_usable(r, max_distance_m=1.0), False)
 check("CSV の 1 行は見出しと同じ数の欄", len(U.csv_row(r)), len(U.CSV_FIELDS))
 check("CSV: 測れなかった回は数値の欄が空", U.csv_row(bad)[4:6], ["", ""])
 
-print("  --- 電波法のガード（送ってよい命令しか通さない。チャネル 9 固定・txpower 禁止）---")
+print("  --- 電波法のガード（許可した命令しか通さない。チャネル 9 固定・txpower／連続送信の試験は禁止）---")
 check("測り始める命令の列（既定）", U.start_commands(), ["stop", U.UWBCFG_CH9, "antenna js1055-9", "initf"])
 check("応える側・diag あり", U.start_commands("respf", diag=True),
       ["stop", U.UWBCFG_CH9, "antenna js1055-9", "diag 1", "respf"])
 check("save 済みなら設定を打たない", U.start_commands(configure=False), ["stop", "initf"])
 check("uwbcfg の先頭はチャネル 9", (U.CHANNEL, U.UWBCFG_CH9.split()[1]), (9, "9"))
-for _good in ("stop", "initf", "respf", "diag 1", "save", "restore", "stat", "version", "help", "dcfg",
+for _good in ("stop", "initf", "respf", "diag 1", "diag 0",
               "uwbcfg", "antenna", "antenna js1055-9", U.UWBCFG_CH9, "  STOP  "):
     try:
         U.check_command(_good)
     except U.IllegalCommand as e:
         check(f"通るべき命令が止められた: {_good!r}", str(e), "")
 check("空白と改行を整える", U.check_command("  uwbcfg   9 64 8 9 9 3 6810 0 0 65 0 64 1 \r\n"), U.UWBCFG_CH9)
+check("大文字で渡しても、送るのは小文字に整えた形", (U.check_command("  STOP "), U.check_command("Antenna JS1055-9")),
+      ("stop", "antenna js1055-9"))
+check("★許可リストの中身（ここに無い命令は基板へ行かない）★", sorted(U.ALLOWED_COMMANDS),
+      sorted(["stop", "initf", "respf", "diag 0", "diag 1",
+              "uwbcfg", "antenna", "uwbcfg 9 64 8 9 9 3 6810 0 0 65 0 64 1", "antenna js1055-9"]))
 
 
 def _blocked(cmd):
@@ -969,8 +1066,47 @@ check("ほかのアンテナ型も止める", _blocked("antenna external-1"), Tr
 check("試験ファームの AT 命令は止める", [_blocked(x) for x in ("AT+UCW", "AT+UTX", "AT+UCHAN=5", "at")], [True] * 4)
 check("空の命令は止める", _blocked("   "), True)
 check("1 行に 2 つ詰めた txpower も止める", _blocked("stop\r\ntxpower 5"), True)
+check("引数なしの txpower（表示）も送らない", _blocked("txpower"), True)
+check("試験用の連続送信（tcwm／tcfm）は止める", [_blocked(x) for x in ("tcwm", "TCFM", "tcfm 1 2 3", "stop\rtcwm")], [True] * 4)
+check("チャネル 9 でも、既定と違う値の uwbcfg は止める",
+      [_blocked(x) for x in ("uwbcfg 9 1024 8 9 9 3 6810 0 0 65 0 64 1", "uwbcfg 9 64 8 9 9 3 850 0 0 65 0 64 1",
+                             "uwbcfg 9", "uwbcfg 9 64 8 9 9 3 6810 0 0 65 0 64 1 0")], [True] * 4)
+check("initf／respf に引数は付けられない", [_blocked(x) for x in ("initf 1 2400 200", "respf 0")], [True] * 2)
+check("アンテナ型を 2 つ並べた形も止める", _blocked("antenna js1055-9 js1055-5"), True)
+check("一覧に無い命令は、害が無さそうでも送らない",
+      [_blocked(x) for x in ("listener", "listener2", "uart 1", "stskeyiv", "decaid", "thread", "deca$", "diag 2",
+                             "help txpower", "antenna values", "hello", "save", "restore", "stat", "version", "help",
+                             "?", "dcfg")], [True] * 18)
+check("打ち消しの文字や区切りを混ぜても通らない（そのままの形でしか比べない）",
+      [_blocked(x) for x in ("x\btxpower 5", "\x00txpower 5", "stop;txpower 5", "x\buwbcfg 5 64 8 9 9 3 6810 0 0 65 0 64 1",
+                             "atz", "stop\ttcwm")], [True] * 6)
+check("JSON の形の命令・全角の文字・文字でないものも止める",
+      [_blocked(x) for x in ('{"cmd":"txpower"}', "ｓｔｏｐ", None, 9, b"stop")], [True] * 5)
+_why = []
+for _c in ("tcwm", "uwbcfg 5 64 8 9 9 3 6810 0 0 65 0 64 1", "initf 1", "listener"):
+    try:
+        U.check_command(_c)
+    except U.IllegalCommand as e:
+        _why.append(str(e)[:12])
+check("止めた理由を付ける（連続送信／チャネル／引数／一覧に無い）", len(set(_why)), 4)
 
-print("  --- UwbReader × FakeUwbBoard（基板のにせもの。命令は CR 終端・返事を読み捨て・1 秒 5 回）---")
+print("  --- 設定の返事を読む（チャネル・アンテナ型・uwbcfg の 13 個）---")
+_rep = ["uwbcfg", 'JS00BE{"UWB PARAM":{', '"CHAN":9,', '"P02":64,', '"P03":8,', '"P04":9,', '"P05":9,', '"P06":3,',
+        '"P07":6810,', '"P08":0,', '"P09":0,', '"P10":65,', '"P11":0,', '"P12":64,', '"P13":1}}', "ok",
+        "antenna", "", "CURRENT ANTENNA_TYPE:JS1055-9", "ok"]
+check("返事からチャネルとアンテナ型を読む", U.parse_config_reply(_rep), (9, "js1055-9"))
+check("uwbcfg の 13 個を並び順で読む（既定と同じ）", U.uwbcfg_numbers(_rep) == U.UWBCFG_NUMBERS, True)
+check("既定の 13 個は命令の文字から作る", U.UWBCFG_NUMBERS, [9, 64, 8, 9, 9, 3, 6810, 0, 0, 65, 0, 64, 1])
+check("返事が無ければ None", (U.parse_config_reply(["stop", "ok"]), U.uwbcfg_numbers(["stop", "ok"])), ((None, None), None))
+check("何度も出てくれば最後（新しい返事）の値",
+      U.parse_config_reply(['"CHAN":5,', "CURRENT ANTENNA_TYPE:JS1055-5", '"CHAN":9,', "CURRENT ANTENNA_TYPE:JS1055-9"]),
+      (9, "js1055-9"))
+check("打った命令の文字（エコー）や「使えない型」の知らせは、設定として読まない",
+      U.parse_config_reply(["uwbcfg 9 64 8 9 9 3 6810 0 0 65 0 64 1", "antenna js1055-9", "INVALID ANTENNA_TYPE: XX"]),
+      (None, None))
+check("1 行にまとまった返事でも読める", U.uwbcfg_numbers(['JS0030{"UWB PARAM":{"CHAN":9,"A":64,"B":1}}']), [9, 64, 1])
+
+print("  --- UwbReader × FakeUwbBoard（基板のにせもの。命令は CR 終端・返事から設定を確かめる・1 秒 5 回）---")
 _clk = {"t": 100.0}
 board = U.FakeUwbBoard(distance_m=1.5, bearing_deg=20.0, clock=lambda: _clk["t"])
 rd = U.UwbReader(board, angle_sign=+1)
@@ -978,7 +1114,8 @@ check("initf の前は何も流れない", board.readline(), b"")
 _sent = rd.start(sleep=lambda s: None)
 check("送った命令の列", _sent, ["stop", U.UWBCFG_CH9, "antenna js1055-9", "initf"])
 check("基板が受けた命令（CR で区切られて 4 つ）", board.received, _sent)
-check("返事（JS…／ok）は読み捨てられ、測定はまだ 0 回", (rd.n_lines, rd.n_ok, rd.last), (7, 0, None))
+check("返事（エコー・JS…・ok）は測定に数えない。測定はまだ 0 回", (rd.n_lines > 0, rd.n_ok, rd.last), (True, 0, None))
+check("★測り始める前に、基板の返事からチャネル 9・js1055-9 を確かめてある★", rd.config, (9, "js1055-9"))
 check("200 ms 経つ前は何も来ない", rd.poll(), [])
 _clk["t"] += 0.2
 rs = rd.poll()
@@ -1003,8 +1140,10 @@ _clk["t"] += 0.2
 check("右後ろ（−120°）→ −60°", rd.poll()[0].bearing_deg, -60.0)
 rd.stop()
 check("stop を送ると止まる", (rd.sent[-1], board.running), ("stop", False))
+_tail = rd._settle()                 # 出かかっていた行を読み切る（本物も ok のあとにもう 1 行出てから止まる）
 _clk["t"] += 1.0
-check("止まったあとは何も流れない（ok の返事だけ）", (rd.poll(), rd.poll()), ([], []))
+check("止まったあとは、ok と止まった知らせが出たきり、もう流れない",
+      ("ok" in _tail, len(_tail), rd.poll(), rd.poll()), (True, 2, [], []))
 try:
     rd.send("txpower 3")
     check("txpower は send() で止まる", "送られてしまった", "IllegalCommand")
@@ -1051,9 +1190,115 @@ _rd4.start(configure=False, sleep=lambda s: None)
 _clk["t"] += 0.2
 _rd4.poll()
 _lines = _buf.getvalue().splitlines()
-check("生のログ: 打った命令は「# > 」付き、基板の行はそのまま",
-      (_lines[0], _lines[1], _lines[2], _lines[-1].startswith('{"Block"')), ("# > stop", "ok", "# > initf", True))
-check("ポート探し: 固定名が無く USB にも無ければ None", U.find_port("/dev/__no_such_uwb__"), None)
+check("生のログ: 打った命令は「# > 」付き、基板の行（エコー・返事・測定）はそのまま",
+      (_lines[0], _lines[1], _lines[2], "# > initf" in _lines, _lines[-1].startswith('{"Block"')),
+      ("# > stop", "stop", "ok", True, True))
+check("--no-config: 設定の命令は打たず、表示だけの命令（uwbcfg・antenna）で確かめてから initf",
+      (_rd4.sent, _rd4.config), (["stop", "uwbcfg", "antenna", "initf"], (9, "js1055-9")))
+
+print("  --- 設定を確かめられないときは電波を出さない（initf／respf を送らない）---")
+
+
+def _start_fails(board, **kw):
+    """start() が ConfigError になり、initf／respf が基板に届いていなければ True。"""
+    rdr = U.UwbReader(board)
+    try:
+        rdr.start(sleep=lambda s: None, **kw)
+    except U.ConfigError:
+        return not any(c in ("initf", "respf") for c in board.received) and rdr.config is None
+    return False
+
+
+_bc = U.FakeUwbBoard(clock=lambda: _clk["t"])
+_bc.cfg[0] = 5
+_bc.lock_config = True               # チャネル 5 のまま、設定を受け付けない基板（ありえないはずの故障の真似）
+check("基板がチャネル 5 のまま → ConfigError・initf は送らない", _start_fails(_bc), True)
+_bc = U.FakeUwbBoard(clock=lambda: _clk["t"])
+_bc.antenna_type = "JS1055-5"
+_bc.lock_config = True
+check("アンテナ型が js1055-9 でない → ConfigError・initf は送らない", _start_fails(_bc), True)
+_bc = U.FakeUwbBoard(clock=lambda: _clk["t"])
+_bc.cfg[6] = 850                     # 保存されていた値が既定と違う（--no-config では直されない）
+check("--no-config で、保存されていた uwbcfg が既定と違う → ConfigError", _start_fails(_bc, configure=False), True)
+_bc = U.FakeUwbBoard(clock=lambda: _clk["t"])
+_bc.cfg[6] = 850
+check("同じ基板でも、設定を打つ（既定）なら既定の値に直ってから測り始める",
+      (U.UwbReader(_bc).start(sleep=lambda s: None)[-1], _bc.cfg == U.UWBCFG_NUMBERS), ("initf", True))
+
+
+class _MuteBoard:                    # 返事をしない相手（別のファーム・別の機器）
+    def __init__(self):
+        self.received = []
+
+    def write(self, data):
+        self.received.append(data.decode().strip())
+        return len(data)
+
+    def readline(self):
+        return b""
+
+    def close(self):
+        pass
+
+
+check("返事が無い相手 → ConfigError・initf は送らない", _start_fails(_MuteBoard()), True)
+
+print("  --- 測距中に start し直す（前の回が止まりきるのを待ってから設定する）---")
+_clk["t"] = 300.0
+_b6 = U.FakeUwbBoard(1.0, 0.0, clock=lambda: _clk["t"])
+_rd6 = U.UwbReader(_b6)
+_rd6.start(sleep=lambda s: None)
+_clk["t"] += 1.0                     # 測距中（読まずに 1 秒 → 行がたまっている）
+_n6 = len(_b6.received)
+_rd6.start(sleep=lambda s: None)
+check("止まってから設定の命令が通り、測り直しになる",
+      (_b6.received[_n6:], _rd6.config, _b6.running, _rd6.last),
+      (["stop", U.UWBCFG_CH9, "antenna js1055-9", "initf"], (9, "js1055-9"), True, None))
+check("前の回の残りの測定は「測れた回数」に数えない", _rd6.n_ok, 0)
+
+print("  --- 古い行（ロボが回っている間にたまった行）と、その捨て方 ---")
+_clk["t"] = 400.0
+_tgt = {"d": 1.0, "b": 10.0}
+_b7 = U.FakeUwbBoard(clock=lambda: _clk["t"])
+_b7.target_fn = lambda: (_tgt["d"], _tgt["b"])
+_rd7 = U.UwbReader(_b7)
+_rd7.start(sleep=lambda s: None)
+_clk["t"] += 0.2
+check("ふつうに読めば、いまの値（1.0 m・10°）", [(q.distance_m, q.bearing_deg) for q in _rd7.poll()], [(1.0, 10.0)])
+_tgt.update(d=2.0, b=-30.0)          # ここでロボが回った（相手の見え方が変わった）。その間 2 秒読まなかった
+_clk["t"] += 2.0
+_old = _rd7.poll()
+check("★読まずにたまった行は、回る前の値のまま出てくる（＝そのまま使うと位置がずれる）★",
+      [(q.distance_m, q.bearing_deg) for q in _old], [(1.0, 10.0)])
+_rd7.flush_input()
+check("flush_input() でたまった行を捨てる", (_b7.n_flushed > 0, _rd7.poll()), (True, []))
+_clk["t"] += 0.2
+check("捨てたあとの最初の行は、いまの値（2.0 m・−30°）", [(q.distance_m, q.bearing_deg) for q in _rd7.poll()], [(2.0, -30.0)])
+
+
+class _NoFlush(_MuteBoard):          # reset_input_buffer を持たない相手でも落ちない
+    pass
+
+
+check("捨てる手段が無い相手でも flush_input() は例外にしない", U.UwbReader(_NoFlush()).flush_input(), None)
+check("ポート探し: 既定の固定名（/dev/uwb）が無く、USB にも無ければ None",
+      None if os.path.exists(U.DEFAULT_PORT) else U.find_port(U.DEFAULT_PORT), None)
+check("ポート探し: 名前を指定されたら、そのまま返す（COM6 のような名前は、ファイルの有無では確かめられない）",
+      (U.find_port("COM6"), U.find_port("/dev/ttyACM1")), ("COM6", "/dev/ttyACM1"))
+_P = type("P", (), {})
+_two = []
+for _dev in ("COM8", "COM6"):
+    _p = _P()
+    _p.vid, _p.pid, _p.device = U.UWB_VID, U.UWB_PID, _dev
+    _two.append(_p)
+_comports0 = _lp.comports
+_lp.comports = lambda: _two                    # 基板を 2 枚つないだ PC（どちらも同じ USB の ID）
+_buf2 = io.StringIO()
+with contextlib.redirect_stdout(_buf2):
+    _auto = U.find_port("auto")
+check("基板が 2 枚あっても、指定した名前のほうを返す（USB の ID で探し直して別の基板を開かない）",
+      (U.find_port("COM6"), _auto, "2 枚見つかりました" in _buf2.getvalue()), ("COM6", "COM8", True))
+_lp.comports = _comports0
 
 
 # =====================================================================
@@ -1093,7 +1338,7 @@ check("真後ろは鏡写しで前（b=180 → 0）に見える", (round(_d, 6),
 
 def _reading(d, b, ok=True):
     return U.UwbReading(block=1, addr="0x0001", ok=ok, distance_m=d, bearing_deg=b, laoa_deg=b,
-                        pdoa_deg=None, fom=86.0, raoa_deg=None, rssi_dbm=None, nlos_pct=None, t=0.0)
+                        pdoa_deg=None, fom=200.0, raoa_deg=None, rssi_dbm=None, nlos_pct=None, t=0.0)
 
 
 def _feed(est, pose, beacon, n=5, h=0.75):
@@ -1184,10 +1429,14 @@ print("\n=== Bridge: ビーコン（UWB）への走行（S3。偽の基板がロ
 _clk = {"t": 1000.0}
 
 
-def _mk_world(beacon_xy, start=(0.0, 0.0, 0.0), mount=None, shadow=False, hint=None, nav=None, **board_kw):
+def _mk_world(beacon_xy, start=(0.0, 0.0, 0.0), mount=None, shadow=False, hint=None, nav=None, turn_sec=2.0,
+              **board_kw):
     """偽の Supabase・偽の Nav・偽の UWB 基板（ロボの位置からユニットまでを逆計算して流す）を組んだブリッジ。
     mount: アンテナの取り付け（既定 M0＝前向き）。shadow=True なら、ユニットがアンテナの裏側（機体の陰）にある回は
-    35 % 測れず、距離 +45 cm・方向 +20° で出る（いつも同じずれ＝厳しめ）。hint: ビーコンの行の x, y（前回の推定）。"""
+    35 % 測れず、距離 +45 cm・方向 +20° で出る（いつも同じずれ＝厳しめ）。hint: ビーコンの行の x, y（前回の推定）。
+
+    ★時間に忠実★ その場回転には turn_sec 秒かかり（その間、基板は読まれずに行をためる。たまった行は回る前の値）、
+    基板は次の行が来るまで待つ（読むたびに時計が進む）。本物と同じく、回ったあとに古い行を捨てないと位置がずれる。"""
     mount = mount or M0
     pin = dict(BEACON_PIN)
     if hint is not None:
@@ -1208,9 +1457,17 @@ def _mk_world(beacon_xy, start=(0.0, 0.0, 0.0), mount=None, shadow=False, hint=N
 
     board.target_fn = target
     uwb = U.UwbReader(board)
-    br = make_bridge(s, n, uwb=uwb, beacon_search_sec=1.0, uwb_mount=mount)
+    br = make_bridge(s, n, uwb=uwb, beacon_search_sec=1.0, uwb_mount=mount, cancel_hold=0.0)
     br._clock = lambda: _clk["t"]
     br._sleep = lambda sec: _clk.__setitem__("t", _clk["t"] + sec)
+    board.wait = br._sleep                # 次の行が来るまで待つ＝テストの時計を進める
+    _turn0 = n.turn
+
+    def _turn(angle):
+        _clk["t"] += turn_sec             # 回るのに時間がかかる（その間に基板の行がたまる）
+        return _turn0(angle)
+
+    n.turn = _turn
     return s, n, br, uwb, board
 
 
@@ -1300,6 +1557,7 @@ est = BL.BeaconEstimator(mount=M0)
 for _yaw in (0.0, 0.5):                       # 2 つの向きから測ってある（前後は決まっている）
     n.pose = (0.0, 0.0, _yaw)
     _clk["t"] += 1.2
+    uwb.flush_input()                         # 向きを変えている間にたまった行は捨てる
     for _ in range(6):
         for r in uwb.poll():
             est.add(n.pose, r)
@@ -1332,6 +1590,25 @@ class FakeNavT(FakeNav):
 def _yaw_before_go(events, start_yaw=0.0):
     return math.radians(sum(_turns_before_go(events))) + start_yaw
 
+
+print("  --- 既定の取り付け（学会ver の機体: 後ろの端の台座・アンテナの面は前）: 機体の陰あり ---")
+MD = BL.Mount()
+check("既定の取り付けは、回転の中心から後ろへ 0.13 m・左右の中央・前向き・床から 0.28 m",
+      (MD.x, MD.y, MD.yaw, MD.height), (-0.13, 0.0, 0.0, 0.28))
+check("既定: 機体の前 2 m の点はアンテナの正面の範囲の内、後ろ 2 m の点は外（機体の陰）",
+      (BL.in_antenna_cone((2.0, 0.0), (0.0, 0.0, 0.0), MD), BL.in_antenna_cone((-2.0, 0.0), (0.0, 0.0, 0.0), MD)), (True, False))
+for _bxy, _cid in (((2.0, 1.0), "cd1"), ((3.5, 0.0), "cd2"), ((0.5, 2.0), "cd3"), ((-2.0, 0.5), "cd4"), ((1.2, -2.5), "cd5")):
+    s, n, br, uwb, board = _mk_world(_bxy, mount=MD, shadow=True, nav=FakeNavT())
+    with contextlib.redirect_stdout(io.StringIO()):
+        br.handle(call(_cid, 100))
+    _g = n.goals[0]
+    _x, _y, _th = _expected_standoff(_bxy)
+    check(f"既定の取り付け・ユニット {_bxy}: done・ゴールは 0.5 m 手前（誤差 5 cm 以内）・向きはユニットのほう",
+          (s.calls[_cid], math.hypot(_g[0] - _x, _g[1] - _y) < 0.05,
+           abs(math.atan2(math.sin(_g[2] - _th), math.cos(_g[2] - _th))) < math.radians(3)),
+          ("done", True, True))
+    check(f"既定の取り付け・ユニット {_bxy}: 推定した場所を書き戻す（誤差 10 cm 以内）",
+          math.hypot(s.sp[100]["x"] - _bxy[0], s.sp[100]["y"] - _bxy[1]) < 0.10, True)
 
 print("  --- 後ろ向きの取り付け（本棚の後ろの台座・アンテナの面は後ろ）: 前方のユニット (2, 1)・機体の陰あり ---")
 MR = BL.Mount(x=-0.15, y=0.0, yaw=math.pi, height=0.25)
@@ -1439,6 +1716,712 @@ with contextlib.redirect_stdout(io.StringIO()):
     _ln.go(_g1, on_progress=lambda rem, pose: (_calls.append(round(rem, 2)) or _g2) if not _calls else None)
 check("1 歩目のあとでゴールを差し替え → 最後は新しいゴールに着く",
       (len(_calls), tuple(round(v, 3) for v in _ln.pose[:2])), (1, (2.0, 2.0)))
+
+
+# =====================================================================
+print("\n=== 点検（2026-11-12）で直したところ: 取り消しの順番・途中で止まった呼出の後始末 ===")
+# =====================================================================
+
+
+def _idx(log, pred):
+    return next((i for i, (t, b) in enumerate(log) if pred(t, b)), None)
+
+
+print("  --- ロボ側の取り消しは「理由（robot_status）→ canceled（robot_calls）」の順で書く ---")
+s, n = FakeSupa(PINS), FakeNav(fail_go_at=1)
+br = make_bridge(s, n, cancel_hold=3.0)
+_t_before = time.time()
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("ca1", 2))
+_i_why = _idx(s.log, lambda t, b: t == "robot_status" and "走行に失敗" in (b.get("detail") or ""))
+_i_can = _idx(s.log, lambda t, b: t == "robot_calls" and b.get("status") == "canceled")
+check("走行の失敗: 理由を書いてから canceled（アプリが前の表示を理由として読まない）",
+      (_i_why is not None, _i_can is not None, _i_why < _i_can), (True, True, True))
+check("取り消したあと、次の呼出を始めるまで少し待つ（理由がアプリに届く時間）",
+      _t_before + 2.5 <= br.hold_until <= time.time() + 3.5, True)
+s, n = FakeSupa(PINS), FakeNav(fail_localize=True)
+br = make_bridge(s, n, cancel_hold=0.0)
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("ca2", 2))
+_i_why = _idx(s.log, lambda t, b: t == "robot_status" and "自己位置推定に失敗" in (b.get("detail") or ""))
+_i_can = _idx(s.log, lambda t, b: t == "robot_calls" and b.get("status") == "canceled")
+check("自己位置推定の失敗も同じ順", (_i_why is not None and _i_can is not None and _i_why < _i_can, s.status["state"]),
+      (True, "idle"))
+for _seat, _word, _cid in ((0, "届け先にできません", "ca3"), (9, "登録されていません", "ca4")):
+    s, n = FakeSupa(PINS), FakeNav()
+    br = make_bridge(s, n, cancel_hold=0.0)
+    with contextlib.redirect_stdout(io.StringIO()):
+        br.handle(call(_cid, _seat))
+    check(f"届け先が使えない（seat={_seat}）: canceled・理由「{_word}」・走らない",
+          (s.calls[_cid], _word in (s.status.get("detail") or ""), n.events), ("canceled", True, []))
+
+print("  --- 例外で処理が途中になった呼出: 走行を止めて取り消す（取り残さない）---")
+
+
+class BoomNav(FakeNav):
+    """走っている途中で思わぬ例外が出るナビ。"""
+
+    def go(self, goal, on_progress=None):
+        self.events.append(("go", goal["label"]))
+        raise RuntimeError("boom")
+
+
+s, n = FakeSupa(PINS), BoomNav()
+br = make_bridge(s, n, cancel_hold=0.0)
+_raised = False
+with contextlib.redirect_stdout(io.StringIO()):
+    try:
+        br.handle(call("cx1", 2))
+    except RuntimeError:
+        _raised = True
+check("例外は main へ伝える（警告して次のポーリングへ）", _raised, True)
+check("★Nav2 を止める（止めないと、ロボは走り続ける）★", ("cancel",) in n.events, True)
+check("呼出は canceled・状態は idle・理由にエラーの名前", (s.calls["cx1"], s.status["state"], "RuntimeError" in (s.status.get("detail") or "")),
+      ("canceled", "idle", True))
+check("ブリッジは次の呼出を受けられる", (br.busy, br.current, br._pending), (False, None, {}))
+
+
+class FlakySupa(FakeSupa):
+    """down=True の間、書き込みが通信エラーになる Supabase。queued の行は rows から返す。"""
+
+    def __init__(self, stop_points, rows=()):
+        super().__init__(stop_points)
+        self.rows = [dict(r) for r in rows]
+        self.down = False
+        self.n_fail = 0
+
+    def select(self, table, query=""):
+        if table == "robot_calls" and "status=eq.queued" in query:
+            return [dict(r) for r in self.rows if self.calls.get(r["id"], "queued") == "queued"]
+        return super().select(table, query)
+
+    def patch(self, table, query, body):
+        if self.down:
+            self.n_fail += 1
+            raise OSError("network unreachable")
+        return super().patch(table, query, body)
+
+
+class BoomDownNav(BoomNav):
+    """走っている途中で例外が出て、同時に通信も切れる。"""
+
+    def __init__(self, supa):
+        super().__init__()
+        self.supa = supa
+
+    def go(self, goal, on_progress=None):
+        self.supa.down = True
+        return super().go(goal, on_progress)
+
+
+s = FlakySupa(PINS, rows=[call("cy1", 2), call("cy2", 1)])
+n = BoomDownNav(s)
+br = make_bridge(s, n, cancel_hold=0.0)
+with contextlib.redirect_stdout(io.StringIO()):
+    try:
+        br.poll_once()
+    except Exception:
+        pass
+check("通信が切れていて後始末が書けない → 覚えておく（呼出は DB では moving のまま）",
+      (list(br._pending), s.calls.get("cy1")), (["cy1"], "moving"))
+with contextlib.redirect_stdout(io.StringIO()):
+    br.poll_once()
+check("通信が戻るまで、次の呼出には進まない", (list(br._pending), "cy2" in br.seen), (["cy1"], False))
+s.down = False
+n2 = FakeNav()
+br.nav = n2
+with contextlib.redirect_stdout(io.StringIO()):
+    br.poll_once()
+check("通信が戻ったら、まず後始末（canceled・idle）", (s.calls["cy1"], br._pending), ("canceled", {}))
+check("そのあと、後ろの呼出（cy2）を処理する", (s.calls.get("cy2"), ("go", "席1") in n2.events), ("done", True))
+
+print("  --- 処理済みの行が queued のまま残っても、後ろの呼出を止めない（dry-run は DB を書き換えない）---")
+s = FlakySupa(PINS, rows=[call("cq1", 2), call("cq2", 1)])
+n = FakeNav()
+br = make_bridge(s, n, live=False, cancel_hold=0.0)
+with contextlib.redirect_stdout(io.StringIO()):
+    br.poll_once()
+    br.poll_once()
+    br.poll_once()
+check("1 件目のあと、2 件目も処理する（3 回目は何もしない）",
+      [ev for ev in n.events if ev[0] == "go" and ev[1].startswith("席")], [("go", "席2"), ("go", "席1")])
+
+print("  --- set_call: 通信の一時的な失敗は 2 回までやり直す ---")
+
+
+class OnceFailSupa(FakeSupa):
+    def __init__(self, stop_points, fail_n):
+        super().__init__(stop_points)
+        self.fail_n = fail_n
+
+    def patch(self, table, query, body):
+        if table == "robot_calls" and self.fail_n > 0:
+            self.fail_n -= 1
+            raise OSError("timeout")
+        return super().patch(table, query, body)
+
+
+s, n = OnceFailSupa(PINS, 2), FakeNav()
+br = make_bridge(s, n, cancel_hold=0.0)
+br._sleep = lambda sec: None
+with contextlib.redirect_stdout(io.StringIO()):
+    br.set_call("cz1", "arrived")
+check("2 回失敗しても 3 回目で書ける", s.calls.get("cz1"), "arrived")
+s = OnceFailSupa(PINS, 3)
+br = make_bridge(s, FakeNav(), cancel_hold=0.0)
+br._sleep = lambda sec: None
+_raised = False
+with contextlib.redirect_stdout(io.StringIO()):
+    try:
+        br.set_call("cz2", "arrived")
+    except OSError:
+        _raised = True
+check("3 回とも失敗したら例外（handle が後始末する）", _raised, True)
+
+
+# =====================================================================
+print("\n=== 点検で直したところ: ビーコンの探索（古い測定・回れない・前後が決まらない）===")
+# =====================================================================
+
+print("  --- ★古い測定を捨てないと間違う★（この検算の世界は、回るのに 2 秒かかり、その間の行がたまる）---")
+_spots = ((2.0, 1.0), (0.5, 2.0), (2.5, -0.5), (-1.2, -1.5), (1.2, -2.5), (-2.0, 0.5))
+_bad_noflush, _bad_flush, _flushed = 0, 0, 0
+for _k, _bxy in enumerate(_spots):
+    for _disable in (True, False):
+        s, n, br, uwb, board = _mk_world(_bxy, mount=MR, shadow=True)
+        if _disable:
+            uwb.flush_input = lambda: None                     # 直す前の作り（捨てない）を真似る
+        with contextlib.redirect_stdout(io.StringIO()):
+            br.handle(call(f"cs{_k}{int(_disable)}", 100))
+        _x, _y, _ = _expected_standoff(_bxy)
+        _wrong = bool(n.goals) and math.hypot(n.goals[0][0] - _x, n.goals[0][1] - _y) > 0.3
+        if _disable:
+            _bad_noflush += _wrong
+        else:
+            _bad_flush += _wrong or s.calls[f"cs{_k}0"] != "done"
+            _flushed += board.n_flushed
+check("捨てない作りだと、違う場所へ走る場面が出る（＝この検算は古い行の問題を見つけられる）", _bad_noflush >= 1, True)
+check("捨てる作り（いまのコード）では、6 か所とも正しい場所へ着く・行を実際に捨てている", (_bad_flush, _flushed > 0), (0, True))
+
+
+class NoTurnNav(FakeNav):
+    """その場回転ができないナビ（受け付けない・回らない）。"""
+
+    def turn(self, angle):
+        self.events.append(("turn", round(math.degrees(angle))))
+        return False
+
+
+class LieTurnNav(FakeNav):
+    """「回れた」と返すが、実際には回っていないナビ（位置の推定が変わらない）。"""
+
+    def turn(self, angle):
+        self.events.append(("turn", round(math.degrees(angle))))
+        return True
+
+
+class HalfTurnNav(FakeNav):
+    """途中で止まるナビ（6 割回って「失敗」を返す）。"""
+
+    def turn(self, angle):
+        x, y, yaw = self.pose
+        self.pose = (x, y, math.atan2(math.sin(yaw + 0.6 * angle), math.cos(yaw + 0.6 * angle)))
+        self.events.append(("turn", round(math.degrees(angle))))
+        return False
+
+
+print("  --- その場で回れない → 走らずに取り消す（理由つき）---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0), nav=NoTurnNav())
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("ct1", 100))
+check("canceled・走らない・理由「回れません」",
+      (s.calls["ct1"], [ev for ev in n.events if ev[0] == "go"], "回れません" in (s.status.get("detail") or "")),
+      ("canceled", [], True))
+check("1 回やり直してからやめる（同じ角度を 2 回）", [ev for ev in n.events if ev[0] == "turn"][:2] == [n.events[1]] * 2
+      and len([ev for ev in n.events if ev[0] == "turn"]) == 2, True)
+check("基板は stop してある・理由を書いてから canceled",
+      (uwb.sent[-1], _idx(s.log, lambda t, b: t == "robot_status" and "回れません" in (b.get("detail") or ""))
+       < _idx(s.log, lambda t, b: t == "robot_calls" and b.get("status") == "canceled")), ("stop", True))
+
+print("  --- 「回れた」と言うが回っていない → 前後が決まらない → 走らずに取り消す ---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0), nav=LieTurnNav())
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("ct2", 100))
+check("canceled・走らない・理由「方向を決められません」",
+      (s.calls["ct2"], [ev for ev in n.events if ev[0] == "go"], "方向を決められません" in (s.status.get("detail") or "")),
+      ("canceled", [], True))
+check("前後が決まっていない推定は、地図（stop_points）にも書かない", any(t == "stop_points" for t, b in s.log), False)
+
+print("  --- 途中で止まる回転（6 割）でも、実際の向きで計算して着く ---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0), nav=HalfTurnNav())
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("ct3", 100))
+_x, _y, _ = _expected_standoff((2.0, 1.0))
+check("done・ゴールは 0.5 m 手前（誤差 5 cm 以内）",
+      (s.calls["ct3"], bool(n.goals) and math.hypot(n.goals[0][0] - _x, n.goals[0][1] - _y) < 0.05), ("done", True))
+
+print("  --- 回ったあとの位置: ナビの refresh_pose → だめなら「実際に回った角度」→ どちらも無ければ今の推定 ---")
+
+
+class StaleNav(FakeNav):
+    """current_pose() が古い（回る前のまま）ナビ。本当の向きは true_yaw。refresh か last_turn_rad でしか分からない。"""
+
+    def __init__(self, mode):
+        super().__init__()
+        self.mode = mode                 # "refresh" / "odom" / "none"
+        self.true_yaw = 0.0
+        self.n_refresh = 0
+
+    def turn(self, angle):
+        self.true_yaw = math.atan2(math.sin(self.true_yaw + angle), math.cos(self.true_yaw + angle))
+        self.last_turn_rad = angle if self.mode == "odom" else None
+        self.events.append(("turn", round(math.degrees(angle))))
+        return True                      # self.pose（AMCL の推定）は更新しない＝古いまま
+
+    def refresh_pose(self):
+        self.n_refresh += 1
+        if self.mode != "refresh":
+            return None
+        self.pose = (self.pose[0], self.pose[1], self.true_yaw)
+        return self.pose
+
+
+for _mode, _want in (("refresh", 90.0), ("odom", 90.0), ("none", 0.0)):
+    _sn = StaleNav(_mode)
+    s, n, br, uwb, board = _mk_world((2.0, 1.0), nav=_sn)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _turned = br._beacon_turn(90.0)
+    check(f"{_mode}: 回ったあとの向きは {_want:.0f}°（止まっている間はこの値を使う）",
+          (round(math.degrees(br._beacon_pose()[2]), 1), None if _turned is None else round(_turned, 1)), (_want, _want))
+
+print("  --- 探している間も robot_status に進み具合を書く（アプリの「更新が止まっています」を防ぐ）---")
+s, n, br, uwb, board = _mk_world((-2.0, 0.5), mount=MR, shadow=True, hint=(2.0, 1.0))   # 手がかりが外れていて、長く探す場面
+_stamps = []
+_patch0 = s.patch
+
+
+def _patch_t(table, query, body):
+    if table == "robot_status":
+        _stamps.append((_clk["t"], body.get("detail") or ""))
+    return _patch0(table, query, body)
+
+
+s.patch = _patch_t
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cn1", 100))
+_search = [d for t, d in _stamps if "探しています" in d]
+_gaps = [b[0] - a[0] for a, b in zip(_stamps, _stamps[1:])]
+check("探している間に 3 回以上書く・書き込みの間隔は 60 秒より十分短い",
+      (s.calls["cn1"], len(_search) >= 3, max(_gaps) < 30.0), ("done", True, True))
+
+print("  --- 基板の設定を確かめられない → 測り始めない・走らない ---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0))
+board.cfg[0] = 5
+board.lock_config = True
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cc1", 100))
+check("canceled・理由に「チャネル」・initf は送らない・走らない",
+      (s.calls["cc1"], "チャネル" in (s.status.get("detail") or ""), "initf" in board.received,
+       [ev for ev in n.events if ev[0] in ("go", "turn")]), ("canceled", True, False, []))
+
+print("  --- 基板との通信エラー: 探している途中なら Nav2 を止めて取り消す／走行中なら測り直しだけやめて走りきる ---")
+s, n, br, uwb, board = _mk_world((2.0, 1.0))
+_rl0 = board.readline
+_cnt = {"n": 0}
+
+
+def _rl_fail_later():
+    _cnt["n"] += 1
+    if _cnt["n"] > 30:                       # 測り始めてすぐ USB が抜けた（設定の返事を読み終えたあたり）
+        raise OSError("device disconnected")
+    return _rl0()
+
+
+board.readline = _rl_fail_later
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("ce1", 100))
+check("探している途中のエラー: canceled・Nav2 に止める指示・理由「UWB の読み取りに失敗」",
+      (s.calls["ce1"], ("cancel",) in n.events, "UWB の読み取りに失敗" in (s.status.get("detail") or "")),
+      ("canceled", True, True))
+
+
+class BreakOnGoNav(FakeNav):
+    """ビーコンへ走り出したところで、基板が読めなくなる。"""
+
+    def go(self, goal, on_progress=None):
+        if goal.get("beacon") and self.board is not None:
+            def _dead():
+                raise OSError("device disconnected")
+            self.board.readline = _dead
+        return super().go(goal, on_progress)
+
+
+_bn = BreakOnGoNav()
+_bn.board = None
+s, n, br, uwb, board = _mk_world((2.0, 1.0), nav=_bn)
+_bn.board = board
+_raised = False
+with contextlib.redirect_stdout(io.StringIO()):
+    try:
+        br.handle(call("ce2", 100))
+    except Exception:
+        _raised = True
+check("走行中のエラー: 例外を外へ出さず（Nav2 を置き去りにしない）、探したときのゴールへ走りきって done",
+      (_raised, s.calls["ce2"], len([ev for ev in n.events if ev[0] == "go"])), (False, "done", 2))
+
+print("  --- 着いたあとの確認: UWB の距離が計算と大きく違えば、到着の表示に注意書きを足す（取り消しはしない）---")
+_bx = [2.0, 1.0]                              # ユニットの本当の場所（途中で動かせるようにリスト）
+
+
+class MoveUnitNav(FakeNav):
+    """ビーコンへ走っている間に、ユニットを遠くへ動かす（＝推定した場所が違っていた、の真似）。"""
+
+    def go(self, goal, on_progress=None):
+        ok = super().go(goal, on_progress)
+        if goal.get("beacon"):
+            _bx[0], _bx[1] = -3.0, -2.0
+        return ok
+
+
+s, n, br, uwb, board = _mk_world(_bx, nav=MoveUnitNav())
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cv1", 100))
+_arr = [b.get("detail") or "" for t, b in s.log if t == "robot_status" and b.get("state") == "arrived"]
+check("距離が合わない: arrived のまま・表示に「場所が違うかもしれません」",
+      (s.calls["cv1"], bool(_arr) and "場所が違うかもしれません" in _arr[0]), ("done", True))
+s, n, br, uwb, board = _mk_world((2.0, 1.0))
+with contextlib.redirect_stdout(io.StringIO()):
+    br.handle(call("cv2", 100))
+_arr = [b.get("detail") or "" for t, b in s.log if t == "robot_status" and b.get("state") == "arrived"]
+check("距離が合っている: 注意書きなし", (s.calls["cv2"], bool(_arr) and "場所が違う" not in _arr[0]), ("done", True))
+
+print("  --- 距離だけの解（三点測位）は、測った場所が十分に広がっているときだけ使う ---")
+check("一直線に並んだ点の広がりは 0", round(BL.position_spread([(0, 0), (1, 0), (2, 0)]), 6), 0.0)
+_circ = [(0.15 * math.cos(math.radians(a)), 0.15 * math.sin(math.radians(a))) for a in range(0, 360, 30)]
+check("半径 15 cm の円（その場で回っただけ）の広がりは約 10.6 cm → 足りない",
+      (round(BL.position_spread(_circ), 3), BL.position_spread(_circ) < BL.TRI_MIN_SPREAD_M), (0.106, True))
+check("1 m 四方に散った点は足りる", BL.position_spread([(0, 0), (1, 0), (1, 1), (0, 1)]) >= BL.TRI_MIN_SPREAD_M, True)
+_est = BL.BeaconEstimator(mount=MR)
+for _a in (0, 30, 60, 90, 120, 150):         # その場で回りながら、方向が使えない回（真横）だけを 6 回
+    _pose = (0.0, 0.0, math.radians(_a))
+    _d, _ = BL.simulate_reading(_pose, (2.0, 1.0), MR)
+    _est.add(_pose, _reading(_d + 0.05, 80.0))
+check("その場で回っただけ・方向が使えない回だけ → 推定を出さない（小さな足場から位置を作らない）", _est.estimate(), None)
+_est = BL.BeaconEstimator(mount=MR)
+for _p in ((0.0, 0.0), (1.0, 0.0), (1.0, 1.5), (0.0, 1.2), (-0.8, 0.5)):   # 広く動きながら
+    _pose = (_p[0], _p[1], 0.0)
+    _d, _ = BL.simulate_reading(_pose, (2.0, 1.0), MR)
+    _est.add(_pose, _reading(_d, 80.0))
+_e = _est.estimate()
+check("広く動いて測れば、距離だけで位置が出る（誤差 5 cm 以内）",
+      (_e is not None and _e.method, _e is not None and math.hypot(_e.x - 2.0, _e.y - 1.0) < 0.05), ("range", True))
+
+
+# =====================================================================
+print("\n=== 点検で直したところ: Nav2 の呼び方（ROS の無い PC で、偽の BasicNavigator を差し込んで実際に動かす）===")
+# =====================================================================
+
+
+class _FakeTime:
+    """bookshelf_bridge の time を差し替える（待ち時間を本当には待たない）。"""
+
+    def __init__(self):
+        self.t = 5000.0
+
+    def time(self):
+        return self.t
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, sec):
+        self.t += sec
+
+
+class _Obj:
+    """属性を好きに足せる入れ物（メッセージの代わり）。"""
+
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class _PoseMsg:
+    def __init__(self):
+        self.header = _Obj(frame_id="", stamp=None)
+        self.pose = _Obj(position=_Obj(x=0.0, y=0.0), orientation=_Obj(z=0.0, w=1.0))
+
+
+class _FakeSpinClient:
+    def __init__(self, ready=True):
+        self.ready = ready
+        self.asked = 0
+
+    def wait_for_server(self, timeout_sec=None):
+        self.asked += 1
+        return self.ready
+
+
+class _FakeSrvClient:
+    def __init__(self, ready=True):
+        self.ready = ready
+        self.calls = 0
+
+    def wait_for_service(self, timeout_sec=None):
+        return self.ready
+
+    def service_is_ready(self):
+        return self.ready
+
+    def call_async(self, req):
+        self.calls += 1
+
+
+class _FakeNav2(_FakeBasicNav):
+    """BasicNavigator の代わり。呼ばれた順を記録し、決めた回数だけ「まだ走行中」と答える。"""
+
+    def __init__(self, accept=(True,), ticks=2, result="SUCCEEDED", spin_ready=True, traveled=None, srv_ready=True):
+        super().__init__()
+        self.calls = []
+        self.accept = list(accept)        # goToPose／spin が受け付けられるか（呼ぶたびに 1 つずつ使う。最後の値を使い続ける）
+        self.ticks = ticks
+        self.left = 0
+        self.result = result
+        self.prev_result = "SUCCEEDED"    # 前の動作の結果（受け付けられなかったとき、getResult はこれを返す）
+        self.active = False
+        self.spin_client = _FakeSpinClient(spin_ready)
+        self.traveled = traveled
+        self.feedback = "old"
+        self.srv = _FakeSrvClient(srv_ready)
+
+    def _accept(self):
+        return self.accept.pop(0) if len(self.accept) > 1 else self.accept[0]
+
+    def get_clock(self):
+        return _Obj(now=lambda: _Obj(to_msg=lambda: None))
+
+    def goToPose(self, pose):
+        ok = self._accept()
+        self.calls.append(("goToPose", round(pose.pose.position.x, 2), round(pose.pose.position.y, 2), ok))
+        if ok:
+            self.active, self.left = True, self.ticks
+        return ok
+
+    def spin(self, spin_dist=0.0, time_allowance=10):
+        ok = self._accept()
+        self.calls.append(("spin", round(math.degrees(spin_dist)), time_allowance, ok))
+        if ok:
+            self.active, self.left = True, self.ticks
+            if self.traveled is not None:
+                self.feedback = _Obj(angular_distance_traveled=self.traveled)
+        return ok
+
+    def isTaskComplete(self):
+        if not self.active:
+            return True                   # 受け付けられていない → 前の動作の「完了」が見える
+        self.left -= 1
+        if self.left <= 0:
+            self.active = False
+            self.prev_result = self.result
+            return True
+        return False
+
+    def getResult(self):
+        return self.prev_result
+
+    def getFeedback(self):
+        return self.feedback
+
+    def cancelTask(self):
+        self.calls.append(("cancelTask",))
+        self.active = False
+
+    def create_client(self, srv_type, name):
+        self.calls.append(("create_client", name))
+        return self.srv
+
+
+def _mk_nav2(fake, pose=(0.0, 0.0, 0.0)):
+    nv2 = B.Nav2Navigator.__new__(B.Nav2Navigator)      # ROS を import する __init__ は通さない
+    nv2.nav = fake
+    nv2._nav_ready = True
+    nv2._PoseStamped = _PoseMsg
+    nv2._TaskResult = _Obj(SUCCEEDED="SUCCEEDED")
+    nv2.timeout, nv2.verbose, nv2.heading_tolerance = 30.0, False, 0.0
+    nv2._pose, nv2._pose_count = pose, 1
+    nv2._rclpy = _Obj(spin_once=lambda node, timeout_sec=0.0: B.time.sleep(timeout_sec))
+    return nv2
+
+
+_GOAL = B.goal_from_stop_point({"label": "席X", "x": 1.0, "y": 2.0, "theta": 0.0})
+_GOAL2 = B.goal_from_stop_point({"label": "席Y", "x": 3.0, "y": 0.5, "theta": 0.0})
+_time0 = B.time
+B.time = _FakeTime()
+_std0 = {k: sys.modules.get(k) for k in ("std_srvs", "std_srvs.srv")}
+_srv = types.ModuleType("std_srvs.srv")
+_srv.Empty = type("Empty", (), {"Request": type("Request", (), {})})
+_pkg = types.ModuleType("std_srvs")
+_pkg.srv = _srv
+sys.modules.update({"std_srvs": _pkg, "std_srvs.srv": _srv})
+try:
+    print("  --- go(): ふつうに着く／受け付けてもらえない／失敗 ---")
+    _f = _FakeNav2()
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _mk_nav2(_f).go(_GOAL)
+    check("受け付け → 走行 → 成功で True（ゴールは 1 回だけ送る）", (_ok, _f.calls), (True, [("goToPose", 1.0, 2.0, True)]))
+    _f = _FakeNav2(accept=(False,))
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _mk_nav2(_f).go(_GOAL)
+    check("★受け付けてもらえなければ False（前の動作の「成功」を到着と読み違えない）★", _ok, False)
+    _f = _FakeNav2(result="ABORTED")
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _mk_nav2(_f).go(_GOAL)
+    check("走行の結果が成功でなければ False", _ok, False)
+
+    print("  --- go(): 走りながらのゴールの差し替えは、取り消さずに送り直すだけ ---")
+    _f = _FakeNav2(ticks=4)
+    _given = []
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _mk_nav2(_f).go(_GOAL, on_progress=lambda rem, pose: (_given.append(1) or _GOAL2) if not _given else None)
+    check("新しいゴールを送る・cancelTask は呼ばない・着いたら True",
+          (_ok, [c[:3] for c in _f.calls if c[0] == "goToPose"], ("cancelTask",) in _f.calls),
+          (True, [("goToPose", 1.0, 2.0), ("goToPose", 3.0, 0.5)], False))
+    _f = _FakeNav2(accept=(True, False), ticks=4)
+    _given = []
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _mk_nav2(_f).go(_GOAL, on_progress=lambda rem, pose: (_given.append(1) or _GOAL2) if not _given else None)
+    check("差し替えを受け付けてもらえなければ、走行を止めて False", (_ok, _f.calls[-1]), (False, ("cancelTask",)))
+
+    print("  --- go(): 時間切れ ---")
+    _f = _FakeNav2(ticks=10 ** 9)
+    _nv = _mk_nav2(_f)
+    _nv.timeout = 5.0
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _nv.go(_GOAL)
+    check("timeout 秒を超えたら cancelTask して False", (_ok, _f.calls[-1]), (False, ("cancelTask",)))
+
+    print("  --- turn(): Nav2 の spin を呼ぶ ---")
+    _f = _FakeNav2(traveled=0.51)
+    _nv = _mk_nav2(_f)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _nv.turn(math.radians(30.0))
+    check("受け付け → 完了 → 成功で True。角度は度に直して 30、制限時間は整数",
+          (_ok, _f.calls), (True, [("spin", 30, 15, True)]))
+    check("実際に回った角度（spin の報告）を控える", _nv.last_turn_rad, 0.51)
+    _f = _FakeNav2(spin_ready=False)
+    _nv = _mk_nav2(_f)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _nv.turn(math.radians(30.0))
+    check("★spin のサーバが無ければ、呼ばずに False（永久に待たない）★", (_ok, _f.calls, _f.spin_client.asked), (False, [], 1))
+    _f = _FakeNav2(accept=(False,))
+    _nv = _mk_nav2(_f)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _nv.turn(math.radians(-45.0))
+    check("受け付けてもらえなければ False・回った角度は None", (_ok, _nv.last_turn_rad), (False, None))
+    _f = _FakeNav2(result="ABORTED", traveled=0.2)
+    _nv = _mk_nav2(_f)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _nv.turn(math.radians(60.0))
+    check("途中で終わった（ABORTED）なら False。回ったぶんの角度は残す", (_ok, _nv.last_turn_rad), (False, 0.2))
+    _f = _FakeNav2(ticks=10 ** 9)
+    _nv = _mk_nav2(_f)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _ok = _nv.turn(math.radians(60.0), time_allowance=3)
+    check("時間切れなら cancelTask して False", (_ok, _f.calls[-1]), (False, ("cancelTask",)))
+    _f = _FakeNav2()                          # 前の動作の報告（feedback="old"）が残っている
+    _nv = _mk_nav2(_f)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _nv.turn(math.radians(30.0))
+    check("今回の報告が来なければ、前の動作の報告を使わない（None）", _nv.last_turn_rad, None)
+
+    print("  --- refresh_pose(): AMCL に 1 回更新してもらう ---")
+    _f = _FakeNav2()
+    _nv = _mk_nav2(_f)
+
+    def _spin_with_pose(node, timeout_sec=0.0):            # 待っている間に、新しい /amcl_pose が届く
+        B.time.sleep(timeout_sec)
+        _nv._pose, _nv._pose_count = (0.1, 0.2, 0.52), _nv._pose_count + 1
+
+    _nv._rclpy = _Obj(spin_once=_spin_with_pose)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _p = _nv.refresh_pose()
+    check("サービスを呼び、新しい推定を受け取って返す", (_p, _f.srv.calls, ("create_client", "request_nomotion_update") in _f.calls),
+          ((0.1, 0.2, 0.52), 1, True))
+    _nv = _mk_nav2(_FakeNav2())
+    with contextlib.redirect_stdout(io.StringIO()):
+        _p = _nv.refresh_pose(timeout=1.0)
+    check("新しい推定が来なければ None（呼ぶ側が回った角度の報告で補う）", _p, None)
+    _f = _FakeNav2(srv_ready=False)
+    _nv = _mk_nav2(_f)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _p = _nv.refresh_pose()
+    check("サービスが無ければ、呼ばずに None", (_p, _f.srv.calls), (None, 0))
+
+    print("  --- --turn-test: その場回転と、回ったあとの向きの読み取りを確かめる ---")
+    _f = _FakeNav2(traveled=0.52)
+    _nv = _mk_nav2(_f)
+    _buf = io.StringIO()
+    with contextlib.redirect_stdout(_buf):
+        _good = B.turn_test(_nv, 30.0)
+    check("回れて、回った角度の報告があれば OK", (_good, "OK" in _buf.getvalue()), (True, True))
+    _f = _FakeNav2(spin_ready=False)
+    _buf = io.StringIO()
+    with contextlib.redirect_stdout(_buf):
+        _good = B.turn_test(_mk_nav2(_f), 30.0)
+    check("回れなければ「要確認」", (_good, "要確認" in _buf.getvalue()), (False, True))
+finally:
+    B.time = _time0
+    for _k, _v in _std0.items():
+        if _v is None:
+            sys.modules.pop(_k, None)
+        else:
+            sys.modules[_k] = _v
+
+
+# =====================================================================
+print("\n=== 点検で足した道具: 方向の符号の確認（uwb_reader.py --sign-check）===")
+# =====================================================================
+check("左へ動かして LAoA が増えた → +1", U.sign_check_verdict(2.0, 28.0)[0], +1)
+check("左へ動かして LAoA が減った → −1", U.sign_check_verdict(2.0, -25.0)[0], -1)
+check("変化が小さい → 決めない", U.sign_check_verdict(2.0, 6.0)[0], None)
+check("読めていない → 決めない", (U.sign_check_verdict(None, 6.0)[0], U.sign_check_verdict(1.0, None)[0]), (None, None))
+for _sgn in (+1, -1):
+    _clk["t"] = 7000.0
+    _bs = U.FakeUwbBoard(1.0, 0.0, clock=lambda: _clk["t"], angle_sign=_sgn)
+    _bs.wait = lambda sec: _clk.__setitem__("t", _clk["t"] + sec)
+    _rs = U.UwbReader(_bs, angle_sign=_sgn)
+    _rs.start(sleep=lambda sec: None)
+    with contextlib.redirect_stdout(io.StringIO()):
+        _got = U.sign_check(_rs, ask=lambda prompt: "", seconds=2.0, clock=lambda: _clk["t"],
+                            on_moved=lambda: _bs.set_target(1.1, 27.0))
+    check(f"基板の符号が {_sgn:+d} なら、手順どおりに動かすと {_sgn:+d} と出る", _got, _sgn)
+
+
+# =====================================================================
+print("\n=== 起動の引数・ビーコンの行の扱い（2026-11-13）===")
+# =====================================================================
+check("--uwb-mount の値がマイナスで始まるとき、= でつなぐ形に直す",
+      B.normalize_argv(["--live", "--uwb", "--uwb-mount", "-0.15,0,180,0.25", "--beacon-height", "0.45"]),
+      ["--live", "--uwb", "--uwb-mount=-0.15,0,180,0.25", "--beacon-height", "0.45"])
+check("= でつないだ書き方は、そのまま", B.normalize_argv(["--uwb-mount=-0.15,0,180,0.25"]), ["--uwb-mount=-0.15,0,180,0.25"])
+check("プラスの値は、そのまま", B.normalize_argv(["--uwb-mount", "0.10,0,0,0.25"]), ["--uwb-mount", "0.10,0,0,0.25"])
+check("次が別のオプションなら、つながない", B.normalize_argv(["--uwb-mount", "--live"]), ["--uwb-mount", "--live"])
+check("値が無い（末尾）なら、そのまま", B.normalize_argv(["--uwb-mount"]), ["--uwb-mount"])
+check("ほかのオプションのマイナスの値は触らない", B.normalize_argv(["--uwb-angle-sign", "-1"]), ["--uwb-angle-sign", "-1"])
+_ap = __import__("argparse").ArgumentParser()
+_ap.add_argument("--uwb-mount", default=None)
+_ap.add_argument("--uwb-angle-sign", type=int, choices=[1, -1], default=1)
+_ns = _ap.parse_args(B.normalize_argv(["--uwb-mount", "-0.15,0,180,0.25", "--uwb-angle-sign", "-1"]))
+check("直したあとは argparse が読める（取り付けと符号）", (_ns.uwb_mount, _ns.uwb_angle_sign), ("-0.15,0,180,0.25", -1))
+check("読めた取り付けの文字は parse_mount を通る", round(BL.parse_mount(_ns.uwb_mount).x, 2), -0.15)
+_rows = [{"id": 0, "kind": "home", "x": 0, "y": 0}, {"id": 1, "kind": "seat", "x": 1, "y": 0},
+         {"id": 100, "kind": "beacon", "label": "ビーコン（UWB）", "x": 1.5, "y": 0.3}, {"id": 2, "x": 1, "y": 1}]
+_pins, _beacons = MC.split_pin_rows(_rows)
+check("地図の点検: ビーコンの行はピンに数えない", ([r["id"] for r in _pins], [r["id"] for r in _beacons]), ([0, 1, 2], [100]))
+check("地図の点検: 行が無い（None）でも落ちない", MC.split_pin_rows(None), ([], []))
+check("ピン建て: ビーコンの行を見分ける", (PT.is_beacon(_rows[2]), PT.is_beacon(_rows[1]), PT.is_beacon(_rows[3]), PT.is_beacon(None)),
+      (True, False, False, False))
+check("ピン建て: 一覧ではビーコンを席と書かない", "[UWB ]" in PT.format_pin(_rows[2]) and "[席 ]" in PT.format_pin({"id": 1, "kind": "seat", "x": 0, "y": 0}), True)
+check("ピン建て: 断りの文に番号が入る", "id=100" in PT.BEACON_REFUSE.format(id=100), True)
 
 
 print()

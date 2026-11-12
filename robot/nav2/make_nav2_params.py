@@ -33,6 +33,7 @@ nano で 1 つずつ直すかわりに、これを 1 回実行します。何を
     差分は「後退・その場旋回のリカバリを外す」設定を載せているが、これは
     ビヘイビアツリーの XML からも Spin / BackUp を外すのが条件。片方だけ変えると
     bt_navigator が起動に失敗する。XML を直してから --with-behavior-server を付けること。
+    ★spin を外すと、ブリッジの向き合わせと UWB ビーコンの探索（その場回転を使う）ができなくなる★
 """
 
 from __future__ import annotations
