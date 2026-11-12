@@ -96,6 +96,16 @@ def median_pose(samples: list[tuple[float, float, float]]) -> tuple[float, float
     return median(xs), median(ys), normalize_angle(mean_yaw + median(offs))
 
 
+BEACON_REFUSE = ("id={id} は UWB ビーコンの行き先です（kind='beacon'）。ピンとしては登録しません"
+                 "（登録すると席の行に変わり、ロボが UWB で探さなくなります）。\n"
+                 "前回の推定を消すときは、アプリの /admin/pins でこの行の x・y を 0 にしてください。")
+
+
+def is_beacon(row: dict | None) -> bool:
+    """UWB ビーコンの行（sql/05 の kind='beacon'）か。x, y はロボが推定した場所なので、ピン建ての対象にしない。"""
+    return bool(row) and row.get("kind") == "beacon"
+
+
 def default_label(pin_id: int) -> str:
     return "本棚の場所" if pin_id == 0 else f"席{pin_id}"
 
@@ -130,7 +140,8 @@ def sql_for_pins(rows: list[dict]) -> str:
 
 def format_pin(r: dict) -> str:
     th = float(r.get("theta") or 0.0)
-    kind = "本棚" if r.get("kind") == "home" or int(r["id"]) == 0 else "席 "
+    kind = ("本棚" if r.get("kind") == "home" or int(r["id"]) == 0
+            else "UWB " if r.get("kind") == "beacon" else "席 ")
     return (f"  [{kind}] id={int(r['id']):<2d} {str(r.get('label') or ''):<10s} "
             f"x={float(r['x']):+7.3f}  y={float(r['y']):+7.3f}  theta={th:+6.3f} rad ({math.degrees(th):+6.1f}°)")
 
@@ -296,6 +307,9 @@ def interactive(store: PinStore, ros: RosPinSource | None):
             continue
         pin_id = int(s)
         current = next((r for r in rows if int(r["id"]) == pin_id), None)
+        if is_beacon(current):
+            print("  ★" + BEACON_REFUSE.format(id=pin_id).replace("\n", "\n    "))
+            continue
         label = (current or {}).get("label") or default_label(pin_id)
         cur_theta = float((current or {}).get("theta") or 0.0)
         print(f"\n  {label}（id={pin_id}）を登録します。方法:")
@@ -381,6 +395,12 @@ def main():
 
     if args.set:
         pid, x, y, th = args.set
+        try:
+            cur = next((r for r in store.list() if int(r["id"]) == int(pid)), None)
+        except Exception:                      # 一覧を読めなくても、登録そのものは従来どおり試す
+            cur = None
+        if is_beacon(cur):
+            sys.exit(BEACON_REFUSE.format(id=int(pid)))
         row = pin_row(int(pid), float(x), float(y), float(th), args.label)
         if args.sql:
             print(sql_for_pins([row]))

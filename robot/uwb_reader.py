@@ -70,6 +70,7 @@ import math
 import os
 import random
 import re
+import signal
 import sys
 import time
 from dataclasses import dataclass
@@ -896,6 +897,23 @@ def main():
 
     reader = UwbReader(ser, angle_sign=args.angle_sign, log=log_f, verbose=not args.quiet)
     t0 = time.monotonic()
+
+    def _on_hup(*_a):
+        # 端末（SSH の窓）が閉じられた・kill された。出力先が無くなるので捨て先に替えてから、
+        # Ctrl-C と同じ後始末（stop を送って、電波を出したままにしない）へ
+        try:
+            sys.stdout = sys.stderr = open(os.devnull, "w")
+        except Exception:
+            pass
+        raise KeyboardInterrupt
+
+    for _name in ("SIGHUP", "SIGTERM"):          # Windows に SIGHUP は無い
+        if hasattr(signal, _name):
+            try:
+                signal.signal(getattr(signal, _name), _on_hup)
+            except (ValueError, OSError):
+                pass
+
     try:
         try:
             reader.start(args.role, configure=not args.no_config, diag=args.diag)

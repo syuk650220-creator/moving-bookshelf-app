@@ -2377,6 +2377,34 @@ for _sgn in (+1, -1):
     check(f"基板の符号が {_sgn:+d} なら、手順どおりに動かすと {_sgn:+d} と出る", _got, _sgn)
 
 
+# =====================================================================
+print("\n=== 起動の引数・ビーコンの行の扱い（2026-11-13）===")
+# =====================================================================
+check("--uwb-mount の値がマイナスで始まるとき、= でつなぐ形に直す",
+      B.normalize_argv(["--live", "--uwb", "--uwb-mount", "-0.15,0,180,0.25", "--beacon-height", "0.45"]),
+      ["--live", "--uwb", "--uwb-mount=-0.15,0,180,0.25", "--beacon-height", "0.45"])
+check("= でつないだ書き方は、そのまま", B.normalize_argv(["--uwb-mount=-0.15,0,180,0.25"]), ["--uwb-mount=-0.15,0,180,0.25"])
+check("プラスの値は、そのまま", B.normalize_argv(["--uwb-mount", "0.10,0,0,0.25"]), ["--uwb-mount", "0.10,0,0,0.25"])
+check("次が別のオプションなら、つながない", B.normalize_argv(["--uwb-mount", "--live"]), ["--uwb-mount", "--live"])
+check("値が無い（末尾）なら、そのまま", B.normalize_argv(["--uwb-mount"]), ["--uwb-mount"])
+check("ほかのオプションのマイナスの値は触らない", B.normalize_argv(["--uwb-angle-sign", "-1"]), ["--uwb-angle-sign", "-1"])
+_ap = __import__("argparse").ArgumentParser()
+_ap.add_argument("--uwb-mount", default=None)
+_ap.add_argument("--uwb-angle-sign", type=int, choices=[1, -1], default=1)
+_ns = _ap.parse_args(B.normalize_argv(["--uwb-mount", "-0.15,0,180,0.25", "--uwb-angle-sign", "-1"]))
+check("直したあとは argparse が読める（取り付けと符号）", (_ns.uwb_mount, _ns.uwb_angle_sign), ("-0.15,0,180,0.25", -1))
+check("読めた取り付けの文字は parse_mount を通る", round(BL.parse_mount(_ns.uwb_mount).x, 2), -0.15)
+_rows = [{"id": 0, "kind": "home", "x": 0, "y": 0}, {"id": 1, "kind": "seat", "x": 1, "y": 0},
+         {"id": 100, "kind": "beacon", "label": "ビーコン（UWB）", "x": 1.5, "y": 0.3}, {"id": 2, "x": 1, "y": 1}]
+_pins, _beacons = MC.split_pin_rows(_rows)
+check("地図の点検: ビーコンの行はピンに数えない", ([r["id"] for r in _pins], [r["id"] for r in _beacons]), ([0, 1, 2], [100]))
+check("地図の点検: 行が無い（None）でも落ちない", MC.split_pin_rows(None), ([], []))
+check("ピン建て: ビーコンの行を見分ける", (PT.is_beacon(_rows[2]), PT.is_beacon(_rows[1]), PT.is_beacon(_rows[3]), PT.is_beacon(None)),
+      (True, False, False, False))
+check("ピン建て: 一覧ではビーコンを席と書かない", "[UWB ]" in PT.format_pin(_rows[2]) and "[席 ]" in PT.format_pin({"id": 1, "kind": "seat", "x": 0, "y": 0}), True)
+check("ピン建て: 断りの文に番号が入る", "id=100" in PT.BEACON_REFUSE.format(id=100), True)
+
+
 print()
 print("=" * 46)
 print("  すべて成功" if ok else "  ★失敗があります★")

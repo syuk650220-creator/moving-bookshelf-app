@@ -1666,6 +1666,26 @@ def turn_test(navigator, deg: float) -> bool:
     return good
 
 
+def normalize_argv(argv: list[str]) -> list[str]:
+    """--uwb-mount -0.15,0,180,0.25 のように、値がマイナスで始まる書き方を --uwb-mount=-0.15,… に直す。
+
+    argparse は「-0.15,0,180,0.25」を数値と見なせず、別のオプションだと思って「expected one argument」で止まる
+    （Python 3.12 で確認）。後ろ向きの取り付けは X が必ずマイナスなので、空白で区切った書き方でも受けられるようにする。
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        nxt = argv[i + 1] if i + 1 < len(argv) else ""
+        if a == "--uwb-mount" and nxt[:1] == "-" and nxt[1:2] != "" and nxt[1:2] in "0123456789.":
+            out.append(f"{a}={nxt}")
+            i += 2
+        else:
+            out.append(a)
+            i += 1
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description="Supabase ↔ ロボ ブリッジ")
     ap.add_argument("--live", action="store_true",
@@ -1719,7 +1739,8 @@ def main():
     ap.add_argument("--uwb-max-nlos", type=float, default=None, help="この NLOS%% を超える回は使わない（diag 1 のとき）")
     ap.add_argument("--uwb-mount", default=None, metavar="X,Y,YAW_DEG,Z",
                     help="UWB アンテナの取り付け（回転の中心から前が＋の X・左が＋の Y [m]、アンテナの面の向き [度] 前 0／後ろ 180、"
-                         "床からの高さ [m]）。既定は robot_params の UWB_MOUNT_*。例: -0.15,0,180,0.25")
+                         "床からの高さ [m]）。既定は robot_params の UWB_MOUNT_*。例: --uwb-mount=-0.15,0,180,0.25"
+                         "（値がマイナスで始まるので、= でつなぐ書き方が確実）")
     ap.add_argument("--no-beacon-hint", action="store_true",
                     help="前回ロボが推定したユニットの場所（ビーコンの行の x, y）へ、最初にアンテナを向けない")
     ap.add_argument("--beacon-hint-resolve", action="store_true",
@@ -1727,7 +1748,7 @@ def main():
     ap.add_argument("--turn-test", type=float, default=None, metavar="DEG",
                     help="（--nav2 と一緒に）起動して自己位置推定が済んだら、その場で DEG 度回って終わる。"
                          "その場回転（Nav2 の spin）と、回ったあとの向きの読み取りが実機で動くかの確認用。呼出は受けない")
-    args = ap.parse_args()
+    args = ap.parse_args(normalize_argv(sys.argv[1:]))
     try:                                     # 書き間違いは、ほかの準備より先に知らせる
         uwb_mount = BL.parse_mount(args.uwb_mount) if args.uwb_mount else BL.Mount()
     except ValueError as e:
@@ -1815,6 +1836,9 @@ def main():
               + ("（--uwb-mount）" if args.uwb_mount else "（robot_params）")
               + ("・前回の場所は使わない" if args.no_beacon_hint else
                  ("・前回の場所で前後も決める" if args.beacon_hint_resolve else "")))
+        # 方向の符号は、逆だと必ず反対側へ走る。起動のたびに、いま使う値を見えるようにしておく
+        print(f"UWB の設定  : 方向の符号 {args.uwb_angle_sign:+d}・席のユニットの高さ {args.beacon_height:.2f} m・"
+              f"ユニットの手前 {args.beacon_standoff:.2f} m で止まる")
 
     bridge = Bridge(supa, navigator, args.live, args.arrive_hold, args.arrive_timeout,
                     home=home, return_home=not args.no_return_home,

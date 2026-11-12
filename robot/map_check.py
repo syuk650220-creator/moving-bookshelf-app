@@ -375,6 +375,20 @@ def fetch_pins() -> list[dict] | None:
         return None
 
 
+def split_pin_rows(rows) -> tuple[list[dict], list[dict]]:
+    """stop_points の行を、点検するピン（本棚の場所・席）と、UWB ビーコンの行（kind='beacon'）に分ける。
+
+    ビーコンの行の x, y は「ロボが前回 UWB で推定した場所」で、人が置いたピンではない。
+    席として点検すると、古い推定に ★ が付いて「pin_tool.py --set」の直し方が出てしまい、
+    そのとおりに登録すると席の行に変わってしまう（UWB で探さなくなる）。なので点検の対象から外す。
+    """
+    pins: list[dict] = []
+    beacons: list[dict] = []
+    for r in rows or []:
+        (beacons if r.get("kind") == "beacon" else pins).append(r)
+    return pins, beacons
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -421,9 +435,10 @@ def main():
 
     # ---- ピン ----
     pins: list[dict] = []
+    beacon_rows: list[dict] = []
     if not args.no_pins:
-        rows = fetch_pins()
-        for r in rows or []:
+        rows, beacon_rows = split_pin_rows(fetch_pins())
+        for r in rows:
             pins.append({"id": int(r["id"]), "label": r.get("label") or f"id={r['id']}",
                          "x": float(r["x"]), "y": float(r["y"]), "theta": float(r.get("theta") or 0.0),
                          "home": r.get("kind") == "home" or int(r["id"]) == 0})
@@ -483,6 +498,13 @@ def main():
                     problems.append(f"本棚の場所 → {p['label']}: 機体の半径 {args.radius:.2f} m で通れる道がありません")
                 else:
                     print(f"  → {p['label']:<10} ✓ 道あり 約 {length:.2f} m（直線で {straight:.2f} m）")
+
+    for r in beacon_rows:
+        bx, by = float(r.get("x") or 0.0), float(r.get("y") or 0.0)
+        where = "まだ推定していません" if (bx == 0.0 and by == 0.0) else f"前回の推定 ({bx:+.3f}, {by:+.3f})"
+        print(f"\n  [UWB ] {r.get('label') or 'ビーコン'}（id={r['id']}）は UWB で探す行き先です。ピンとしては点検しません（{where}）。")
+        print("        地図を作り直したら、アプリの /admin/pins でこの行の x・y を 0 に戻します（前回の推定は、前の地図での場所です）。")
+        print("        ★pin_tool.py でこの番号を登録しないこと（席の行に変わり、UWB で探さなくなります）★")
 
     print()
     if problems:

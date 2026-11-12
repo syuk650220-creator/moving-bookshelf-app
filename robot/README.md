@@ -179,7 +179,7 @@ LiDAR の USB 変換が CP2102 か FTDI かは `udevadm info -q property -n /dev
 ### 3-4 動作の確認（実機なしでできる）
 
 ```bash
-python3 test_logic.py      # 「すべて成功」が出ること（481 項目）
+python3 test_logic.py      # 「すべて成功」が出ること（494 項目）
 python3 robot_params.py    # φ80mm 版の換算表（60 rpm = 0.251 m/s）
 ```
 
@@ -675,7 +675,8 @@ python uwb_reader.py --simulate                                      # 読み取
 python3 bookshelf_bridge.py --live --nav2 --uwb                       # /dev/uwb（無ければ USB の ID で探す）
 python3 bookshelf_bridge.py --live --nav2 --uwb --beacon-height 0.75 --beacon-standoff 0.5 --uwb-angle-sign -1
 # 取り付けを robot_params を直さずに試す（回転の中心から X 前が＋, Y 左が＋ [m], アンテナの面の向き [度] 前 0／後ろ 180, 床からの高さ [m]）
-python3 bookshelf_bridge.py --live --nav2 --uwb --uwb-mount -0.15,0,180,0.25
+#   ★値がマイナスで始まるので、= でつなぐ（空白で区切っても受けるが、= が確実）★
+python3 bookshelf_bridge.py --live --nav2 --uwb --uwb-mount=-0.15,0,180,0.25
 #   ★TF（RViz の表示用）も合わせるなら: ros2 launch robot_tf_launch.py uwb_x:=-0.15 uwb_y:=0.0 uwb_z:=0.20 uwb_yaw:=3.1416★
 #   （uwb_z は base_link からの高さ＝床からの高さ − 0.05）
 # 前回の場所を使わない／前回の場所で前後まで決める（★ユニットを動かさない運用のときだけ★）
@@ -683,7 +684,7 @@ python3 bookshelf_bridge.py --live --nav2 --uwb --no-beacon-hint
 python3 bookshelf_bridge.py --live --nav2 --uwb --beacon-hint-resolve
 ```
 
-起動すると `UWB 取り付け: 回転の中心から x=-0.15 y=+0.00 m・アンテナの面 180°（前 0／後ろ 180）・床から 0.25 m（robot_params）` のように出るので、取り付けと合っているかを見る。
+起動すると `UWB 取り付け: 回転の中心から x=-0.15 y=+0.00 m・アンテナの面 180°（前 0／後ろ 180）・床から 0.25 m（robot_params）` と、`UWB の設定  : 方向の符号 +1・席のユニットの高さ 0.75 m・ユニットの手前 0.50 m で止まる` が出るので、取り付けと、符号・高さの指定が合っているかを見る。
 
 アプリの「ロボを呼ぶ」で届け先「ビーコン（UWB）」を選ぶと、ブリッジが上の流れで動きます。画面には「ビーコン（UWB）を探しています（UWB で測定中）」「…（アンテナを向けて測り直しています・その場回転 2 回目）」「… へ移動中（推定 (x, y)・手前 0.5 m）」のように出ます。
 読み取りだけの出力 1 行の読み方: `#12  0x0001  1.52 m  方向 +19.8°  FoM 200` → 測定番号・相手のアドレス・距離・方向（左が＋）・確からしさ。`×（Status が Ok ではない）` はその回は測れなかった、の意味。
@@ -724,3 +725,4 @@ python3 bookshelf_bridge.py --nav2 --turn-test 30
 - `/robot-call`: 届け先の席の下に「ユニットのところへ（UWB ビーコン）」の紫のボタン（📡）が出る（kind='beacon' の行だけ。席の並びには混ざらない）。選んで呼ぶと、`--uwb` 付きのブリッジなら上の流れで走る。無ければ走らずに canceled になり、画面に「ロボ側の理由: ビーコン（UWB）への走行は、ブリッジを --uwb 付きで起動したときだけ使えます」と出る（見つからないときも同じ形で理由が出る）。進行中は「UWB でユニットを探しながら向かっています」、キューでは 📡 付きで「ユニットを探して移動中」
 - `/admin/pins`: ビーコンは、ロボが前回 UWB で推定した場所に紫の破線の丸と「推定 時刻」（向きの矢印なし）。ブリッジが呼出のたびにビーコンの行の x, y を書き戻し、この画面は 3 秒ごとに読み直す（手で編集中の入力欄は上書きしない）。x も y も 0（まだ推定していない）のときは地図に出さず、凡例に「まだ推定していません」。手で直すと、次の呼出で最初にアンテナを向ける方向が変わる。「席を追加」の次の id は席の最大 + 1（ビーコンの 100 は数えない）。「いまの値を SQL にする」にも kind='beacon' が入る
 - kind 列の無い古い DB でも両方の画面は動く（ビーコンのボタンが出ないだけ）
+- `map_check.py` は、ビーコンの行をピンとしては点検しない（「UWB で探す行き先です」と出すだけ）。`pin_tool.py` は、ビーコンの行の番号を席として登録しない。**地図を作り直したら、`/admin/pins` でビーコンの行の x・y を 0 に戻す**（前回の推定は、前の地図での場所なので）
