@@ -8,7 +8,7 @@ import Link from 'next/link'
 
 type Book = { id: string; title: string; status: string }
 // stop_points の行き先。kind は sql/03 で増えた列（'seat' | 'home'）に、sql/05 で 'beacon'（席に置いた UWB ユニット）が加わった
-type StopPoint = { id: number; label: string; kind?: 'seat' | 'home' | 'beacon' }
+type StopPoint = { id: number; label: string; kind?: 'seat' | 'home' | 'beacon'; x?: number | null; y?: number | null }
 
 // robot_calls に books / stop_points を結合した行
 type CallRow = {
@@ -67,6 +67,12 @@ function RobotCall() {
   const [isCalling, setIsCalling] = useState(false)
   const [isReceiving, setIsReceiving] = useState(false)
   const [message, setMessage] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+
+  // ロボ側の更新（robot_status.updated_at）が、この画面を開いてから「変わった」のを最後に見た時刻（この端末の時計）。
+  // ロボ側（セルフホストの Pi）の時計がずれていると、updated_at とこの端末の時計を比べるだけでは
+  // 「1 分以上止まっている」と誤って出る。一度でも変わるのを見たあとは、この端末の時計だけで経過を測る
+  const [statusChangedAt, setStatusChangedAt] = useState<number | null>(null)
+  const statusSeenRef = useRef<string | null>(null)
 
   const aliveRef = useRef(true)
   // 自分の呼出が一覧から消えたとき「ロボが届かなかった」のかを見分けるための控え
@@ -135,6 +141,11 @@ function RobotCall() {
       detailNow = row.detail ?? null
       setCurrentCall(row.robot_calls ?? null)
       setRobotUpdatedAt(row.updated_at ?? null)
+      const seen = row.updated_at ?? null
+      if (seen !== null && statusSeenRef.current !== null && seen !== statusSeenRef.current) {
+        setStatusChangedAt(Date.now())
+      }
+      if (seen !== null) statusSeenRef.current = seen
     }
     setNowMs(Date.now())
 
@@ -181,7 +192,9 @@ function RobotCall() {
 
   const myActiveCall = guestName ? queue.find((c) => c.requested_by === guestName) ?? null : null
   const robotStale =
-    robotUpdatedAt !== null && nowMs > 0 && nowMs - new Date(robotUpdatedAt).getTime() > ROBOT_STALE_MS
+    statusChangedAt !== null
+      ? nowMs - statusChangedAt > ROBOT_STALE_MS   // 更新を見たことがある → 最後に見てからの経過（時計のずれに左右されない）
+      : robotUpdatedAt !== null && nowMs > 0 && nowMs - new Date(robotUpdatedAt).getTime() > ROBOT_STALE_MS
   const myReturning =
     !myActiveCall &&
     !!guestName &&
@@ -305,7 +318,11 @@ function RobotCall() {
 
   const selectedBook = books.find((b) => b.id === bookId)
   // 届け先: 席（kind が seat か無印）と、UWB ビーコン（kind='beacon'。席に置いたユニットのところへ）を分けて出す
-  const seatList = seats.filter((s) => s.kind !== 'beacon' && s.kind !== 'home')
+  // 席は、座標が入っているものだけ出す。管理者画面の「席を追加」は x も y も 0 で行を作るので、
+  // 座標を入れる前に呼ぶと、ロボが地図の原点 (0, 0) へ向かってしまう（ビーコンの 0,0 は「まだ推定していない」の意味で別扱い）
+  const hasCoords = (s: StopPoint) => Math.abs(s.x ?? 1) > 1e-6 || Math.abs(s.y ?? 1) > 1e-6
+  const seatList = seats.filter((s) => s.kind !== 'beacon' && s.kind !== 'home' && hasCoords(s))
+  const seatsWithoutCoords = seats.filter((s) => s.kind !== 'beacon' && s.kind !== 'home' && !hasCoords(s)).length
   const beacons = seats.filter((s) => s.kind === 'beacon')
   const kindOf = (id: number | null) => (id === null ? undefined : seats.find((s) => s.id === id)?.kind)
   const isBeaconCall = (c: { seat_id: number | null } | null | undefined) => !!c && kindOf(c.seat_id) === 'beacon'
@@ -408,6 +425,11 @@ function RobotCall() {
           ))}
           {seatList.length === 0 && (
             <p className="col-span-3 text-sm text-gray-400">席が登録されていません</p>
+          )}
+          {seatsWithoutCoords > 0 && (
+            <p className="col-span-3 text-xs text-gray-400">
+              座標がまだ入っていない席が {seatsWithoutCoords} 件あります（管理者画面の「ピン管理」で x・y を入れると、ここに出ます）
+            </p>
           )}
         </div>
 
