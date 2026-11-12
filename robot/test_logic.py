@@ -485,6 +485,95 @@ check("ホーム未登録なら何もしない", (make_bridge(s, n).startup_loca
 s, n = FakeSupa(PINS), FakeNav()
 check("--no-localize なら何もしない", (make_bridge(s, n, localize=False).startup_localize(), n.events), (False, []))
 
+print("  --- 起動時の片付け: 前回の取り残し（moving / arrived のまま残った呼出）を canceled にする ---")
+
+
+class StaleSupa(FakeSupa):
+    """robot_calls を行として持つ版。PostgREST の status=in.(…) と、条件つきの patch をまねる。"""
+
+    def __init__(self, calls, state="idle", current=None):
+        super().__init__(PINS)
+        self.rows = [dict(c) for c in calls]
+        self.status = {"state": state, "current_call_id": current}
+        self.race = set()                 # select のあと patch の前に、アプリが done にした呼出の id
+        self.patch_queries = []
+
+    def select(self, table, query=""):
+        if table == "robot_calls" and "status=in." in query:
+            want = re.search(r"status=in\.\(([^)]*)\)", query).group(1).split(",")
+            return [dict(r) for r in self.rows if r["status"] in want]
+        return super().select(table, query)
+
+    def patch(self, table, query, body):
+        if table != "robot_calls":
+            return super().patch(table, query, body)
+        self.log.append((table, dict(body)))
+        self.patch_queries.append(query)
+        cid = re.search(r"id=eq\.([\w-]+)", query).group(1)
+        cond = re.search(r"status=in\.\(([^)]*)\)", query)
+        out = []
+        for r in self.rows:
+            if r["id"] != cid:
+                continue
+            if cid in self.race:
+                r["status"] = "done"
+            if cond and r["status"] not in cond.group(1).split(","):
+                continue                  # 条件に合わない行は更新されない（PostgREST は空の配列を返す）
+            r.update(body)
+            out.append(dict(r))
+        return out
+
+    def by_id(self):
+        return {r["id"]: r["status"] for r in self.rows}
+
+
+def stale_call(cid, status, who="guest"):
+    return {"id": cid, "status": status, "seat_id": 1, "requested_by": who, "book_id": "b" * 36}
+
+
+LEFT = [stale_call("m1", "moving", "A"), stale_call("a1", "arrived", "B"), stale_call("q1", "queued", "C"),
+        stale_call("d1", "done", "D"), stale_call("x1", "canceled", "E")]
+
+s, n = StaleSupa([stale_call("q1", "queued"), stale_call("d1", "done")]), FakeNav()
+with contextlib.redirect_stdout(io.StringIO()) as _clog:
+    got = make_bridge(s, n).cleanup_stale_calls()
+check("取り残しが無ければ何もしない（書き込みなし・表示なし）", (got, s.log, _clog.getvalue()), (0, [], ""))
+
+s, n = StaleSupa(LEFT, state="moving", current="m1"), FakeNav()
+got = make_bridge(s, n).cleanup_stale_calls()
+check("moving と arrived の 2 件を取り消す", got, 2)
+check("moving / arrived → canceled。queued・done・canceled には触らない", s.by_id(),
+      {"m1": "canceled", "a1": "canceled", "q1": "queued", "d1": "done", "x1": "canceled"})
+check("書き込みは「いまも moving / arrived なら」の条件つき",
+      all("status=in.(moving,arrived)" in q for q in s.patch_queries), True)
+check("robot_status は idle・current_call_id なし・detail に件数",
+      (s.status["state"], s.status["current_call_id"], "2 件" in (s.status.get("detail") or "")), ("idle", None, True))
+check("ナビには何も送らない（走らせない）", n.events, [])
+
+s, n = StaleSupa(LEFT, state="moving", current="m1"), FakeNav()
+with contextlib.redirect_stdout(io.StringIO()) as _clog:
+    got = make_bridge(s, n, live=False).cleanup_stale_calls()
+check("dry-run: 件数は数えるが、DB は書き換えない", (got, s.by_id()["m1"], s.by_id()["a1"], s.status["state"], s.log),
+      (2, "moving", "arrived", "moving", []))
+check("dry-run: 書き込まないことを表示する", "dry-run なので書き込みません" in _clog.getvalue(), True)
+
+s, n = StaleSupa([stale_call("a1", "arrived"), stale_call("m1", "moving")], state="arrived", current="a1"), FakeNav()
+s.race.add("a1")                          # 片付けの直前に、アプリで「本を取得した」が押された
+got = make_bridge(s, n).cleanup_stale_calls()
+check("書く直前に done になった呼出は、取り消さない（届いた本を「届かなかった」にしない）",
+      (got, s.by_id()), (1, {"a1": "done", "m1": "canceled"}))
+
+s, n = StaleSupa([stale_call("d1", "done")], state="returning", current="d1"), FakeNav()
+got = make_bridge(s, n).cleanup_stale_calls()
+check("帰還中に止まっていた（呼出は done）: 呼出には触らず、robot_status だけ idle に戻す",
+      (got, s.by_id(), s.status["state"], s.status["current_call_id"], "returning" in (s.status.get("detail") or "")),
+      (0, {"d1": "done"}, "idle", None, True))
+
+import inspect as _inspect     # noqa: E402
+_main_src = _inspect.getsource(B.main)
+check("main は、初期位置を送る前に取り残しを片付ける",
+      0 < _main_src.find("bridge.cleanup_stale_calls()") < _main_src.find("bridge.startup_localize()"), True)
+
 print("  --- LoggingNavigator（--simulate 0）---")
 ln = B.LoggingNavigator(0.0, start_pose=(1.0, 1.0, 0.0))
 check("localize は初期位置に飛ぶ", (ln.localize(B.goal_from_stop_point(PINS[0])), ln.pose), (True, (0.0, 0.0, 0.0)))
