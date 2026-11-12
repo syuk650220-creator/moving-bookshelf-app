@@ -1117,6 +1117,9 @@ class Bridge:
         try:
             # stop → uwbcfg 9 … → antenna js1055-9 → 設定の確認 → initf（電波法のガード付き。確かめられなければ測り始めない）
             self.uwb.start(sleep=self._sleep)
+            cfg = getattr(self.uwb, "config", None)
+            if cfg:
+                print(f"    [ビーコン] 基板の設定を確かめました: チャネル {cfg[0]}・アンテナ型 {cfg[1]} → 測り始めます")
             found = self._beacon_search(est, label, hint=hint)
             if found is None:
                 self.cancel_call(cid, f"{label} が見つかりません（席のユニットの電源と向き、距離を確認してください）")

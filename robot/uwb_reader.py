@@ -435,6 +435,9 @@ class UwbReader:
             seen += self._read_reply()
         if verify:
             self.config = self._verify_config(seen, gap, sleep)
+            if self.verbose:
+                print(f"    [uwb] 設定を確かめました: チャネル {self.config[0]}・アンテナ型 {self.config[1]}"
+                      f" → {cmds[-1]} を送ります", flush=True)
         self.last = None                        # 前の回の測定を「いまの値」として使わない
         self.send(cmds[-1])
         sleep(gap)
@@ -890,7 +893,8 @@ def main():
             print(f"\n★測り始めませんでした★ {e}")
             return
         t_meas = time.monotonic()               # --seconds は測り始めてからの秒数
-        print(f"設定を確かめました: チャネル {reader.config[0]}・アンテナ型 {reader.config[1]}")
+        if args.quiet:                          # --quiet でなければ、確かめた時点（initf の前）に同じ知らせを出している
+            print(f"設定を確かめました: チャネル {reader.config[0]}・アンテナ型 {reader.config[1]}")
         if args.sign_check:
             reader.verbose = False
             moved = None
